@@ -49,11 +49,35 @@ applied, warnings, and the validation level. `--json` emits the full
 | `--execute` | DEV: run the generated argv locally (no `-y` is ever added) |
 
 Subcommands: `fass probe FILE` (local metadata), `fass env` (build capability
-report), `fass feedback --useful/--incorrect --category …` (consented feedback
-logging), `fass examples`.
+report), `fass serve` (web API + UI), `fass feedback --useful/--incorrect
+--category …` (consented feedback logging), `fass examples`.
 
 Exit codes: `0` ready · `2` usage error · `3` needs clarification · `4`
 unsupported · `5` error.
+
+## Web API
+
+```bash
+./.venv/bin/python -m fass serve            # http://127.0.0.1:8000
+# or: uvicorn fass.api:app
+```
+
+`GET /` serves a minimal self-contained UI (request form, clarification flow,
+command output — PRD §9). The same endpoints the UI uses:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/commands` | `{instruction, assets: {id → local path}, output_filename?, target_shell, previous_plan?, media?, adapter?, preflight?}` → the full structured response (the CLI `--json` contract) |
+| `GET /v1/support` | what the MVP understands + registry version |
+| `GET /v1/env` | local FFmpeg build capability report (same as `fass env`) |
+| `GET /healthz` | liveness |
+
+Contract notes: every **domain** outcome (`ready` / `needs_clarification` /
+`unsupported` / `error`) is a structured **200**; **422** is reserved for
+malformed requests (missing `main` asset, non-POSIX `target_shell` — other
+shells are deferred, never rendered best-effort — unknown fields, remote
+asset URLs). The service never executes generated commands (PRD §10) and has
+no media upload endpoints: assets are local paths the client binds.
 
 ## What the MVP understands
 
@@ -116,11 +140,13 @@ fass/
   builder/           argv construction + POSIX renderer
   probe/ffprobe.py   local ffprobe/ffmpeg capability probing
   pipeline.py        generate(): the whole flow + GenerationResponse
+  api.py             FastAPI layer + minimal UI (PRD §9 contract)
   cli.py             CLI + subcommands
 tests/
   test_schema.py, test_rules.py, test_planner_builder.py,
   test_render_adversarial.py (hostile filenames + injection payloads),
-  test_cli.py (subprocess, exit codes, JSON mode)
+  test_cli.py (subprocess, exit codes, JSON mode),
+  test_api.py (FastAPI TestClient: PRD contract + security invariants)
 ```
 
 ## Testing
@@ -138,6 +164,8 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] real media-fixture outcome tests — `tests/test_media.py` (synthetic
   lavfi) + `tests/test_titan.py` (committed real file), run the command,
   probe the result
-- [ ] FastAPI web layer over the same `generate()` (plan0: after CLI works)
+- [x] FastAPI web layer over the same `generate()` — `fass/api.py`,
+  `POST /v1/commands` + `/v1/support` + `/v1/env`, minimal UI at `GET /`,
+  `fass serve` subcommand
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`

@@ -11,9 +11,31 @@ Spec: ffmpeg-assistant-prd.md; guide: plan0.md.
 (schema, rules, planner/builder, render-adversarial, cli) + 78 language
 benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 
+**MILESTONE 2 COMPLETE (2026-10-23).** FastAPI web layer over `generate()`
+(plan0: "add the web interface after that path works end to end"). 178 tests
+pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
+smoke-tested live (healthz, /v1/commands, UI).
+
 ## Current state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
   probe, feedback: COMPLETE and smoke-verified.
+- API (new): fass/api.py — create_app() + module-level app; POST /v1/commands
+  (CommandRequest: instruction, assets id→local path, output_filename,
+  target_shell Literal["posix"], previous_plan, media ffprobe JSON, adapter,
+  preflight); domain outcomes (ready/needs_clarification/unsupported/error)
+  are structured 200s, malformed requests 422; GET /v1/support, /v1/env,
+  /healthz, / (self-contained UI, no external assets). No subprocess in the
+  API — PRD §10: the service never executes.
+- serve subcommand added to cli.py ("serve" in main() routing tuple +
+  handler; --host defaults 127.0.0.1, --port 8000).
+- BUG FIX found via API tests: probe_ffmpeg() filter parsing used a substring
+  test (`line.split()[0] in "TS.-"`) that only matched "TS." flag rows and
+  captured description words. Now: first column must match ^[TSC.-]+$ and
+  second column != "=" → 555 real filter names. CLI `env` + preflight
+  filter checks are fixed by the same change.
+- Note: adapter "auto" picks the LLM adapter when ANTHROPIC_API_KEY is set
+  (here: an invalid key → structured status "error" with the provider error,
+  never a 5xx). API tests pin adapter="rules" like the CLI gen fixture.
 - Delegated via dispatcher (project `fass`, team mode, base 3bd8a76):
   - Job A `j_c58bc3ed95` (backend i7): INTEGRATED, merge cdd3f6d,
     dispatch_integrate accepted. 78-request benchmark + 5 rules.py bug fixes
@@ -45,26 +67,32 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
   shares the same pydantic envelope validation.
 - Watermark: labeled filter_complex + `overlay`, `-map [vN] -map 0:a?`.
 
-## Changed files (this milestone)
-fass/{__init__,__main__,cli,pipeline,explain,feedback}.py,
-fass/schema/{plan,registry?}.py (schema/), fass/registry/, fass/probe/,
+## Changed files (milestone 1 + 2)
+fass/{__init__,__main__,cli,pipeline,explain,feedback,api}.py,
+fass/schema/plan.py, fass/registry/, fass/probe/ffprobe.py,
 fass/planner/, fass/builder/, fass/nlu/{rules,llm}.py,
 tests/{conftest,test_schema,test_rules,test_planner_builder,
-test_render_adversarial,test_cli}.py, pyproject.toml, .gitignore, HANDOFF.md
+test_render_adversarial,test_cli,test_api}.py,
+tests/benchmark/{requests.json}, tests/test_benchmark.py,
+tests/test_media.py, tests/test_titan.py,
+media/titan.mp4, pyproject.toml, .gitignore, README.md, HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **162 passed** in ~33 s, no failures.
-Breakdown: 70 deterministic · 78 benchmark · 10 media (lavfi) · 4 titan.
-venv has pydantic 2.14.1 + pytest 9.1.1; fass is NOT pip-installed
-(cwd import) — run tests from repo root.
+`./.venv/bin/python -m pytest -q` → **178 passed** in ~34 s, no failures.
+Breakdown: 70 deterministic · 78 benchmark · 10 media (lavfi) · 4 titan ·
+16 API. Live server smoke-tested: `fass serve` + curl (healthz, command, UI).
+venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
+(TestClient dep, added milestone 2); fass is NOT pip-installed (cwd import) —
+run tests from repo root.
 
 ## Next steps
-Milestone 1 done. Remaining:
-1. Mycelium project memory for fass (in progress this session).
-2. plan0 milestone 2 (when requested): FastAPI web layer over `generate()`,
-   streaming progress, job history — the CLI `--json` response is the API
-   contract already.
-3. No commits/pushes beyond milestone work unless asked (no remote exists).
+Milestones 1+2 done (all of plan0's stated scope except the learning
+infrastructure, which plan0 defers explicitly). Candidates if requested:
+1. More ops (crop, speed — currently "unsupported"), LLM adapter evaluation
+   against the 78-request benchmark.
+2. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
+3. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
+No commits/pushes beyond milestone work unless asked (no remote exists).
 
 ## Environment notes
 - Python 3.12.3, `.venv` (PEP 668 blocks system pip) — use `./.venv/bin/python -m pytest`.

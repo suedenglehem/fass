@@ -145,7 +145,7 @@ def _subcommand(argv: list[str]) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd in ("--help", "-h"):
         print(__doc__)
-        print("\nSubcommands: generate (default), probe FILE, env, feedback, examples")
+        print("\nSubcommands: generate (default), probe FILE, env, serve, feedback, examples")
         return 0
     if cmd == "--version":
         print(f"fass {__version__}")
@@ -181,6 +181,22 @@ def _subcommand(argv: list[str]) -> int:
         print("\nfilters used by fass:")
         for name in ("scale", "pad", "hue", "overlay", "format"):
             print(f"  {name:<14} {'ok' if name in ff.filters else 'MISSING'}")
+        return 0
+    if cmd == "serve":
+        p = argparse.ArgumentParser(prog="fass serve")
+        p.add_argument("--host", default="127.0.0.1",
+                       help="bind address (default 127.0.0.1 — local-first)")
+        p.add_argument("--port", type=int, default=8000)
+        a = p.parse_args(rest)
+        try:
+            import uvicorn
+        except ImportError:
+            print("error: uvicorn is required to serve (pip install uvicorn)", file=sys.stderr)
+            return 1
+        from fass.api import app
+        print(f"fass API on http://{a.host}:{a.port} (open / for the web UI; "
+              "the service never executes generated commands)")
+        uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
         return 0
     if cmd == "feedback":
         p = argparse.ArgumentParser(prog="fass feedback")
@@ -219,6 +235,6 @@ def dataclasses_asdict(obj) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv and argv[0] in ("probe", "env", "feedback", "examples", "--help", "-h", "--version"):
+    if argv and argv[0] in ("probe", "env", "serve", "feedback", "examples", "--help", "-h", "--version"):
         return _subcommand(argv)
     return _generate_cli(argv)

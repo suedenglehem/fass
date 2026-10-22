@@ -9,6 +9,7 @@ MVP) so the planner can make remux decisions and range checks honest.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -17,6 +18,11 @@ _HDR_PIX_FMTS = {
     "p010le", "p012le", "p016le", "p010be", "p016be",
     "x2rgb10le", "x2rgb12le", "x2rgb16le",
 }
+
+# `ffmpeg -filters` rows: "  T.C hue    V->V   Adjust the hue..." — the flags
+# column is 3 chars from [TSC] with '.' placeholders; legend rows use "=" as
+# the second column, which is how they are told apart.
+_FILTER_FLAG = re.compile(r"^[TSC.-]+$")
 
 
 @dataclass
@@ -160,7 +166,12 @@ def probe_ffmpeg() -> FfmpegInfo | None:
         info.encoders = {line.split()[1] for line in enc.splitlines() if len(line.split()) > 1}
     fil = _run(["ffmpeg", "-hide_banner", "-filters"])
     if fil:
-        info.filters = {line.split()[-1] for line in fil.splitlines() if line.strip() and line.split()[0] in "TS.-"}
+        names = set()
+        for line in fil.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and _FILTER_FLAG.match(parts[0]) and parts[1] != "=":
+                names.add(parts[1])
+        info.filters = names
     return info
 
 
