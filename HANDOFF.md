@@ -11,11 +11,15 @@ Spec: ffmpeg-assistant-prd.md; guide: plan0.md.
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
   probe, feedback: COMPLETE and smoke-verified.
 - Tests: 70 passed (schema, rules, planner/builder, render-adversarial, cli).
-- Delegated via dispatcher (project `fass`, team mode, worker `i7`):
-  - Job A: tests/benchmark/requests.json (50 requests) + tests/test_benchmark.py
-  - Job B: tests/test_media.py + conftest lavfi fixtures (depends on A)
-- Next: integrate A and B into main when jobs finish, run full suite,
-  write README.md, save mycelium project memory.
+- Delegated via dispatcher (project `fass`, team mode, base 3bd8a76):
+  - Job A `j_c58bc3ed95` (backend i7, 225k ctx): tests/benchmark/requests.json
+    (50 requests) + tests/test_benchmark.py; may fix fass/nlu/rules.py bugs.
+  - Job B `j_95829e9a84` (backend tr4-secondary, 140B iq3xs, 83k ctx):
+    tests/test_media.py + conftest fixtures. Parallel with A (disjoint files).
+- README.md written (committed).
+- Next: integrate A and B into main when jobs finish (review diff, merge
+  branch dispatch/j_*, dispatch_integrate with merge commit), run full suite,
+  save mycelium project memory.
 
 ## Key decisions
 - argv arrays are the source of truth; shell rendering is shlex.join only.
