@@ -134,8 +134,10 @@ round-trips of hostile filenames and instruction-injection payloads.
 
 ## Roadmap
 
-- [ ] 50-request benchmark suite (in progress via dispatcher jobs)
-- [ ] real media-fixture outcome tests (run the command, probe the result)
+- [x] 50-request benchmark suite — 78 requests in `tests/benchmark/`
+- [x] real media-fixture outcome tests — `tests/test_media.py` (synthetic
+  lavfi) + `tests/test_titan.py` (committed real file), run the command,
+  probe the result
 - [ ] FastAPI web layer over the same `generate()` (plan0: after CLI works)
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`
