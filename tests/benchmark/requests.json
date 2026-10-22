@@ -1,0 +1,460 @@
+[
+  {
+    "id": "bench-001",
+    "instruction": "Resize to 720p",
+    "expected": {"status": "ready", "ops": ["resize"], "container": "mp4", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-002",
+    "instruction": "Cut from 00:10 to 00:30",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 10, "duration_seconds": 20}}
+  },
+  {
+    "id": "bench-003",
+    "instruction": "Convert to MP4 using H.265",
+    "assets": {"input": "clip.mov"},
+    "expected": {"status": "ready", "ops": [], "container": "mp4", "video_codec": "h265"}
+  },
+  {
+    "id": "bench-004",
+    "instruction": "Make it black and white",
+    "expected": {"status": "ready", "ops": ["grayscale"], "audio_mode": "encode"}
+  },
+  {
+    "id": "bench-005",
+    "instruction": "Add my logo to the top-left corner",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "expected": {"status": "ready", "ops": ["watermark"]}
+  },
+  {
+    "id": "bench-006",
+    "instruction": "Cut from 00:10 to 00:30, resize to 720p, make it black and white, and remove the audio",
+    "expected": {"status": "ready", "ops": ["resize", "grayscale"], "trim": {"start_seconds": 10, "duration_seconds": 20}, "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-007",
+    "instruction": "Make it smaller",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-008",
+    "instruction": "Cut from 00:30 to 00:10",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-009",
+    "instruction": "Convert to mp4 keeping the audio",
+    "expected": {"status": "ready", "ops": [], "container": "mp4", "audio_mode": "encode"}
+  },
+  {
+    "id": "bench-010",
+    "instruction": "Make it 2x faster",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-011",
+    "instruction": "Convert to mp4",
+    "assets": {"input": "clip;rm -rf.mp4"},
+    "expected": {"status": "ready", "ops": [], "container": "mp4", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-012",
+    "instruction": "Use H.264 instead",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h265", "audio_mode": "encode"},
+      "trim": {"start_seconds": 10, "duration_seconds": 20},
+      "operations": [{"type": "resize", "height": 720}, {"type": "grayscale"}]
+    },
+    "expected": {"status": "ready", "ops": ["resize", "grayscale"], "trim": {"start_seconds": 10, "duration_seconds": 20}, "container": "mp4", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-013",
+    "instruction": "Trim the first 20 seconds",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 0, "duration_seconds": 20}}
+  },
+  {
+    "id": "bench-014",
+    "instruction": "Resize to 1280x720",
+    "expected": {"status": "ready", "ops": ["resize"]}
+  },
+  {
+    "id": "bench-015",
+    "instruction": "Convert to MKV",
+    "expected": {"status": "ready", "ops": [], "container": "mkv", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-016",
+    "instruction": "Convert to WebM",
+    "expected": {"status": "ready", "ops": [], "container": "webm", "video_codec": "vp9"}
+  },
+  {
+    "id": "bench-017",
+    "instruction": "Convert to MOV",
+    "expected": {"status": "ready", "ops": [], "container": "mov", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-018",
+    "instruction": "Encode as AVC",
+    "expected": {"status": "ready", "ops": [], "video_codec": "h264"}
+  },
+  {
+    "id": "bench-019",
+    "instruction": "Encode as HEVC",
+    "expected": {"status": "ready", "ops": [], "video_codec": "h265"}
+  },
+  {
+    "id": "bench-020",
+    "instruction": "Convert to MKV with VP9",
+    "expected": {"status": "ready", "ops": [], "container": "mkv", "video_codec": "vp9"}
+  },
+  {
+    "id": "bench-021",
+    "instruction": "Remove the audio",
+    "expected": {"status": "ready", "ops": [], "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-022",
+    "instruction": "Strip the audio",
+    "expected": {"status": "ready", "ops": [], "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-023",
+    "instruction": "No audio",
+    "expected": {"status": "ready", "ops": [], "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-024",
+    "instruction": "Add the watermark at the bottom-right with a 24px margin",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "expected": {"status": "ready", "ops": ["watermark"]}
+  },
+  {
+    "id": "bench-025",
+    "instruction": "Grayscale it",
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-026",
+    "instruction": "Convert to grayscale",
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-027",
+    "instruction": "Desaturate the video",
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-028",
+    "instruction": "Trim from 1:00 to 1:30",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 60, "duration_seconds": 30}}
+  },
+  {
+    "id": "bench-029",
+    "instruction": "Cut 5 to 25 seconds",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 5, "duration_seconds": 20}}
+  },
+  {
+    "id": "bench-030",
+    "instruction": "Keep the first 1 minute",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 0, "duration_seconds": 60}}
+  },
+  {
+    "id": "bench-031",
+    "instruction": "Cut from 00:10 to 00:30 and resize to 720p",
+    "expected": {"status": "ready", "ops": ["resize"], "trim": {"start_seconds": 10, "duration_seconds": 20}}
+  },
+  {
+    "id": "bench-032",
+    "instruction": "Resize to 720p, add logo.png in the top-right, and make it black and white",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "expected": {"status": "ready", "ops": ["resize", "grayscale", "watermark"]}
+  },
+  {
+    "id": "bench-033",
+    "instruction": "Trim to 30 seconds, remove the audio, and convert to MKV",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 0, "duration_seconds": 30}, "container": "mkv", "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-034",
+    "instruction": "Cut from 00:05 to 00:45, resize to 480p, grayscale, add logo.png centered, and remove the audio",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "expected": {"status": "ready", "ops": ["resize", "grayscale", "watermark"], "trim": {"start_seconds": 5, "duration_seconds": 40}, "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-035",
+    "instruction": "Convert to WebM with VP9 and resize to 720p",
+    "expected": {"status": "ready", "ops": ["resize"], "container": "webm", "video_codec": "vp9"}
+  },
+  {
+    "id": "bench-036",
+    "instruction": "Make it black and white and remove the audio",
+    "expected": {"status": "ready", "ops": ["grayscale"], "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-037",
+    "instruction": "Resize to 1920x1080 and add the watermark in the top-left",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "expected": {"status": "ready", "ops": ["resize", "watermark"]}
+  },
+  {
+    "id": "bench-038",
+    "instruction": "Scale it down to 720p",
+    "expected": {"status": "ready", "ops": ["resize"]}
+  },
+  {
+    "id": "bench-039",
+    "instruction": "720p please",
+    "expected": {"status": "ready", "ops": ["resize"]}
+  },
+  {
+    "id": "bench-040",
+    "instruction": "Trim 10 to 30 seconds",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 10, "duration_seconds": 20}}
+  },
+  {
+    "id": "bench-041",
+    "instruction": "Keep seconds 10 through 30",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 10, "duration_seconds": 20}}
+  },
+  {
+    "id": "bench-042",
+    "instruction": "Give me a b&w version",
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-043",
+    "instruction": "Make it monochrome",
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-044",
+    "instruction": "Brand it with logo.png in the top-right",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "expected": {"status": "ready", "ops": ["watermark"]}
+  },
+  {
+    "id": "bench-045",
+    "instruction": "Mute everything",
+    "expected": {"status": "ready", "ops": [], "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-046",
+    "instruction": "Without the audio",
+    "expected": {"status": "ready", "ops": [], "audio_mode": "remove"}
+  },
+  {
+    "id": "bench-047",
+    "instruction": "Convert to QuickTime",
+    "expected": {"status": "ready", "ops": [], "container": "mov", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-048",
+    "instruction": "Export as HEVC in an MKV",
+    "expected": {"status": "ready", "ops": [], "container": "mkv", "video_codec": "h265"}
+  },
+  {
+    "id": "bench-049",
+    "instruction": "Make the file exactly 5 MB",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-050",
+    "instruction": "Re-encode lossless",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-051",
+    "instruction": "Keep the last 10 seconds",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-052",
+    "instruction": "Compress it",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-053",
+    "instruction": "Add a watermark",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-054",
+    "instruction": "Resize to 720p, no, 480p",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-055",
+    "instruction": "Keep the audio and remove the audio",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-056",
+    "instruction": "",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-057",
+    "instruction": "Hello there",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-058",
+    "instruction": "Shrink it",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-059",
+    "instruction": "Rotate the video 90 degrees",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-060",
+    "instruction": "Extract the audio to mp3",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-061",
+    "instruction": "Convert to WebM with H.264",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-062",
+    "instruction": "Convert to AVI",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-063",
+    "instruction": "Add subtitles",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-064",
+    "instruction": "Concatenate two clips",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-065",
+    "instruction": "Crop it to 16:9",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-066",
+    "instruction": "Make it twice as fast",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-067",
+    "instruction": "Burn in the subtitles",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-068",
+    "instruction": "Stabilize the footage",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-069",
+    "instruction": "Add a text overlay",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-070",
+    "instruction": "Make the intro slow motion",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-071",
+    "instruction": "Use H.265 instead",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "trim": {"start_seconds": 10, "duration_seconds": 20},
+      "operations": [{"type": "resize", "height": 720}]
+    },
+    "expected": {"status": "ready", "ops": ["resize"], "trim": {"start_seconds": 10, "duration_seconds": 20}, "video_codec": "h265"}
+  },
+  {
+    "id": "bench-072",
+    "instruction": "Move the watermark to the top-left",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "operations": [{"type": "watermark", "asset_id": "watermark", "position": "bottom_right"}]
+    },
+    "expected": {"status": "ready", "ops": ["watermark"]}
+  },
+  {
+    "id": "bench-073",
+    "instruction": "Remove the trim",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "trim": {"start_seconds": 10, "duration_seconds": 20},
+      "operations": []
+    },
+    "expected": {"status": "ready", "ops": [], "trim": null}
+  },
+  {
+    "id": "bench-074",
+    "instruction": "No watermark",
+    "assets": {"input": "clip.mp4", "watermark": "logo.png"},
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "operations": [{"type": "watermark", "asset_id": "watermark", "position": "bottom_right"}, {"type": "grayscale"}]
+    },
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-075",
+    "instruction": "Make it black and white",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "operations": []
+    },
+    "expected": {"status": "ready", "ops": ["grayscale"]}
+  },
+  {
+    "id": "bench-076",
+    "instruction": "Back to color",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "operations": [{"type": "grayscale"}]
+    },
+    "expected": {"status": "ready", "ops": []}
+  },
+  {
+    "id": "bench-077",
+    "instruction": "Use VP9 instead",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h265", "audio_mode": "encode"},
+      "operations": []
+    },
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-078",
+    "instruction": "Convert to MKV",
+    "previous_plan": {
+      "schema_version": "1.0",
+      "input_id": "main",
+      "output": {"container": "mp4", "video_codec": "h264", "audio_mode": "encode"},
+      "trim": {"start_seconds": 10, "duration_seconds": 20},
+      "operations": []
+    },
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 10, "duration_seconds": 20}, "container": "mkv", "video_codec": "h264"}
+  }
+]

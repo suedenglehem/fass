@@ -75,7 +75,7 @@ def _times_in(text: str) -> list[float]:
     return out
 
 
-_TRIM_VERB = re.compile(r"\b(cut|trim|trims|trimming|clip|clips|chop|slice)\b")
+_TRIM_VERB = re.compile(r"\b(cut|trim|trims|trimming|clip|clips|chop|slice|keep|keeps|keeping)\b")
 _RANGE = re.compile(
     r"(?:\b(?:seconds?|secs?|minutes?|mins?)\s+)?"
     r"(?P<a>\d{1,4}(?::\d{2})?(?:\.\d+)?)\s*(?:to|through|until|-|–)\s*"
@@ -130,10 +130,17 @@ def _resolve_trim(t: str, input_duration: float | None):
     if _TRIM_VERB.search(t):
         m = _RANGE.search(t)
         if m:
-            a, b = _to_seconds(m.group("a")), _to_seconds(m.group("b"))
+            unit = m.group("u")
+            a = _to_seconds(m.group("a") if not unit else f"{m.group('a')} {unit}")
+            b = _to_seconds(m.group("b") if not unit else f"{m.group('b')} {unit}")
+            # bare numbers in a range are seconds (the documented interpretation)
+            if a is None and re.fullmatch(r"\d+(?:\.\d+)?", m.group("a")):
+                a = float(m.group("a"))
+            if b is None and re.fullmatch(r"\d+(?:\.\d+)?", m.group("b")):
+                b = float(m.group("b"))
             if a is not None and b is not None and b > a:
                 note = None
-                if not m.group("u") and ":" not in m.group("a") and ":" not in m.group("b"):
+                if not unit and ":" not in m.group("a") and ":" not in m.group("b"):
                     note = "assumed seconds for the interval"
                 return TrimSpec(start_seconds=a, end_seconds=b), note, None
 
@@ -340,13 +347,13 @@ def _detect_watermark(t: str, assets: dict):
 UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:speed\s*up|slow\s*down|slow[\s-]?motion|time[\s-]?lapse|faster|slower|twice\s+as\s+fast|three\s+times\s+as\s+fast|\d+(?:\.\d+)?\s*x\s*speed|at\s+\d+(?:\.\d+)?\s*x\b)", re.I), "speed changes"),
     (re.compile(r"\brotat(?:e|ed|ing)\b|\bflip(?:ping)?\b|\bmirror(?:ing)?\b", re.I), "rotation and flipping"),
-    (re.compile(r"\bcropp?ing?\b", re.I), "cropping"),
+    (re.compile(r"\bcrop(?:s|ping|ing)?\b", re.I), "cropping"),
     (re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsoften\w*\b|\bamplif\w*\b|\bloudness\b|\bnormali[sz]e\s+audio\b", re.I), "audio level changes"),
     (re.compile(r"\bsubtitles?\b|\bcaptions?\b|\bsrt\b|\bburn\s+(?:in|the)\s+sub\w*", re.I), "subtitles"),
     (re.compile(r"\bconcat(?:enate)?\b|\bmerge\w*\b|\bstitch\w*\b|\bappend\w*\b", re.I), "concatenation of multiple files"),
     (re.compile(r"\bsplit(?:ting)?\b", re.I), "splitting into segments"),
     (re.compile(r"\bblur(?:ring)?\b|\bsepia\b|\bvintage\b|\bretro\b|\bfade(?:s|d|ing)?\b", re.I), "additional color effects"),
-    (re.compile(r"\bsharpen\w*\b|\bdenois\w*\b|\bstabilis\w*\b", re.I), "stabilization, sharpening, denoising"),
+    (re.compile(r"\bsharpen\w*\b|\bdenois\w*\b|\bstabil(?:is|iz)\w*\b", re.I), "stabilization, sharpening, denoising"),
     (re.compile(r"add\s+(?:some\s+|the\s+|a\s+)?text\b|\btext\s+overlay\b|\btitle\s+card\b|\btimestamp\b", re.I), "text overlays"),
     (re.compile(r"\bhdr\b|\btone[\s-]?map\w*\b", re.I), "HDR workflows"),
     (re.compile(r"\bgpu\b|\bnvenc\b|\bcuda\b|\bvideotoolbox\b|\bqsv\b|\bhardware\s+accelerat\w*", re.I), "hardware acceleration"),
@@ -569,7 +576,8 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if re.search(r"\b(?:no|without|drop|remove|get\s+rid\s+of)\s+(?:the\s+)?watermark\b", t, re.I):
         plan.operations = [o for o in plan.operations if o.type != "watermark"]
         changed.append("watermark removed")
-    if re.search(r"\b(?:no|without)\s+(?:the\s+)?(?:trim|cut)\b|keep\s+the\s+whole\s+video|don'?t\s+cut", t, re.I):
+        watermark = None  # negation wins: do not re-add the detected op
+    if re.search(r"\b(?:no|without|drop|remove|get\s+rid\s+of)\s+(?:the\s+)?(?:trim|cut)\b|keep\s+the\s+whole\s+video|don'?t\s+cut", t, re.I):
         plan.trim = None
         changed.append("trim removed")
     if re.search(r"remove\s+(?:the\s+)?grayscale|back\s+to\s+color|in\s+color\s+again|keep\s+the\s+color", t, re.I):
