@@ -1,0 +1,98 @@
+"""CLI behavior: exit codes, JSON mode, subcommands (run as a subprocess)."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def run_cli(*args, cwd=ROOT):
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)  # force deterministic rules adapter
+    return subprocess.run(
+        [sys.executable, "-m", "fass", *args],
+        capture_output=True, text=True, cwd=str(cwd), env=env, timeout=120,
+    )
+
+
+def test_no_args_shows_help_and_examples():
+    r = run_cli()
+    assert r.returncode == 0
+    assert "Examples" in r.stdout
+    assert "resize to 720p" in r.stdout
+
+
+def test_version():
+    r = run_cli("--version")
+    assert r.returncode == 0
+    assert "fass" in r.stdout
+
+
+def test_ready_exit_zero_and_json():
+    r = run_cli('resize to 720p', "clip.mp4", "--adapter", "rules", "--json")
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["status"] == "ready"
+    assert data["command"].startswith("ffmpeg ")
+    assert data["arguments"][0] == "ffmpeg"
+
+
+def test_clarification_exit_code():
+    r = run_cli("make it smaller", "clip.mp4", "--adapter", "rules", "--json")
+    assert r.returncode == 3
+    data = json.loads(r.stdout)
+    assert data["status"] == "needs_clarification"
+    assert data["clarifications"]
+
+
+def test_unsupported_exit_code():
+    r = run_cli("make it 2x faster", "clip.mp4", "--adapter", "rules", "--json")
+    assert r.returncode == 4
+    data = json.loads(r.stdout)
+    assert data["status"] == "unsupported"
+
+
+def test_missing_input_is_error():
+    r = run_cli("resize to 720p", "--adapter", "rules")
+    assert r.returncode == 2
+    assert "input video is required" in r.stderr
+
+
+def test_examples_subcommand():
+    r = run_cli("examples")
+    assert r.returncode == 0
+    assert "Supported" in r.stdout or "resize" in r.stdout
+
+
+def test_feedback_writes_jsonl(tmp_path):
+    out = tmp_path / "fb.jsonl"
+    env = dict(os.environ)
+    env["FASS_FEEDBACK_FILE"] = str(out)
+    r = subprocess.run(
+        [sys.executable, "-m", "fass", "feedback", "--useful",
+         "--category", "builder_bug", "--note", "it worked"],
+        capture_output=True, text=True, cwd=str(ROOT), env=env, timeout=60,
+    )
+    assert r.returncode == 0, r.stderr
+    line = json.loads(out.read_text().strip().splitlines()[-1])
+    assert line["useful"] is True
+    assert line["category"] == "builder_bug"
+    assert "instruction" not in line  # no consent -> instruction not stored
+
+
+def test_feedback_instruction_only_with_consent(tmp_path):
+    out = tmp_path / "fb.jsonl"
+    env = dict(os.environ)
+    env["FASS_FEEDBACK_FILE"] = str(out)
+    subprocess.run(
+        [sys.executable, "-m", "fass", "feedback", "--incorrect",
+         "--instruction", "resize to 720p", "--consent"],
+        capture_output=True, text=True, cwd=str(ROOT), env=env, timeout=60,
+    )
+    line = json.loads(out.read_text().strip().splitlines()[-1])
+    assert line["instruction"] == "resize to 720p"

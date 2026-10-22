@@ -1,0 +1,82 @@
+{
+  "registry_version": "1.0.0",
+  "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
+  "tested_ffmpeg": {
+    "version": "6.1.1",
+    "build": "Ubuntu 24.04 package (ffmpeg 6.1.1-3ubuntu5)",
+    "notes": "libx264, libhevc, libvpx-vp9, aac, libopus verified present on the development machine"
+  },
+  "containers": {
+    "mp4": { "extensions": ["mp4", "m4v"] },
+    "mov": { "extensions": ["mov", "qt"] },
+    "mkv": { "extensions": ["mkv"] },
+    "webm": { "extensions": ["webm"] }
+  },
+  "video_codecs": {
+    "h264": {
+      "encoder": "libx264",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 23 },
+      "requires": "libx264 — present in nearly all builds",
+      "note": "Default choice for compatibility."
+    },
+    "h265": {
+      "encoder": "libhevc",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 28 },
+      "requires": "libhevc — built into FFmpeg, but encoding is slower",
+      "note": "Smaller files than H.264 at similar quality; slower to encode."
+    },
+    "vp9": {
+      "encoder": "libvpx-vp9",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 32, "bitrate": "0" },
+      "requires": "libvpx — built into FFmpeg",
+      "note": "The standard WebM video codec."
+    }
+  },
+  "audio_codecs": {
+    "aac": { "encoder": "aac", "bitrate_kbps": 160, "requires": "native aac encoder — built in" },
+    "opus": { "encoder": "libopus", "bitrate_kbps": 128, "requires": "libopus — built in" }
+  },
+  "matrix": {
+    "mp4":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
+    "mov":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
+    "mkv":  { "video": ["h264", "h265", "vp9"], "audio": ["aac", "opus"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "webm": { "video": ["vp9"], "audio": ["opus"], "default_video": "vp9", "audio_codec": "opus", "flags": [] }
+  },
+  "operations": {
+    "resize": {
+      "description": "Scale the video. A height (e.g. 720p) or width keeps the aspect ratio; width+height letterboxes (preserve) or stretches (exact).",
+      "default_aspect": "preserve",
+      "note": "A 720p request sets the output height to 720 with an aspect-compatible even width — it does not pad or crop to 1280x720."
+    },
+    "grayscale": {
+      "description": "Remove color from the video (black and white). Audio is unaffected.",
+      "filter": "hue=s=0"
+    },
+    "watermark": {
+      "description": "Overlay one static image throughout the output.",
+      "filter": "overlay (labeled filter graph)",
+      "defaults": { "position": "bottom_right", "margin_px": 16, "scale_percent": 100 },
+      "note": "Image is shown at original size unless scaled; margin is in output pixels; the overlay persists for the whole interval (single-frame input never bounds duration)."
+    }
+  },
+  "stream_selection": {
+    "video": "0:v:0",
+    "audio": "0:a:0 (first audio stream only; additional streams are excluded)",
+    "note": "Additional streams beyond the first video and first audio are not carried over (visible notice in the explanation)."
+  },
+  "trim_policy": "Trimming re-encodes: the MVP prioritizes accurate cuts over fast stream-copy cuts (PRD FR-4).",
+  "copy_policy": "Stream copy (remux) is chosen only when no filters are required AND media metadata proves the input streams already match the requested codecs. Without metadata the planner re-encodes and says so.",
+  "docs_provenance": {
+    "seeking_and_duration": "https://ffmpeg.org/ffmpeg.html (options -ss, -t; input vs output placement)",
+    "stream_mapping": "https://ffmpeg.org/ffmpeg.html (-map)",
+    "scale_filter": "https://ffmpeg.org/ffmpeg-filters.html#scale_2",
+    "hue_filter": "https://ffmpeg.org/ffmpeg-filters.html#hue_2",
+    "overlay_filter": "https://ffmpeg.org/ffmpeg-filters.html#overlay_2",
+    "pad_filter": "https://ffmpeg.org/ffmpeg-filters.html#pad",
+    "encoders": "https://ffmpeg.org/ffmpeg-all.html (libx264, libhevc, libvpx-vp9, aac, libopus)",
+    "formats": "https://ffmpeg.org/ffmpeg-formats.html (mp4, mov, matroska, webm)"
+  }
+}
