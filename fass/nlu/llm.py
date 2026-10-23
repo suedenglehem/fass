@@ -58,7 +58,11 @@ crop (exact width AND height only — an aspect-ratio crop like 16:9 needs a
 clarification asking for exact dimensions), speed (factor 0.25-8; "slower" inverts
 the factor), rotate (angle 90/180/270 only, clockwise by default — anything else is
 unsupported), grayscale, watermark (asset_id, position top_left|top_right|bottom_left|
-bottom_right|center, margin_px, scale_percent), audio_replace (asset_id of an audio
+bottom_right|center, margin_px, scale_percent), subtitles (asset_id of an
+srt/ass/ssa/vtt file; mode "burn" is the default — hard-coded into the video,
+forces a re-encode — and "soft" muxes a selectable track, which exists only
+for mp4/mov (mov_text) and mkv (srt) outputs; for any other container use
+"burn"), audio_replace (asset_id of an audio
 file — its first audio stream replaces the output audio; the output ends when the
 shorter of video and replacement audio ends), audio_resample (sample_rate and/or
 channels 1|2|6). Output extras (set on "output", only when the user asks):
@@ -92,7 +96,7 @@ Rules:
 - Times are numbers of seconds. "720p" means resize height 720 with aspect_ratio "preserve" (no padding to 1280x720).
 - An input asset may have kind "source" (a local capture source such as lavfi:/v4l2:/
   alsa:/x11grab:) — reference it by id exactly like any other input.
-- If any part of the request is beyond the supported set (e.g. volume changes, subtitles, concatenation, flipping, stabilization, HDR, lossless), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
+- If any part of the request is beyond the supported set (e.g. volume changes, extracting subtitles, concatenation, flipping, stabilization, HDR, lossless), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
 - If a detail is missing or ambiguous in a way that materially changes the edit (e.g. "make it smaller" without a target, missing watermark file, exact file size, lossless vs high quality), set status "needs_clarification" with exactly one focused question.
 - Use documented defaults for low-risk choices and record them in "defaults".
 - For revisions: start from the previous plan, change only what the instruction changes, preserve everything else, and return the complete updated plan.

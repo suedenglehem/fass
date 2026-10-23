@@ -327,7 +327,7 @@
   {
     "id": "bench-063",
     "instruction": "Add subtitles",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "needs_clarification"}
   },
   {
     "id": "bench-064",
@@ -347,7 +347,7 @@
   {
     "id": "bench-067",
     "instruction": "Burn in the subtitles",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "needs_clarification"}
   },
   {
     "id": "bench-068",
@@ -516,5 +516,17 @@
     "instruction": "Replace the audio with tune.mp3",
     "assets": {"input": "clip.mp4", "radio": "http://radio.example.com/tune.mp3"},
     "expected": {"status": "ready", "ops": ["audio_replace"], "audio_mode": "encode"}
+  },
+  {
+    "id": "bench-090",
+    "instruction": "Burn in the subtitles from subs.srt",
+    "assets": {"input": "clip.mp4", "subs": "subs.srt"},
+    "expected": {"status": "ready", "ops": ["subtitles"]}
+  },
+  {
+    "id": "bench-091",
+    "instruction": "Add the subtitles from subs.srt, and make the subtitles soft",
+    "assets": {"input": "clip.mp4", "subs": "subs.srt"},
+    "expected": {"status": "ready", "ops": ["subtitles"]}
   }
 ]

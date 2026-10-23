@@ -78,6 +78,7 @@ The MVP targets technically comfortable users who can run FFmpeg locally.
 | Rotate | Quarter-turn rotation (90°, 180°, 270°, clockwise or counterclockwise) |
 | Speed | Playback factor 0.25–8×, applied to video and audio together |
 | Watermark | Add one static image with a preset position and margin |
+| Subtitles | Burn srt / ass / ssa / vtt into the video via libass (default), or mux a selectable soft track (MP4 / MOV / MKV; stream-copy compatible) |
 | Audio handling | Preserve through compatible encoding, or remove audio |
 | Audio resampling | Target sample rate and/or channel count (mono, stereo, 5.1) |
 | Pixel format | 8-bit 4:2:0, 10-bit, or 4:4:4 (4:4:4 for VP9) |

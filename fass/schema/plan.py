@@ -180,6 +180,22 @@ class AudioReplaceOp(BaseModel):
     asset_id: str = Field(min_length=1, max_length=64)
 
 
+class SubtitleOp(BaseModel):
+    """Add subtitles from a bound subtitle file (srt / ass / ssa / vtt).
+
+    ``mode="burn"`` hard-codes them into the video with the libass filters
+    (``subtitles=`` / ``ass=``) — forces a video re-encode. ``mode="soft"``
+    muxes them as a selectable track (mp4/mov → mov_text, mkv → srt) and is
+    compatible with stream-copy remuxing. The planner validates both the
+    container support and the asset kind; the builder emits the flags."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["subtitles"] = "subtitles"
+    asset_id: str = Field(min_length=1, max_length=64)
+    mode: Literal["burn", "soft"] = "burn"
+
+
 class WatermarkOp(BaseModel):
     """One static image overlay. Applied with the rest of the video chain;
     the builder uses a labeled filter graph so the image (a single-frame
@@ -198,7 +214,7 @@ class WatermarkOp(BaseModel):
 
 Operation = Annotated[
     Union[
-        ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp,
+        ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, SubtitleOp,
         CropOp, SpeedOp, RotateOp, AudioResampleOp,
     ],
     Field(discriminator="type"),
@@ -241,8 +257,8 @@ class EditPlan(BaseModel):
 
     @model_validator(mode="after")
     def _at_most_one_watermark(self) -> "EditPlan":
-        for op_type in ("watermark", "audio_replace", "crop", "speed",
-                        "rotate", "audio_resample"):
+        for op_type in ("watermark", "audio_replace", "subtitles", "crop",
+                        "speed", "rotate", "audio_resample"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:
                 raise ValueError(f"the MVP supports at most one {op_type} operation")
         return self
@@ -289,6 +305,7 @@ class AssetKind(str, Enum):
     VIDEO = "video"
     IMAGE = "image"
     AUDIO = "audio"
+    SUBTITLES = "subtitles"
     SOURCE = "source"  # a generic ffmpeg source spec (lavfi, v4l2, x11grab, …)
 
 
@@ -299,6 +316,7 @@ AUDIO_EXTENSIONS = {
     ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".flac",
     ".opus", ".aiff", ".aif", ".wma",
 }
+SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".vtt"}
 
 
 def guess_kind(path: str) -> AssetKind:
@@ -316,6 +334,8 @@ def guess_kind(path: str) -> AssetKind:
         return AssetKind.IMAGE
     if ext in AUDIO_EXTENSIONS:
         return AssetKind.AUDIO
+    if ext in SUBTITLE_EXTENSIONS:
+        return AssetKind.SUBTITLES
     return AssetKind.VIDEO
 
 

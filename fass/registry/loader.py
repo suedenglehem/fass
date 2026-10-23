@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -237,3 +238,46 @@ def output_device_for(path: str) -> str | None:
     """Device format for an allowlisted output device spec, else None."""
     parts = output_device_parts(path)
     return parts[0] if parts else None
+
+
+# ---------------------------------------------------------------- M5 subtitles
+
+_SUB_FILTER_ESCAPES = re.compile(r"([\\'\":=,;])")
+
+
+def subtitle_input_format(path: str) -> str | None:
+    """FFmpeg input format name for a subtitle file path (registry-driven),
+    or None if the extension is not a supported subtitle format."""
+    ext = os.path.splitext(path.split("?", 1)[0].split("#", 1)[0])[1].lower()
+    fmt = ext.lstrip(".").lower()
+    return fmt if fmt in REGISTRY["subtitles"]["input_formats"] else None
+
+
+def subtitle_burn_filter(path: str) -> str | None:
+    """libass filter name for burning a subtitle file: 'subtitles' (srt/vtt)
+    or 'ass' (ass/ssa); None for unsupported extensions."""
+    fmt = subtitle_input_format(path)
+    if fmt is None:
+        return None
+    return REGISTRY["subtitles"]["burn_filters"].get(fmt)
+
+
+def soft_subtitle_codec(container: str) -> str | None:
+    """Encoder for a soft (selectable) subtitle track in the container
+    (mp4/mov → mov_text, mkv → srt), or None when the container has no
+    subtitle codec (webm, mpegts, flv, rtsp, srt)."""
+    return REGISTRY["subtitles"]["soft_codecs"].get(container)
+
+
+def subtitle_burn_expr(path: str) -> str:
+    """Complete filter argument for burning ``path``: ``<filter>=<escaped>``.
+
+    The filename crosses TWO FFmpeg unescape layers before the file is
+    opened: the filter-graph parser (av_get_token) and the filter-option
+    parser (av_opt_set_from_string). Each layer treats backslash, quotes,
+    and (at the graph level) ','/';' as special. Escaping the same
+    character set once per layer is verified round-trip on ffmpeg 6.1.1
+    (hostile names: spaces, quotes, commas, semicolons, backslashes, '=').
+    """
+    escaped = _SUB_FILTER_ESCAPES.sub(r"\\\1", _SUB_FILTER_ESCAPES.sub(r"\\\1", path))
+    return f"{subtitle_burn_filter(path)}={escaped}"

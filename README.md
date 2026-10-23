@@ -54,6 +54,9 @@ inputs is what makes "replace the audio with song.mp3" work.
 - **One static watermark** (preset positions, margin, percent scale),
   **audio replacement** from a second bound input, **audio keep / remove** —
   and compositions of any of the above, in the order stated
+- **Subtitles** — bind an srt / ass / ssa / vtt file; **burned** into the
+  video by default (libass, forces a re-encode) or muxed as a **selectable
+  soft track** (MP4 / MOV / MKV — compatible with stream-copy)
 - **Capture sources** — `lavfi:` synthetic sources, `v4l2:` cameras, and
   alsa / dshow / avfoundation / x11grab bind as typed inputs
 - **Stream I/O** — inputs and outputs may be stream URLs (rtmp, rtsp, srt,

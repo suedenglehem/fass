@@ -24,7 +24,13 @@ from fass.probe.ffprobe import (
     probe_media,
     preflight,
 )
-from fass.registry import REGISTRY, is_source_spec, stream_output_info, stream_scheme
+from fass.registry import (
+    REGISTRY,
+    is_source_spec,
+    soft_subtitle_codec,
+    stream_output_info,
+    stream_scheme,
+)
 from fass.schema import AssetMap, EditPlan, ParseResult, ParseStatus
 
 
@@ -52,7 +58,8 @@ def _used_filters(ep) -> list[str]:
     chain = f"{ep.vf or ''}{ep.filter_complex or ''}"
     used = []
     for name in ("scale", "pad", "hue", "overlay", "format",
-                 "crop", "transpose", "hflip", "vflip", "setpts"):
+                 "crop", "transpose", "hflip", "vflip", "setpts",
+                 "subtitles", "ass"):
         if name in chain:
             used.append(name)
     return used
@@ -177,6 +184,11 @@ def generate(
             encoders = [REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]]
             if edit.output.audio_mode.value == "encode":
                 encoders.append(REGISTRY["audio_codecs"][REGISTRY["matrix"][edit.output.container]["audio_codec"]]["encoder"])
+            for op in edit.operations:
+                if op.type == "subtitles" and op.mode == "soft":
+                    enc = soft_subtitle_codec(edit.output.container)
+                    if enc:
+                        encoders.append(enc)
             checks = preflight(media, ff, encoders, _used_filters(ep))
             resp.checks = [dataclasses.asdict(c) for c in checks]
             if all(c.ok for c in checks):

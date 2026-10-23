@@ -40,6 +40,7 @@ from fass.schema import (
     ResizeOp,
     RotateOp,
     SpeedOp,
+    SubtitleOp,
     TrimSpec,
     UnsupportedPart,
     WatermarkOp,
@@ -54,9 +55,11 @@ SUPPORTED_SUMMARY = (
     "(e.g. 'cbr 10 Mbps'), pixel format ('10-bit', 'yuv444p'), encoder profile "
     "('baseline profile') and speed preset ('ultrafast preset') for H.264, "
     "grayscale ('black and white'), one image watermark (position, margin, "
-    "scale), audio keep/remove, audio resampling ('resample audio to 44.1k "
-    "mono'), and replacing the audio with another file ('replace the audio "
-    "with music.mp3'). Inputs may also be remote streams (http(s)://, "
+    "scale), subtitles from an srt/ass/ssa/vtt file ('add subtitles from "
+    "subs.srt' — burned in by default, or soft/selectable on request), audio "
+    "keep/remove, audio resampling ('resample audio to 44.1k mono'), and "
+    "replacing the audio with another file ('replace the audio with "
+    "music.mp3'). Inputs may also be remote streams (http(s)://, "
     "rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp:// URLs), local "
     "capture sources (lavfi:, v4l2:, alsa:, x11grab: …), and the output may "
     "be a stream ('stream this to rtmp://host:1935/live', 'publish to "
@@ -614,6 +617,61 @@ def _detect_watermark(t: str, assets: dict):
     return op, None, "; ".join(notes) or None
 
 
+# ---------------------------------------------------------------- subtitles
+
+# A bare .srt/.ass/.ssa/.vtt mention is handled by asset binding below; the
+# word triggers keep the detector honest about what the user asked for.
+_SUBTITLES_RE = re.compile(
+    r"\bsub(?:s|titles)?\b|\bcaptions?\b|\bburn\s+(?:in|the)\s+sub\w*", re.I)
+# "soften the audio" must NOT count as a soft-subtitle request (it is the
+# deferred volume pattern) — soft mode needs the subtitle word next to
+# 'soft', on either side: "soft subtitles" or "the subtitles ... soft".
+_SUB_SOFT_RE = re.compile(
+    r"\bsoft\s+(?:subs|subtitles|captions)\b"
+    r"|\b(?:subs|subtitles|captions)\s+(?:should\s+be\s+|as\s+)?soft\b"
+    r"|\bselectable\b|\bembed\w*\b", re.I)
+_SUB_BURN_RE = re.compile(
+    r"\bburn\w*\b|\bhard\s*cod\w*\b|\bhard\s+sub\w*\b|\bhardsub\w*\b", re.I)
+_SUB_NEG_RE = re.compile(
+    r"\b(?:no|without|drop|remove|strip|get\s+rid\s+of)\s+(?:the\s+)?(?:subtitles?|captions?|subs)\b",
+    re.I)
+
+
+def _detect_subtitles(t: str, assets: dict):
+    """Return (SubtitleOp|None, clarification|None, note|None).
+
+    Burn (hard-coded) is the default; soft/selectable only on explicit
+    wording. "remove the subtitles" is a negation — the input's own subtitle
+    streams are never carried over by default, so there is nothing to do on
+    a fresh plan."""
+    if not _SUBTITLES_RE.search(t):
+        return None, None, None
+    if _SUB_NEG_RE.search(t):
+        return None, None, None
+
+    if _SUB_SOFT_RE.search(t):
+        mode = "soft"
+    elif _SUB_BURN_RE.search(t):
+        mode = "burn"
+    else:
+        mode = "burn"
+
+    aid, note = _bind_asset(t, assets, AssetKind.SUBTITLES)
+    notes = [note] if note else []
+    if aid is None:
+        return None, Clarification(
+            question="which file should provide the subtitles?",
+            hint="provide it (e.g. --asset subs.srt) and refer to it in the request",
+        ), None
+    if mode == "burn" and not _SUB_BURN_RE.search(t):
+        notes.append(
+            "subtitle mode: burned into the video (default — say 'soft' or "
+            "'selectable' for a separate track)"
+        )
+    op = SubtitleOp(asset_id=aid, mode=mode)
+    return op, None, "; ".join(notes) or None
+
+
 # ---------------------------------------------------------------- unsupported
 
 UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
@@ -622,8 +680,10 @@ UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     # (e.g. an out-of-range factor) reaches the user, with its own message
     (re.compile(r"\bflip(?:ping)?\b|\bmirror(?:ing)?\b", re.I), "flipping and mirroring"),
     (re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsoften\w*\b|\bamplif\w*\b|\bloudness\b|\bnormali[sz]e\s+audio\b", re.I), "audio level changes"),
-    # \bsrt\b must not eat an srt:// stream URL (that is a destination, M3b)
-    (re.compile(r"\bsubtitles?\b|\bcaptions?\b|\bsrt\b(?!://)|\bburn\s+(?:in|the)\s+sub\w*", re.I), "subtitles"),
+    # Adding subtitles IS supported (M5) — only extracting them to a
+    # separate file is not. (An srt:// URL is a stream scheme, M3b — no
+    # pattern here may eat it.)
+    (re.compile(r"\bextract\s+(?:the\s+)?(?:subtitles?|captions?)\b", re.I), "extracting subtitles to a separate file"),
     (re.compile(r"\bconcat(?:enate)?\b|\bmerge\w*\b|\bstitch\w*\b|\bappend\w*\b", re.I), "concatenation of multiple files"),
     (re.compile(r"\bsplit(?:ting)?\b", re.I), "splitting into segments"),
     (re.compile(r"\bblur(?:ring)?\b|\bsepia\b|\bvintage\b|\bretro\b|\bfade(?:s|d|ing)?\b", re.I), "additional color effects"),
@@ -765,6 +825,7 @@ class RulesAdapter:
         audio = _detect_audio(t)
         watermark, wm_clar, wm_note = _detect_watermark(t, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
+        subtitle, sub_clar, sub_note = _detect_subtitles(t, assets)
         if audio_replace is not None and audio in ("remove", "conflict"):
             audio = None  # a replacement wins over remove / keep+remove
         grayscale = GRAYSCALE_RE.search(t) is not None
@@ -821,9 +882,25 @@ class RulesAdapter:
                 wm_clar = None
                 wm_note = "watermark: kept the previous image"
 
+        # 3b. revision: keep the previous subtitle file when the follow-up
+        #    re-mentions subtitles without naming a new file
+        if previous_plan is not None and sub_clar is not None and _SUBTITLES_RE.search(t):
+            prev_sub = next(
+                (o for o in previous_plan.operations if o.type == "subtitles"), None)
+            if prev_sub is not None:
+                if _SUB_SOFT_RE.search(t):
+                    sub_mode = "soft"
+                elif _SUB_BURN_RE.search(t):
+                    sub_mode = "burn"
+                else:
+                    sub_mode = prev_sub.mode
+                subtitle = SubtitleOp(asset_id=prev_sub.asset_id, mode=sub_mode)
+                sub_clar = None
+                sub_note = "subtitles: kept the previous file"
+
         # 4. explicit clarifications win (focused, one at a time)
         for c in (trim_clar, resize_clar, crop_clar, speed_clar, rotate_clar,
-                  rs_clar, wm_clar, ar_clar, ambiguous):
+                  rs_clar, wm_clar, ar_clar, sub_clar, ambiguous):
             if c is not None:
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -842,7 +919,7 @@ class RulesAdapter:
             plan, changed = _merge_revision(
                 previous_plan, t, trim, resize, audio, watermark, grayscale,
                 audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
-                audio_resample=audio_resample,
+                audio_resample=audio_resample, subtitle=subtitle,
             )
             if not changed:
                 return ParseResult(
@@ -866,6 +943,10 @@ class RulesAdapter:
                 ops.append(watermark)
             if speed is not None:
                 ops.append(speed)
+            if subtitle is not None:
+                # last among the video ops, so a burned filter runs on the
+                # final dimensions (after resize/crop/rotate/speed)
+                ops.append(subtitle)
             if audio_replace is not None:
                 ops.append(audio_replace)
             if audio_resample is not None:
@@ -885,6 +966,8 @@ class RulesAdapter:
             notes.append(wm_note)
         if ar_note:
             notes.append(ar_note)
+        if sub_note:
+            notes.append(sub_note)
 
         # 6. resolve output defaults — visible, never hidden
         if previous_plan is None:
@@ -892,7 +975,7 @@ class RulesAdapter:
                     and rotate is None and audio_resample is None and watermark is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
-                    and audio != "remove" and audio_replace is None \
+                    and audio != "remove" and audio_replace is None and subtitle is None \
                     and bitrate_kbps is None and dest is None \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b", t):
                 return ParseResult(
@@ -954,7 +1037,7 @@ class RulesAdapter:
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
-                    audio_resample=None):
+                    audio_resample=None, subtitle=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
@@ -1023,6 +1106,9 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if re.search(r"remove\s+(?:the\s+)?grayscale|back\s+to\s+color|in\s+color\s+again|keep\s+the\s+color", t, re.I):
         plan.operations = [o for o in plan.operations if o.type != "grayscale"]
         changed.append("grayscale removed")
+    if _SUB_NEG_RE.search(t):
+        plan.operations = [o for o in plan.operations if o.type != "subtitles"]
+        changed.append("subtitles removed")
 
     if trim is not None and plan.trim != trim:
         plan.trim = trim
@@ -1052,5 +1138,12 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if grayscale and not any(o.type == "grayscale" for o in plan.operations):
         plan.operations.append(GrayscaleOp())
         changed.append("grayscale added")
+    if subtitle is not None:
+        # a new subtitle request (possibly the previous file with a new
+        # mode) replaces any prior subtitle op; the negation above already
+        # removed it when "remove the subtitles" was said
+        plan.operations = [o for o in plan.operations if o.type != "subtitles"]
+        plan.operations.append(subtitle)
+        changed.append(f"subtitles updated ({subtitle.mode})")
 
     return plan, changed

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fass.planner import ExecutionPlan, fmt_num
 from fass.probe.ffprobe import MediaInfo
-from fass.registry import REGISTRY, stream_scheme
+from fass.registry import REGISTRY, soft_subtitle_codec, stream_scheme
 from fass.schema import EditPlan
 
 _POS_WORDS = {
@@ -87,6 +87,18 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
                 f"Watermark: image at {_POS_WORDS[op.position]}, {op.margin_px}px margin, {size}, "
                 "shown throughout the output"
             )
+        elif op.type == "subtitles":
+            if op.mode == "burn":
+                lines.append(
+                    f"Subtitles: burned into the video from '{op.asset_id}' "
+                    "(hard-coded, not selectable)"
+                )
+            else:
+                enc = soft_subtitle_codec(out.container)
+                lines.append(
+                    f"Subtitles: added as a selectable track from '{op.asset_id}' "
+                    f"(encoded as {enc})"
+                )
         elif op.type == "audio_resample":
             bits = []
             if op.sample_rate is not None:

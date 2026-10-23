@@ -38,6 +38,7 @@ class MediaInfo:
     audio_codec: str | None = None
     video_streams: int = 0
     audio_streams: int = 0
+    subtitle_streams: int = 0
     rotation: int | None = None
     hdr: bool = False
 
@@ -127,6 +128,9 @@ def parse_ffprobe_json(payload: dict) -> MediaInfo | None:
         audio_codec=audio.get("codec_name") if audio else None,
         video_streams=sum(1 for s in streams if s.get("codec_type") == "video"),
         audio_streams=sum(1 for s in streams if s.get("codec_type") == "audio"),
+        subtitle_streams=sum(
+            1 for s in streams if s.get("codec_type") == "subtitle"
+        ),
         rotation=rotation,
         hdr=hdr,
     )

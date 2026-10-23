@@ -133,6 +133,15 @@ or allowlisted stream URLs the client binds.
   encoded to the container's audio codec — never stream-copied, so it forces
   a re-encode. No audio file bound → `needs_clarification` ("which file should
   provide the new audio?").
+- **Subtitles** — bind an srt / ass / ssa / vtt file (CLI `--asset subs=subs.srt`,
+  web UI "+ add input"): **burn** (the default) hard-codes the text into the
+  video via libass (`subtitles=` for srt/vtt, `ass=` for ass/ssa) and forces
+  a re-encode — the filter opens the file itself, so it needs no extra
+  input; **soft** (say "soft" or "selectable") muxes a selectable track
+  (`mov_text` for MP4/MOV, `srt` for MKV) and stays compatible with
+  stream-copy (`-c:s` after `-c copy`). WebM / MPEG-TS have no soft codec —
+  burn there instead. At most one subtitle file per plan; colons in the
+  filename are rejected (FFmpeg parses them as stream protocols).
 - **Stream I/O** — an *input* may be a stream URL (rtmp/rtsp/srt/http/udp/
   …, allowlisted in the registry; unprobeable, so a re-encode is assumed and
   noted); raw `udp`/`rtp`/`tcp` inputs get an explicit `-f mpegts`. An
@@ -162,7 +171,7 @@ or allowlisted stream URLs the client binds.
 Ambiguity is a first-class result: `needs_clarification` with specific
 questions (`make it smaller`, `make it exactly 5 MB`, `re-encode lossless`,
 `keep the last 10 seconds` without a known duration). Out-of-scope requests
-(`extract to mp3`, `add subtitles`, `concatenate two videos`) return
+(`extract to mp3`, `extract the subtitles`, `concatenate two videos`) return
 `unsupported` with the reason and the support summary — **never a silent
 partial plan**.
 
@@ -182,7 +191,7 @@ truth; availability on the installed build is checked by `fass env` /
 | Muxers & demuxers | Container matrix (mp4 / mov / mkv / webm / mpegts / flv; rtsp / srt stream-only) + explicit `-f` for stream destinations | `containers`, `matrix`, `streaming.output` |
 | Protocols | Allowlisted URL schemes in and out (http(s), rtmp(s), rtsp(s), srt, udp, rtp, tcp, tls) | `streaming.input_schemes`, `streaming.output` |
 | Input/output devices | Input sources `lavfi` / `v4l2` / `alsa` / `dshow` / `avfoundation` / `x11grab`; audio-only output devices (`alsa`, `pulse`) | `sources` |
-| Filters | `crop`, `scale`, `pad`, `transpose`, `hue`, `setpts` + `atempo`, `overlay`, `format` | `operations`; `builder/` filter graphs |
+| Filters | `crop`, `scale`, `pad`, `transpose`, `hue`, `setpts` + `atempo`, `overlay`, `format`, `subtitles` / `ass` (burn-in) | `operations`, `subtitles`; `builder/` filter graphs |
 
 ## Validation levels
 
@@ -268,7 +277,10 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] remux bitstream filters, both directions — mp4/mov → mpegts
   Annex-B restamp + mpegts → mp4/mov ADTS strip (registry
   `bitstream_filters`)
-- [ ] deferred (PRD §5): subtitles, concatenation, transitions, audio
+- [x] subtitles (burn + soft track) — `SubtitleOp`, libass `subtitles=` /
+  `ass=` burn-in, `-c:s mov_text` / `srt` soft mux with stream-copy support
+  (registry `subtitles`)
+- [ ] deferred (PRD §5): concatenation, transitions, audio
   mixing, HDR, hardware acceleration, batch processing
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`

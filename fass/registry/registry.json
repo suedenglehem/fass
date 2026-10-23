@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.5.0",
+  "registry_version": "1.6.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -155,15 +155,37 @@
       "description": "Resample the audio to a target sample rate and/or channel count.",
       "options": "-ar (Hz) / -ac (channels)",
       "note": "Targets come from the audio_resample matrix; an audio-removed plan cannot resample."
+    },
+    "subtitles": {
+      "description": "Add subtitles from a bound subtitle file (srt/ass/ssa/vtt), burned in (default) or as a selectable track.",
+      "filter": "subtitles= (srt/vtt) / ass= (ass/ssa) for burn; -map N:s:0 + -c:s for soft",
+      "note": "See the top-level 'subtitles' block: burn forces a re-encode, soft muxes mov_text (mp4/mov) or srt (mkv) and is copy-compatible. At most one subtitle operation per plan; the subtitle asset is bound outside the model."
     }
+  },
+  "subtitles": {
+    "description": "Subtitle support (the subtitles/demuxer-encoder component). Subtitles arrive as a typed asset (srt/ass/ssa/vtt) and are either burned into the video (hard-coded, libass) or muxed as a selectable track (soft).",
+    "input_formats": ["srt", "ass", "ssa", "vtt"],
+    "burn_filters": {
+      "srt": "subtitles",
+      "vtt": "subtitles",
+      "ass": "ass",
+      "ssa": "ass"
+    },
+    "soft_codecs": {
+      "mp4": "mov_text",
+      "mov": "mov_text",
+      "mkv": "srt"
+    },
+    "default_mode": "burn",
+    "note": "burn uses the libass filters 'subtitles=' (srt/vtt) or 'ass=' (ass/ssa) in the video filter chain and forces a video re-encode; the filename needs two layers of FFmpeg filter escaping (graph parser, then filter-option parser). soft muxes a selectable track: mp4/mov → mov_text, mkv → srt (encoded from the source format); other containers (webm, mpegts, flv, rtsp, srt) have no soft-subtitle codec and soft mode is rejected there. soft mode never forces a video re-encode — it is compatible with -c copy. Filenames containing ':' cannot be handled by FFmpeg at all (its URL layer parses them as a protocol); the planner rejects them with a clear error. No -shortest: subtitles may legitimately be shorter or longer than the video."
   },
   "stream_selection": {
     "video": "0:v:0",
     "audio": "0:a:0 (first audio stream only; additional streams are excluded). With audio_replace, the mapped audio stream is the first audio stream of the replacement input instead.",
-    "note": "Additional streams beyond the first video and first audio are not carried over (visible notice in the explanation)."
+    "note": "Additional streams beyond the first video and first audio are not carried over (visible notice in the explanation). Subtitle streams are the exception only when a soft-subtitle operation is present, in which case the first subtitle stream of the subtitle asset is mapped."
   },
   "trim_policy": "Trimming re-encodes: the MVP prioritizes accurate cuts over fast stream-copy cuts (PRD FR-4).",
-  "copy_policy": "Stream copy (remux) is chosen only when no filters are required AND media metadata proves the input streams already match the requested codecs. Without metadata the planner re-encodes and says so.",
+  "copy_policy": "Stream copy (remux) is chosen only when no filters are required AND media metadata proves the input streams already match the requested codecs. Without metadata the planner re-encodes and says so. Soft subtitles are compatible with copy (mapped with -map N:s:0 and encoded with -c:s, overriding -c copy for that stream only); burning subtitles is a filter and forces a re-encode.",
   "docs_provenance": {
     "seeking_and_duration": "https://ffmpeg.org/ffmpeg.html (options -ss, -t; input vs output placement)",
     "stream_mapping": "https://ffmpeg.org/ffmpeg.html (-map)",
@@ -180,6 +202,8 @@
     "setpts": "https://ffmpeg.org/ffmpeg-filters.html#setpts-settb-setpts_2",
     "atempo_filter": "https://ffmpeg.org/ffmpeg-filters.html#atempo_2",
     "bitstream_filters": "https://ffmpeg.org/ffmpeg-bitstream-filters.html (h264_mp4toannexb, hevc_mp4toannexb, aac_adtstoasc)",
+    "subtitles_burn": "https://ffmpeg.org/ffmpeg-filters.html#subtitles_2 (subtitles / ass, libass)",
+    "subtitles_soft": "https://ffmpeg.org/ffmpeg.html (-map N:s:0, -c:s) + https://ffmpeg.org/ffmpeg-all.html (mov_text, srt encoders)",
     "devices": "https://ffmpeg.org/ffmpeg-devices.html (lavfi, v4l2, alsa, dshow, avfoundation, x11grab)"
   }
 }

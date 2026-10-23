@@ -194,6 +194,37 @@ smoke-tested live (healthz, /v1/commands, UI).
   "audio-side bitstream filtering is not yet available" notes
   (written while the other job was in flight) now document
   `aac_adtstoasc`.
+- **M5 COMPLETE (2026-10-24) — subtitles** (user report "fass doesn't
+  understand subtitles"; standing "don't be lazy, don't ask me!" → full
+  autonomous pass, no delegation needed). `SubtitleOp{asset_id, mode
+  burn|soft}` (at most one; burn = default with a visible default note,
+  soft only on explicit "soft"/"selectable"/"embed" wording — "soften the
+  audio" must not count). Burn: libass `subtitles=` (srt/vtt) / `ass=`
+  (ass/ssa) appended to the video chain (plain `vf` or the filter_complex
+  final segment, after any watermark overlay); the filter opens the file
+  itself → no extra input; forces a re-encode; container-agnostic. Soft:
+  muxes a selectable track — mp4/mov → `mov_text`, mkv → `srt` — via
+  `-c:s` AFTER `-c copy`, so a soft-subtitle remux stays a stream copy;
+  no soft codec for webm/mpegts → burn or MP4/MOV/MKV; `-shortest` is
+  never emitted by subtitles (audio_replace only). Escaping (empirically
+  locked on ffmpeg 6.1.1): the filter-path escape `([\\'\":=,;])` →
+  `\\\1` is applied TWICE, so each special char ends with THREE
+  backslashes; the test asserts a double round-trip unescape recovers the
+  path (`it's.srt` verified end-to-end). Colons in the subtitle filename
+  are rejected by the planner (ffmpeg parses them as stream protocols).
+  Revisions: "remove the subtitles" (no-op on a fresh plan), mode
+  switches, file rebinding; with several unbound subtitle assets the
+  previous file is kept + noted. NLU: subtitle detection wired after
+  audio_replace; "extract the subtitles" → unsupported. Registry 1.6.0
+  (`subtitles` block: input_formats, burn_filters, soft_codecs);
+  `MediaInfo.subtitle_streams`; preflight checks the soft codec; LLM
+  prompt + explain + README/PRD/DEVELOPMENT all updated. New suite
+  tests/test_subtitles.py: 86 tests incl. 3 real-media titan E2E (burn
+  re-encode, soft stream-copy, soft+trim) — all executed, not skipped.
+  Benchmark: bench-063/067 re-expected `needs_clarification` (subtitles
+  were "unsupported" only because the feature didn't exist; with no
+  subtitle file bound the right answer is now a question); bench-090/091
+  added (burn + soft ready paths with a bound subs.srt).
 - CLI smoke verified on titan.mp4 (ground truth): "crop to 640x480, make
   it 2x faster and rotate 90 degrees, 10-bit, ultrafast preset" →
   `ffmpeg -hide_banner -loglevel error -i media/titan.mp4 -vf
@@ -229,13 +260,17 @@ tests/{conftest,test_schema,test_rules,test_planner_builder,
 test_render_adversarial,test_cli,test_api}.py,
 tests/benchmark/{requests.json}, tests/test_benchmark.py,
 tests/test_media.py, tests/test_titan.py, tests/test_bsf.py,
-media/titan.mp4, pyproject.toml, .gitignore, README.md, HANDOFF.md
+tests/test_subtitles.py (M5), media/titan.mp4, pyproject.toml,
+.gitignore, README.md, docs/DEVELOPMENT.md, ffmpeg-assistant-prd.md,
+HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **364 passed** in ~55 s, no failures
-(2026-10-23, after both M4 delegations integrated; 265 at M3b: +56 M4
-core suite 515d443, +30 M4 NLU tests in 43251a0, +13 bsf tests in
-645f903). 89 benchmark entries, 28 API tests.
+`./.venv/bin/python -m pytest -q` → **452 passed** in ~62 s, no failures
+(2026-10-24, M5: 364 pre-M5 + 86 test_subtitles.py + 2 new benchmark
+entries; bench-063/067 re-expected for the new subtitle capability).
+364 at M4 (2026-10-23; 265 at M3b: +56 M4 core suite 515d443, +30 M4 NLU
+tests in 43251a0, +13 bsf tests in 645f903). 91 benchmark entries, 28
+API tests.
 Real-media sanity on media/titan.mp4: udp stream-out renders
 `-f mpegts … udp://127.0.0.1:9999` + trim warning; `-o rtmp://…` → flv +
 `-f flv` + reconciliation default note + disclosure in summary.
@@ -250,7 +285,11 @@ committed. The 8-component build goal is now code-complete AND
 documented for all 8 components (1-3, 7, 8 since M4 core; 4 now both
 directions after 645f903; 5+6 since M3b). Both delegated jobs
 (j_893e3a47a6, j_bf063ade65) integrated, accepted, no jobs in flight.
-364 tests green. Nothing outstanding unless the user asks.
+364 tests green. **Everything pushed: origin/main = f5740b2** — incl.
+the README capability-set fix (f5740b2: remux + both-direction
+bitstream filters, N-typed-input shape, revisions). i7 lags only by
+that README file (the serve process doesn't use it — no redeploy
+needed). Nothing outstanding unless the user asks.
 
 1. **i7 redeploy DONE (2026-10-23, on request).** The old pre-M4 server
    (PID 660597) had already died — port 8000 was free, nothing to kill.

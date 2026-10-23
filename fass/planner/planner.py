@@ -26,9 +26,12 @@ from fass.registry import (
     output_schemes,
     pixel_format_error,
     sample_rates,
+    soft_subtitle_codec,
     source_spec_parts,
     stream_output_info,
     stream_scheme,
+    subtitle_burn_expr,
+    subtitle_input_format,
     video_presets_for,
     video_profiles_for,
 )
@@ -41,6 +44,7 @@ from fass.schema import (
     ResizeOp,
     RotateOp,
     SpeedOp,
+    SubtitleOp,
     WatermarkOp,
 )
 
@@ -213,13 +217,18 @@ def _overlay_position(op: WatermarkOp) -> tuple[str, str]:
     }[op.position]
 
 
-def build_video_chain(operations: list, defaults: list[str]):
+def build_video_chain(operations: list, defaults: list[str],
+                      sub_exprs: dict[str, str] | None = None):
     """Build the video filter chain in user-specified order.
 
     Returns (mode, chain, video_out_label):
       mode "vf"     -> chain is a -vf expression, label is None
       mode "complex"-> chain is a -filter_complex graph, label is the
                       output pad to map
+
+    ``sub_exprs`` maps a burned-subtitle asset id to its complete filter
+    argument ('subtitles=…' / 'ass=…'); the file is opened by the filter
+    itself, so no extra input is needed (M5).
     """
     if not operations:
         return "none", None, None
@@ -236,10 +245,14 @@ def build_video_chain(operations: list, defaults: list[str]):
                 parts.append(_rotate_expr(o))
             elif o.type == "speed":
                 parts.append(_setpts_expr(o))
+            elif o.type == "subtitles" and sub_exprs:
+                parts.append(sub_exprs[o.asset_id])
+            # a soft subtitle is muxed as a track, not filtered — no segment
         return "vf", ",".join(parts) or None, None
 
     segs: list[str] = []
     prev: str | None = None
+    last_out: str | None = None
     for i, o in enumerate(operations):
         out = f"v{i}"
         src = f"[{prev}]" if prev is not None else "[0:v]"
@@ -253,6 +266,12 @@ def build_video_chain(operations: list, defaults: list[str]):
             segs.append(f"{src}{_rotate_expr(o)}[{out}]")
         elif o.type == "speed":
             segs.append(f"{src}{_setpts_expr(o)}[{out}]")
+        elif o.type == "subtitles":
+            if not sub_exprs:
+                # soft subtitle: muxed as a track, not a filter — skip the
+                # segment AND the pad, so the graph stays connected
+                continue
+            segs.append(f"{src}{sub_exprs[o.asset_id]}[{out}]")
         elif o.type == "watermark":
             wm_scale = ""
             if o.scale_percent != 100:
@@ -261,7 +280,8 @@ def build_video_chain(operations: list, defaults: list[str]):
             segs.append(f"[1:v]format=rgba{wm_scale}[wm]")
             segs.append(f"{src}[wm]overlay={x}:{y}[{out}]")
         prev = out
-    return "complex", ";".join(segs), f"v{len(operations) - 1}"
+        last_out = out
+    return "complex", ";".join(segs), last_out
 
 
 # ---------------------------------------------------------------- planning
@@ -336,6 +356,38 @@ def plan_execution(
         else:
             ar_assets.append(a)
 
+    sub_ops = edit.ops_of("subtitles")
+    sub_assets: list = []
+    for o in sub_ops:
+        a = assets.get(o.asset_id)
+        if a is None:
+            errors.append(f"subtitles asset id '{o.asset_id}' is not in the asset map")
+        elif a.kind != AssetKind.SUBTITLES:
+            errors.append(
+                f"subtitles asset '{o.asset_id}' is not a subtitle file "
+                "(srt/ass/ssa/vtt)"
+            )
+        elif subtitle_input_format(a.path) is None:
+            errors.append(
+                f"subtitles asset '{a.path}' is not a supported subtitle format "
+                "(srt/ass/ssa/vtt)"
+            )
+        elif stream_scheme(a.path) is None and ":" in a.path:
+            errors.append(
+                f"subtitles file '{a.path}' contains ':' — FFmpeg reads that as a "
+                "stream protocol and cannot open it; rename the file"
+            )
+        else:
+            sub_assets.append(a)
+        if o.mode == "soft":
+            enc = soft_subtitle_codec(edit.output.container)
+            if enc is None:
+                errors.append(
+                    f"selectable (soft) subtitles have no codec in "
+                    f"{edit.output.container.upper()} output — burn them in instead, "
+                    "or write MP4 / MOV / MKV"
+                )
+
     if errors:
         raise PlanError(errors)
 
@@ -346,6 +398,7 @@ def plan_execution(
     in_path = input_asset.path
     wm_path = wm_assets[0].path if wm_assets else None
     ar_path = ar_assets[0].path if ar_assets else None
+    sub_path = sub_assets[0].path if sub_assets else None
 
     defaults: list[str] = []
     warnings: list[str] = []
@@ -386,7 +439,8 @@ def plan_execution(
         device, out_path = parts[0], parts[1]
         video_ops = sorted({
             o.type for o in edit.operations
-            if o.type in ("resize", "crop", "rotate", "speed", "grayscale", "watermark")
+            if o.type in ("resize", "crop", "rotate", "speed", "grayscale",
+                          "watermark", "subtitles")
         })
         if video_ops:
             raise PlanError([
@@ -430,13 +484,19 @@ def plan_execution(
             raise PlanError(["output path resolves to the watermark file — refusing to overwrite it"])
         if ar_path and real_out == os.path.realpath(ar_path):
             raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
+        if sub_path and real_out == os.path.realpath(sub_path):
+            raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
 
     # -- remux vs re-encode (plan0.md section 3) ---------------------------
     has_trim = edit.trim is not None
-    has_ops = bool(edit.operations)
+    # Soft subtitles only mux a track — they touch no frame, so they do not
+    # force a re-encode (M5). Burning is a filter chain and does.
+    forced_ops = [o for o in edit.operations
+                  if not (o.type == "subtitles" and o.mode == "soft")]
     # PRD FR-4: trimming re-encodes. An explicit target bitrate also forces
     # a re-encode: stream copy cannot honor a bitrate the input does not have.
-    needs_reencode = has_trim or has_ops or edit.output.video_bitrate_kbps is not None
+    needs_reencode = (has_trim or bool(forced_ops)
+                      or edit.output.video_bitrate_kbps is not None)
 
     if not needs_reencode:
         if metadata and metadata.video_codec == edit.output.video_codec and \
@@ -465,10 +525,22 @@ def plan_execution(
     if device is not None:
         ep = _build_device_plan(edit, in_path, out_path, device, ar_path, defaults)
     elif mode == "copy":
-        ep = _build_copy_plan(edit, in_path, out_path, metadata)
+        sub_enc = soft_subtitle_codec(edit.output.container) if sub_path else None
+        ep = _build_copy_plan(edit, in_path, out_path, metadata,
+                              sub_path=sub_path, sub_enc=sub_enc)
     else:
+        sub_input, sub_exprs, sub_enc = None, None, None
+        if sub_path:
+            so = sub_ops[0]
+            if so.mode == "soft":
+                sub_enc = soft_subtitle_codec(edit.output.container)
+                sub_input = sub_path
+            else:
+                # burn: the libass filter opens the file itself — no input
+                sub_exprs = {so.asset_id: subtitle_burn_expr(sub_path)}
         ep = _build_reencode_plan(
-            edit, in_path, wm_path, ar_path, out_path, defaults, warnings
+            edit, in_path, wm_path, ar_path, sub_input, sub_exprs, sub_enc,
+            out_path, defaults, warnings
         )
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
@@ -492,8 +564,10 @@ _FFPROBE_CODEC = {"hevc": "h265"}  # ffprobe name -> fass codec name
 
 
 def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
-                     metadata: MediaInfo | None) -> ExecutionPlan:
+                     metadata: MediaInfo | None, sub_path: str | None = None,
+                     sub_enc: str | None = None) -> ExecutionPlan:
     audio_remove = edit.output.audio_mode == AudioMode.REMOVE
+    inputs = [_main_input(in_path)]
     maps = ["0:v:0"]
     opts: list[str] = []
     if audio_remove:
@@ -501,6 +575,13 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
     if not audio_remove:
         maps.append("0:a?")
     opts += ["-c", "copy"]
+    if sub_path:
+        # Soft subtitles: a selectable track muxed next to the copied
+        # streams. -c:s after -c copy overrides that stream only (the
+        # subtitle is still encoded — there is nothing to copy).
+        inputs.append(InputSpec(sub_path))
+        maps.append(f"{len(inputs) - 1}:s:0")
+        opts += ["-c:s", sub_enc]
     # Bitstream filter (no re-encode): remuxing MP4/MOV into MPEG-TS requires
     # H.264/HEVC to be re-stamped into Annex-B form. The source codec comes
     # from the probe when one exists, else from the plan.
@@ -530,9 +611,14 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
                 f"remuxing AAC to MP4/MOV needs bitstream filter '{absf}' — the "
                 "ADTS header is stripped from the compressed stream without re-encoding"
             )
+    if sub_path:
+        defaults.append(
+            f"subtitles muxed as a selectable {sub_enc} track from '{sub_path}' "
+            "(soft — no re-encode)"
+        )
     return ExecutionPlan(
         mode="copy",
-        inputs=[_main_input(in_path)],
+        inputs=inputs,
         vf=None,
         filter_complex=None,
         maps=maps,
@@ -543,21 +629,30 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
 
 
 def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
-                         audio_path: str | None,
+                         audio_path: str | None, sub_path: str | None,
+                         sub_exprs: dict[str, str] | None, sub_enc: str | None,
                          out_path: str, defaults: list[str], warnings: list[str]) -> ExecutionPlan:
     inputs = [_main_input(in_path)]
     if edit.trim is not None:
         # -ss as an input option: frame-accurate when followed by decoding.
         inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
     # Input order is fixed: main=0, watermark=1 (build_video_chain hardcodes
-    # [1:v]), replacement audio last.
+    # [1:v]), soft-subtitle input before the replacement audio (audio stays
+    # last, as audio_idx below assumes).
     if wm_path:
         inputs.append(InputSpec(wm_path))
+    sub_idx = None
+    if sub_path:
+        # SOFT mode only: a selectable track mapped from this input. Burn
+        # needs no input — the libass filter opens the file itself.
+        inputs.append(InputSpec(sub_path))
+        sub_idx = len(inputs) - 1
     if audio_path:
         inputs.append(InputSpec(audio_path))
     audio_idx = len(inputs) - 1 if audio_path else None
 
-    chain_mode, chain, vlabel = build_video_chain(edit.operations, defaults)
+    chain_mode, chain, vlabel = build_video_chain(
+        edit.operations, defaults, sub_exprs=sub_exprs)
     if chain_mode == "complex":
         vf, fcomplex = None, chain
         maps = [f"[{vlabel}]"]
@@ -573,6 +668,11 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         maps.append(f"{audio_idx}:a:0")
     elif not audio_remove:
         maps.append("0:a?")
+
+    if sub_idx is not None:
+        # Soft subtitles: the first subtitle stream of the subtitle input.
+        # No -shortest — subtitles may legitimately be shorter than the video.
+        maps.append(f"{sub_idx}:s:0")
 
     # Speed change: video timestamps are scaled in the filter chain
     # (setpts, built above); the audio side is an atempo chain on -af.
@@ -656,6 +756,22 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
                 opts += ["-ac", str(ro.channels)]
                 defaults.append(f"audio channels {ro.channels}")
 
+    if sub_exprs:
+        # Burn: the escaped filter expression is already in the chain; this
+        # note explains what the opaque token does.
+        defaults.append(
+            "subtitles burned into the video (hard-coded, not selectable — "
+            "the filter opens the subtitle file itself, no extra input)"
+        )
+    if sub_idx is not None:
+        # Soft: -c:s encodes the subtitle track (nothing to copy); it
+        # overrides the stream defaults for subtitles only.
+        opts += ["-c:s", sub_enc]
+        defaults.append(
+            f"subtitles muxed as a selectable {sub_enc} track from '{sub_path}' "
+            "(soft — no re-encode)"
+        )
+
     opts += REGISTRY["matrix"][edit.output.container].get("flags", [])
 
     return ExecutionPlan(
@@ -723,6 +839,12 @@ def _metadata_warnings(ep: ExecutionPlan, edit: EditPlan, metadata: MediaInfo | 
     if metadata.video_streams > 1 or metadata.audio_streams > 1:
         ep.warnings.append(
             "additional streams are excluded (only the first video and first audio stream are used)"
+        )
+    if metadata.subtitle_streams > 0 and not any(
+            o.type == "subtitles" for o in edit.operations):
+        ep.warnings.append(
+            f"the input has {metadata.subtitle_streams} subtitle stream(s); they are "
+            "not carried over (ask to keep or re-add subtitles to include them)"
         )
     trim = edit.trim
     if trim is not None and metadata.duration is not None:
