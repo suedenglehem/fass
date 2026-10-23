@@ -34,23 +34,35 @@ answer, never a silent partial plan.
 
 ## What it understands
 
-- **Trim / cut** (frame-accurate), **resize** (aspect-preserving, exact dims,
-  letterbox), **grayscale**
+**Shape**: N typed inputs — video, audio, image, local capture sources,
+plus one optional watermark image (the web UI has a "+ add input" row for
+each) → one output that is a file **or** a stream destination. Multiple
+inputs is what makes "replace the audio with song.mp3" work.
+
+- **Trim / cut** (frame-accurate), **resize** (aspect-preserving, exact
+  dims, letterbox), **grayscale**, **crop** (center), **rotate** (quarter
+  turns), **speed** (0.25–8×, video and audio together)
 - **Container conversion** — MP4 / MOV / MKV / WebM / MPEG-TS with H.264 /
-  H.265 / VP9, AAC / Opus, codec-matrix validated
-- **Target bitrate** (`cbr 10 Mbps`), **one static watermark**, **audio
-  replacement** from a second bound input, **audio keep / remove** — and
-  compositions of any of the above, in the order stated
-- **Crop** (exact center crop), **speed** (0.25–8×, video and audio
-  together), **rotate** (quarter turns), **audio resampling** (sample rate
-  / channels), **pixel format** (8-bit / 10-bit / 4:4:4 for VP9), **H.264
-  profile & preset**
+  H.265 / VP9, AAC / Opus, codec-matrix validated. When the probes show the
+  input streams already match, it **remuxes** (`-c copy`) instead of
+  re-encoding — with bitstream filters in **both directions**: Annex-B
+  restamp (`h264_mp4toannexb` / `hevc_mp4toannexb`) for mp4/mov → MPEG-TS,
+  ADTS strip (`aac_adtstoasc`) for MPEG-TS → mp4/mov
+- **Encoding options** — target bitrate (`cbr 10 Mbps`), pixel format
+  (8-bit / 10-bit / 4:4:4 for VP9), H.264 profile & preset, audio
+  resampling (sample rate / channels)
+- **One static watermark** (preset positions, margin, percent scale),
+  **audio replacement** from a second bound input, **audio keep / remove** —
+  and compositions of any of the above, in the order stated
 - **Capture sources** — `lavfi:` synthetic sources, `v4l2:` cameras, and
   alsa / dshow / avfoundation / x11grab bind as typed inputs
 - **Stream I/O** — inputs and outputs may be stream URLs (rtmp, rtsp, srt,
   http(s), udp, tcp — allowlisted); a stream destination's scheme fixes the
   container (rtmp→flv, rtsp→rtsp, srt→srt, udp/tcp→mpegts) and is disclosed
   in the response
+- **Revisions** — pass the previous plan back (`--previous plan.json` on the
+  CLI, `previous_plan` in the API) and only what the new instruction changes
+  changes
 
 CLI flags, the web API (`POST /v1/commands` + minimal UI), the security
 model, validation levels, tests, and the roadmap live in
