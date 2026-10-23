@@ -167,3 +167,12 @@ def test_ui_served_at_root():
     assert "text/html" in r.headers["content-type"]
     assert "/v1/commands" in r.text
     assert "ffmpeg" in r.text.lower()
+
+
+def test_ui_validation_line_uses_check_fields():
+    # Regression: the Validation line once mapped c.check/c.status, which
+    # don't exist on check objects ({name, ok, detail}) — the UI showed
+    # "preflight — undefined: undefined; …" instead of the check results.
+    html = client.get("/").text
+    assert "c.check + ': ' + c.status" not in html
+    assert "c.detail" in html and "c.name" in html and "c.ok" in html

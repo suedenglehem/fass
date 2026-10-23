@@ -264,7 +264,7 @@ function render(d) {
       <h2>What it does</h2>${lists(d.summary)}
       <h2>Defaults applied</h2>${lists(d.defaults) || '<p>none</p>'}
       <h2>Warnings</h2>${lists(d.warnings) || '<p>none</p>'}
-      <h2>Validation</h2><p>${esc(d.validation_level)} — ${esc((d.checks || []).map(c => c.check + ': ' + c.status).join('; ') || 'n/a')}</p>`;
+      <h2>Validation</h2><p>${esc(d.validation_level)} — ${esc((d.checks || []).map(c => (c.ok ? 'ok' : 'FAIL') + ': ' + c.name + ' — ' + c.detail).join('; ') || 'n/a')}</p>`;
   } else if (d.status === 'needs_clarification') {
     html += '<h2>Please clarify</h2>' + lists(
       (d.clarifications || []).map(c => c.question || c.reason || JSON.stringify(c)));
