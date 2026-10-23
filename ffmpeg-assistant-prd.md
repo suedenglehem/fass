@@ -70,21 +70,27 @@ The MVP targets technically comfortable users who can run FFmpeg locally.
 | Capability | Supported behavior |
 |---|---|
 | Resize | Set height or dimensions; preserve aspect ratio by default |
+| Crop | Exact center crop to a requested width × height; aspect-ratio asks clarify |
 | Trim | Specify start/end or start/duration |
-| Container conversion | MP4, MOV, MKV, and WebM through supported encoding presets |
+| Container conversion | MP4, MOV, MKV, WebM, and MPEG-TS through supported encoding presets |
 | Video encoding | H.264, H.265, and VP9 through an explicit compatibility matrix |
 | Grayscale | Apply a black-and-white video filter |
+| Rotate | Quarter-turn rotation (90°, 180°, 270°, clockwise or counterclockwise) |
+| Speed | Playback factor 0.25–8×, applied to video and audio together |
 | Watermark | Add one static image with a preset position and margin |
 | Audio handling | Preserve through compatible encoding, or remove audio |
+| Audio resampling | Target sample rate and/or channel count (mono, stereo, 5.1) |
+| Pixel format | 8-bit 4:2:0, 10-bit, or 4:4:4 (4:4:4 for VP9) |
+| Encoder profile & preset | H.264 profiles (baseline, main, high) and x264 speed presets (ultrafast–veryslow) |
 | Composition | Combine supported operations in one request |
 | Explanation | Describe operations, defaults, and compatibility notes |
 | Revision | Modify the previous structured plan from follow-up instructions |
 
-The MVP supports one primary video input and one optional watermark image. It selects the first video stream and, when retained, the first audio stream. Additional streams are excluded with a visible notice.
+The MVP supports multiple typed inputs — video, audio, image, and local capture sources — plus one optional watermark image, and accepts stream URLs as inputs and destinations. It selects the first video stream and, when retained, the first audio stream. Additional streams are excluded with a visible notice.
 
 ### Deferred capabilities
 
-Subtitles, concatenation, transitions, multiple watermarks, arbitrary cropping, speed changes, audio mixing, HDR workflows, hardware acceleration, and batch processing.
+Subtitles, concatenation, transitions, multiple watermarks, audio mixing, HDR workflows, hardware acceleration, and batch processing.
 
 ## 6. User experience
 

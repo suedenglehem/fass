@@ -41,6 +41,12 @@ answer, never a silent partial plan.
 - **Target bitrate** (`cbr 10 Mbps`), **one static watermark**, **audio
   replacement** from a second bound input, **audio keep / remove** — and
   compositions of any of the above, in the order stated
+- **Crop** (exact center crop), **speed** (0.25–8×, video and audio
+  together), **rotate** (quarter turns), **audio resampling** (sample rate
+  / channels), **pixel format** (8-bit / 10-bit / 4:4:4 for VP9), **H.264
+  profile & preset**
+- **Capture sources** — `lavfi:` synthetic sources, `v4l2:` cameras, and
+  alsa / dshow / avfoundation / x11grab bind as typed inputs
 - **Stream I/O** — inputs and outputs may be stream URLs (rtmp, rtsp, srt,
   http(s), udp, tcp — allowlisted); a stream destination's scheme fixes the
   container (rtmp→flv, rtsp→rtsp, srt→srt, udp/tcp→mpegts) and is disclosed

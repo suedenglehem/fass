@@ -97,16 +97,32 @@ or allowlisted stream URLs the client binds.
 - **Resize** — `resize to 720p` (aspect-preserving, `scale=-2:H`), width or
   height, `exact` dims, letterbox when both dims are given with preserve.
   Odd dimensions snap to even (yuv420p) with a visible note.
+- **Crop** — `crop to 800x600`: exact center crop (`crop=w:h`, FFmpeg's
+  crop default); dimensions snap to even, and a crop larger than the probed
+  source is rejected.
 - **Container conversion** — MP4 / MOV / MKV / WebM / MPEG-TS (`.ts`/`.mts`/
   `.m2ts`), with a codec matrix (e.g. H.264 in WebM is rejected as
   *unsupported*, not guessed).
 - **Video encode** — H.264 (`libx264 crf 23`), H.265 (`libhevc crf 28`),
   VP9 (`libvpx-vp9 crf 32 -b:v 0`); audio AAC 160k or Opus 128k for WebM.
+- **Pixel format** — `-pix_fmt` `yuv420p` (8-bit, the codec default),
+  `yuv420p10le` (10-bit), `yuv444p` (full chroma — VP9 only).
+- **H.264 profile & preset** — `-profile:v` `baseline` / `main` / `high`
+  and `-preset` `ultrafast`…`veryslow` (H.264 only; other codecs keep
+  their registry presets).
 - **Target bitrate (CBR-style)** — `cbr 10 Mbps`, `5 mbps`, `2000 kbps` set a
   target video bitrate: `-b:v`/`-maxrate` at the target (+ `-bufsize` 2× for
   H.264/H.265), overriding the quality preset and forcing a re-encode.
   A *file-size* target (`exactly 5 MB`) is still `needs_clarification` —
   bit rates are honored, exact byte sizes are not.
+- **Speed** — `2x faster`, `half speed`: playback factor 0.25–8, video
+  timestamps (`setpts=PTS/factor`) and audio tempo (`atempo` chain) move
+  together; a trim's source duration is divided by the factor.
+- **Rotate** — quarter turns: 90° / 180° / 270°, clockwise (default) or
+  counterclockwise (`transpose`; 180° is `hflip+vflip`); 90°/270° swap the
+  output dimensions.
+- **Audio resample** — `resample to 44.1 kHz`, `downmix to mono`: `-ar`
+  sample rate and/or `-ac` channels (1 / 2 / 6).
 - **Grayscale** — `hue=s=0`, audio kept.
 - **One static watermark** — preset positions (corners/center), margin,
   percent scale; labeled `filter_complex` + `overlay`, `eof_action=repeat` so a
@@ -127,14 +143,45 @@ or allowlisted stream URLs the client binds.
   the response ("data is sent to a remote endpoint; nothing is saved
   locally"); a container named in the instruction that conflicts with the
   destination's is a structured error, never a silent pick.
+- **Input sources** — an asset whose path is `'<format>:<spec>'` is a
+  capture source, not a file: `lavfi:` (synthetic, headless-testable),
+  `v4l2:` (camera), `alsa:`, `dshow:`, `avfoundation:`, `x11grab:` — the
+  builder emits `-f <format>` plus `;key=value` option tokens. Output
+  devices (`alsa`, `pulse`) carry audio only; a video plan cannot target
+  one.
+- **Stream-copy remux + bitstream filters** — when metadata proves the
+  input streams already match the target codecs, the planner remuxes
+  (`-c copy`) instead of re-encoding; crossing mp4/mov → mpegts restamps
+  H.264/HEVC with the video bitstream filters `h264_mp4toannexb` /
+  `hevc_mp4toannexb`. Audio-side bitstream filtering is not yet
+  available.
 - **Audio keep/remove** and **compositions** of any of the above, in the
   order the user stated them.
 
 Ambiguity is a first-class result: `needs_clarification` with specific
 questions (`make it smaller`, `make it exactly 5 MB`, `re-encode lossless`,
 `keep the last 10 seconds` without a known duration). Out-of-scope requests
-(`2x faster`, `rotate`, `extract to mp3`) return `unsupported` with the
-reason and the support summary — **never a silent partial plan**.
+(`extract to mp3`, `add subtitles`, `concatenate two videos`) return
+`unsupported` with the reason and the support summary — **never a silent
+partial plan**.
+
+## FFmpeg component coverage
+
+FFmpeg's core components ([ffmpeg.org/documentation](https://ffmpeg.org/documentation.html))
+and where fass covers each. `fass/registry/registry.json` is the source of
+truth; availability on the installed build is checked by `fass env` /
+`--preflight`.
+
+| FFmpeg component | fass coverage | Registry key / module |
+|---|---|---|
+| Video scaling & pixel format | `scale` / `pad` filters (resize, letterbox), `-pix_fmt` (8-bit / 10-bit / 4:4:4) | `pixel_formats`; `planner/` scale math |
+| Audio resampler | `-ar` sample rate, `-ac` channels (1 / 2 / 6) | `audio_resample`; `AudioResampleOp` |
+| Encoders & decoders | Registry-driven codec selection (H.264 / H.265 / VP9, AAC / Opus) validated by the codec/container matrix | `video_codecs`, `audio_codecs`, `matrix` |
+| Bitstream filters | Video remux only: `h264_mp4toannexb` / `hevc_mp4toannexb` when stream-copying mp4/mov → mpegts; audio-side bitstream filtering is not yet available | `bitstream_filters`; `builder/` |
+| Muxers & demuxers | Container matrix (mp4 / mov / mkv / webm / mpegts / flv; rtsp / srt stream-only) + explicit `-f` for stream destinations | `containers`, `matrix`, `streaming.output` |
+| Protocols | Allowlisted URL schemes in and out (http(s), rtmp(s), rtsp(s), srt, udp, rtp, tcp, tls) | `streaming.input_schemes`, `streaming.output` |
+| Input/output devices | Input sources `lavfi` / `v4l2` / `alsa` / `dshow` / `avfoundation` / `x11grab`; audio-only output devices (`alsa`, `pulse`) | `sources` |
+| Filters | `crop`, `scale`, `pad`, `transpose`, `hue`, `setpts` + `atempo`, `overlay`, `format` | `operations`; `builder/` filter graphs |
 
 ## Validation levels
 
@@ -209,5 +256,18 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] stream / remote sources and stream outputs — allowlisted stream
   URLs as inputs and destinations (scheme → container), `-f` muxer
   injection, destination disclosure; HTTP/HLS *output* deferred
+- [x] crop / speed / rotate / audio resample — `CropOp`, `SpeedOp`,
+  `RotateOp`, `AudioResampleOp` (registry `crop`, `speed`, `operations`)
+- [x] pixel format, H.264 profile & preset — `pixel_format` /
+  `video_profile` / `video_preset` output options (registry
+  `pixel_formats`, `video_profiles`, `video_presets`)
+- [x] input sources + audio-only output devices — `lavfi:` / `v4l2:` /
+  `alsa:` / `dshow:` / `avfoundation:` / `x11grab:` asset specs with
+  `-f` + option tokens (registry `sources`)
+- [x] video remux bitstream filters — mp4/mov → mpegts Annex-B restamp
+  (registry `bitstream_filters`)
+- [ ] deferred (PRD §5): subtitles, concatenation, transitions, audio
+  mixing, HDR, hardware acceleration, batch processing; audio-side
+  bitstream filtering
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`
