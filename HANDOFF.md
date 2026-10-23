@@ -173,25 +173,27 @@ smoke-tested live (healthz, /v1/commands, UI).
   union), planner/builder behavior (atempo chains, even-snap, transpose
   mapping, copy+bsf, source pre_opts, device plans, PlanErrors), real-media
   E2E on titan.mp4. dispatch_integrate accepted.
-- Delegation in flight (integration = diff review, copy files, full suite,
-  commit, dispatch_integrate — do not touch the workers' owned files until
-  integrated):
-  - `j_893e3a47a6` (tr4-secondary, strong 140B quantized flash-next, 112k
-    ctx): the audio bitstream filter `aac_adtstoasc` for mpegts→mp4/mov
-    copy mode. Design: a NEW parallel `audio_bsf_for_copy(source, target,
-    audio_codec)` — `bsf_for_copy()` (video) is untouched because i7's
-    tests pin its exact behavior. Copy mode always has ffprobe metadata, so
-    `metadata.audio_codec` is available. The worker OWNS
-    fass/registry/{registry.json,loader.py,__init__.py},
-    fass/planner/planner.py, tests/test_bsf.py (new) — main thread must not
-    edit those until integrated.
-  - `j_bf063ade65` (i7, base 43251a0): docs pass —
-    ffmpeg-assistant-prd.md (drop crop/speed from the deferred list, MVP
-    capabilities table rows, stale "one primary video input" sentence →
-    M3a/M3b multi-input), README "What it understands", docs/DEVELOPMENT.md
-    (new "FFmpeg component coverage" section for all 8 components with
-    registry/module refs, "What the MVP understands" + Roadmap refresh).
-    Instructed NOT to document aac_adtstoasc (that lands with the other job).
+- **M4 audio bsf COMPLETE (2026-10-23, 645f903)** — delegated to
+  tr4-secondary as `j_893e3a47a6`, integrated + dispatch_integrate
+  accepted. `audio_bsf_for_copy(source, target, audio_codec)` (new,
+  parallel to the untouched `bsf_for_copy()`) + registry block
+  `mpegts_to_mp4_mov: {aac: aac_adtstoasc}` + planner copy-plan wiring
+  (`-bsf:a` only when audio is kept and the probe provides a codec) +
+  13 tests (tests/test_bsf.py, incl. real-media E2E titan→.ts→.mp4).
+  registry_version 1.4.0 → 1.5.0. CLI --execute smoke verified: remuxing
+  a real .ts to MP4 yields `-c copy -bsf:a aac_adtstoasc` and a valid
+  h264+aac 48 kHz output.
+- **M4 docs COMPLETE (2026-10-23, ed067ba + follow-up)** — delegated to
+  i7 as `j_bf063ade65`, integrated + dispatch_integrate accepted. PRD
+  (deferred list, MVP table rows, multi-input sentence), README (two
+  bullets), docs/DEVELOPMENT.md ("What the MVP understands" refresh, new
+  "FFmpeg component coverage" section mapping all 8 core FFmpeg
+  components to registry keys/modules, roadmap marked done). Every
+  factual claim was re-verified against the code before integrating.
+  Follow-up edit landed in the same milestone: the three
+  "audio-side bitstream filtering is not yet available" notes
+  (written while the other job was in flight) now document
+  `aac_adtstoasc`.
 - CLI smoke verified on titan.mp4 (ground truth): "crop to 640x480, make
   it 2x faster and rotate 90 degrees, 10-bit, ultrafast preset" →
   `ffmpeg -hide_banner -loglevel error -i media/titan.mp4 -vf
@@ -226,15 +228,14 @@ fass/planner/, fass/builder/, fass/nlu/{rules,llm}.py,
 tests/{conftest,test_schema,test_rules,test_planner_builder,
 test_render_adversarial,test_cli,test_api}.py,
 tests/benchmark/{requests.json}, tests/test_benchmark.py,
-tests/test_media.py, tests/test_titan.py,
+tests/test_media.py, tests/test_titan.py, tests/test_bsf.py,
 media/titan.mp4, pyproject.toml, .gitignore, README.md, HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **351 passed** in ~78 s, no failures
-(2026-10-23, after the M4 NLU commit; M3b state was 265: +56 from the M4
-core suite 515d443, +30 from the M4 NLU tests in 43251a0 — rules
-op-detection/conflicts, 5 benchmark entries updated, API/CLI
-unsupported-case swaps). 89 benchmark entries, 28 API tests.
+`./.venv/bin/python -m pytest -q` → **364 passed** in ~55 s, no failures
+(2026-10-23, after both M4 delegations integrated; 265 at M3b: +56 M4
+core suite 515d443, +30 M4 NLU tests in 43251a0, +13 bsf tests in
+645f903). 89 benchmark entries, 28 API tests.
 Real-media sanity on media/titan.mp4: udp stream-out renders
 `-f mpegts … udp://127.0.0.1:9999` + trim warning; `-o rtmp://…` → flv +
 `-f flv` + reconciliation default note + disclosure in summary.
@@ -244,23 +245,15 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-Milestones 1+2+3 and M4 (core + NLU) done. The 8-component build goal is
-code-complete for components 1-3, 7, 8; component 4 (bitstream filters) is
-video-only until j_893e3a47a6 lands; 5 (muxers/demuxers) + 6 (protocols)
-were covered by M3b — their documentation is in flight with j_bf063ade65.
+Milestones 1+2+3 and M4 (core + NLU + audio bsf + docs) all done and
+committed. The 8-component build goal is now code-complete AND
+documented for all 8 components (1-3, 7, 8 since M4 core; 4 now both
+directions after 645f903; 5+6 since M3b). Both delegated jobs
+(j_893e3a47a6, j_bf063ade65) integrated, accepted, no jobs in flight.
+364 tests green. Nothing outstanding unless the user asks.
 
-0. Integrate `j_893e3a47a6` (tr4-secondary, aac_adtstoasc audio bsf) when
-   its completion notification arrives: diff review, copy its 5 owned
-   files, full suite, commit, dispatch_integrate; then a small follow-up
-   commit documenting the audio bsf in DEVELOPMENT.md's "FFmpeg component
-   coverage" section (component 4).
-1. Integrate `j_bf063ade65` (i7, docs pass) on completion: review the 3
-   doc files against its acceptance criteria, copy, commit,
-   dispatch_integrate.
-2. Final full-suite run after both integrations (expect 351 + tr4's new
-   bsf tests green).
-3. i7 redeploy (kill EXACT PID 660597 → rsync → restart detached) ONLY if
-   requested.
+1. i7 redeploy (kill EXACT PID 660597 → rsync → restart detached) ONLY if
+   requested — i7's fass serve still runs the pre-M4 build.
 
 Earlier candidates, still open if requested:
 
