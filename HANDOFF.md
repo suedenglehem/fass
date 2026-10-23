@@ -142,6 +142,63 @@ smoke-tested live (healthz, /v1/commands, UI).
   history incl. media/titan.mp4). README.md became a short landing page;
   the full pre-existing README moved intact to docs/DEVELOPMENT.md
   (commit 5338297).
+- **M4 core COMPLETE (2026-10-23, ced889c)** — the goal is to build ffmpeg
+  commands for all 8 core FFmpeg components (ffmpeg.org/documentation.html).
+  Schema: CropOp (center WxH, even-snapped by the planner), SpeedOp
+  (0.25–8), RotateOp (90/180/270, clockwise flag), AudioResampleOp
+  (sample_rate and/or channels 1|2|6) — at most one each; OutputSpec gains
+  pixel_format / video_profile / video_preset; AssetKind.SOURCE.
+  Builder: crop → `crop=W:H`; rotate → transpose (90cw=1, 270cw=2,
+  180=hflip+vflip); speed → `setpts=PTS/f` + `atempo` chain (0.5–2.0
+  segments); resample → `-ar`/`-ac`; `-pix_fmt`/`-profile`/`-preset`.
+  Input sources (registry "devices"): asset path `<format>:<spec>` with
+  lavfi/v4l2/alsa/dshow/avfoundation/x11grab → `-f <format>` + `;k=v`
+  option tokens. Output devices audio-only (alsa, pulse — a video plan
+  cannot target one). Copy mode now remuxes mp4/mov→mpegts with the video
+  bitstream filter (h264_mp4toannexb / hevc_mp4toannexb) via
+  `bsf_for_copy()`. Components 5 (muxers/demuxers) and 6 (protocols) were
+  already covered by M3b — documentation of all 8 is the in-flight docs job.
+- **M4 NLU COMPLETE (2026-10-23, 43251a0)** — rules adapter: crop (exact
+  dims; aspect-ratio asks clarify; WxH-vs-resize disambiguation by spans),
+  speed (numeric + twice/triple/half/quarter word forms; 0.25–8 bounds,
+  "2x bigger" is not speed, "encode faster" → preset not playback speed),
+  rotate (45° unsupported, ccw defaults to 90 with a note), audio resample
+  (bad rates rejected), pixel format / profile / preset detection;
+  revisions merge the new ops (crop/rotate insert after resize; speed and
+  audio_resample append). CLI `id=source:<spec>` kind prefix, UI source
+  option, explain lines for every new op, LLM prompt synced (same op set +
+  source-kind rule + example).
+- **M4 test suite (delegated, i7 job j_37421e31d3)**: integrated as
+  515d443 — 56 tests: schema bounds (op ranges, at-most-one, discriminated
+  union), planner/builder behavior (atempo chains, even-snap, transpose
+  mapping, copy+bsf, source pre_opts, device plans, PlanErrors), real-media
+  E2E on titan.mp4. dispatch_integrate accepted.
+- Delegation in flight (integration = diff review, copy files, full suite,
+  commit, dispatch_integrate — do not touch the workers' owned files until
+  integrated):
+  - `j_893e3a47a6` (tr4-secondary, strong 140B quantized flash-next, 112k
+    ctx): the audio bitstream filter `aac_adtstoasc` for mpegts→mp4/mov
+    copy mode. Design: a NEW parallel `audio_bsf_for_copy(source, target,
+    audio_codec)` — `bsf_for_copy()` (video) is untouched because i7's
+    tests pin its exact behavior. Copy mode always has ffprobe metadata, so
+    `metadata.audio_codec` is available. The worker OWNS
+    fass/registry/{registry.json,loader.py,__init__.py},
+    fass/planner/planner.py, tests/test_bsf.py (new) — main thread must not
+    edit those until integrated.
+  - `j_bf063ade65` (i7, base 43251a0): docs pass —
+    ffmpeg-assistant-prd.md (drop crop/speed from the deferred list, MVP
+    capabilities table rows, stale "one primary video input" sentence →
+    M3a/M3b multi-input), README "What it understands", docs/DEVELOPMENT.md
+    (new "FFmpeg component coverage" section for all 8 components with
+    registry/module refs, "What the MVP understands" + Roadmap refresh).
+    Instructed NOT to document aac_adtstoasc (that lands with the other job).
+- CLI smoke verified on titan.mp4 (ground truth): "crop to 640x480, make
+  it 2x faster and rotate 90 degrees, 10-bit, ultrafast preset" →
+  `ffmpeg -hide_banner -loglevel error -i media/titan.mp4 -vf
+  crop=640:480,transpose=1,setpts=PTS/2 -af atempo=2 -map 0:v:0 -map '0:a?'
+  -c:v libx264 -crf 23 -preset ultrafast -pix_fmt yuv420p10le -c:a aac
+  -b:a 160k -movflags +faststart titan.mp4`; "resample audio to 44.1k mono"
+  → `-ar 44100 -ac 1` + "Audio resample: to 44100 Hz, mono" summary line.
 
 ## Key decisions
 - argv arrays are the source of truth; shell rendering is shlex.join only.
@@ -162,7 +219,7 @@ smoke-tested live (healthz, /v1/commands, UI).
   Byte-size targets ("5 MB") remain needs_clarification; bit-rate targets
   ("10 Mbps") are honored.
 
-## Changed files (milestone 1 + 2 + M3a + M3b)
+## Changed files (milestone 1 + 2 + M3a + M3b + M4)
 fass/{__init__,__main__,cli,pipeline,explain,feedback,api}.py,
 fass/schema/plan.py, fass/registry/, fass/probe/ffprobe.py,
 fass/planner/, fass/builder/, fass/nlu/{rules,llm}.py,
@@ -173,10 +230,11 @@ tests/test_media.py, tests/test_titan.py,
 media/titan.mp4, pyproject.toml, .gitignore, README.md, HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **265 passed** in ~41 s, no failures.
-(M3b added 47: 12 rules · 10 planner/builder · 8 API · 4 CLI · 2 media E2E
-stream I/O · 6 benchmark · 5 schema — now 89 benchmark entries, 13 media
-outcome tests, 27 API tests.)
+`./.venv/bin/python -m pytest -q` → **351 passed** in ~78 s, no failures
+(2026-10-23, after the M4 NLU commit; M3b state was 265: +56 from the M4
+core suite 515d443, +30 from the M4 NLU tests in 43251a0 — rules
+op-detection/conflicts, 5 benchmark entries updated, API/CLI
+unsupported-case swaps). 89 benchmark entries, 28 API tests.
 Real-media sanity on media/titan.mp4: udp stream-out renders
 `-f mpegts … udp://127.0.0.1:9999` + trim warning; `-o rtmp://…` → flv +
 `-f flv` + reconciliation default note + disclosure in summary.
@@ -186,8 +244,25 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-Milestones 1+2 done (all of plan0's stated scope except the learning
-infrastructure, which plan0 defers explicitly). Candidates if requested:
+Milestones 1+2+3 and M4 (core + NLU) done. The 8-component build goal is
+code-complete for components 1-3, 7, 8; component 4 (bitstream filters) is
+video-only until j_893e3a47a6 lands; 5 (muxers/demuxers) + 6 (protocols)
+were covered by M3b — their documentation is in flight with j_bf063ade65.
+
+0. Integrate `j_893e3a47a6` (tr4-secondary, aac_adtstoasc audio bsf) when
+   its completion notification arrives: diff review, copy its 5 owned
+   files, full suite, commit, dispatch_integrate; then a small follow-up
+   commit documenting the audio bsf in DEVELOPMENT.md's "FFmpeg component
+   coverage" section (component 4).
+1. Integrate `j_bf063ade65` (i7, docs pass) on completion: review the 3
+   doc files against its acceptance criteria, copy, commit,
+   dispatch_integrate.
+2. Final full-suite run after both integrations (expect 351 + tr4's new
+   bsf tests green).
+3. i7 redeploy (kill EXACT PID 660597 → rsync → restart detached) ONLY if
+   requested.
+
+Earlier candidates, still open if requested:
 
 **M3 (user-stated direction, 2026-10-23) — multi-input + stream I/O.**
 "In a perfect world the web interface should allow adding more inputs
@@ -201,8 +276,8 @@ tokens only, scheme allowlist, stream destinations disclosed.
 1. Deferred M3b scope if requested: HTTP/HLS *output* destinations,
    "stop streaming" negation handling, generic ffmpeg-source-spec inputs
    (e.g. named lavfi sources) beyond files + allowlisted URLs.
-2. More ops (crop, speed — currently "unsupported"), LLM adapter evaluation
-   against the 89-request benchmark.
+2. More ops beyond the M4 set (volume, subtitles, concatenation, ...),
+   LLM adapter evaluation against the 89-request benchmark.
 3. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
 4. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
 Remote `origin` (github.com/suedenglehem/fass.git) exists since 2026-10-23;
