@@ -252,8 +252,15 @@ directions after 645f903; 5+6 since M3b). Both delegated jobs
 (j_893e3a47a6, j_bf063ade65) integrated, accepted, no jobs in flight.
 364 tests green. Nothing outstanding unless the user asks.
 
-1. i7 redeploy (kill EXACT PID 660597 → rsync → restart detached) ONLY if
-   requested — i7's fass serve still runs the pre-M4 build.
+1. **i7 redeploy DONE (2026-10-23, on request).** The old pre-M4 server
+   (PID 660597) had already died — port 8000 was free, nothing to kill.
+   rsync'd current `main` (5c3da4f) to /dd2/andrei/fass (excluding
+   .venv/.git/media), started detached via setsid nohup. New server
+   PID **369596** on 0.0.0.0:8000, log /tmp/fass-serve.log. Verified:
+   /healthz ok, /v1/support now lists the M4 ops (crop/speed/rotate),
+   and a live `POST /v1/commands` "resize to 720p" → status ready,
+   correct argv, validation_level static. Stop by EXACT PID only (same
+   rule as before, never `pkill -f "fass serve"`).
 
 Earlier candidates, still open if requested:
 
