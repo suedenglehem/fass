@@ -260,7 +260,8 @@ tests/{conftest,test_schema,test_rules,test_planner_builder,
 test_render_adversarial,test_cli,test_api}.py,
 tests/benchmark/{requests.json}, tests/test_benchmark.py,
 tests/test_media.py, tests/test_titan.py, tests/test_bsf.py,
-tests/test_subtitles.py (M5), media/titan.mp4, pyproject.toml,
+tests/test_subtitles.py (M5), serve.sh (launch script),
+media/titan.mp4, pyproject.toml,
 .gitignore, README.md, docs/DEVELOPMENT.md, ffmpeg-assistant-prd.md,
 HANDOFF.md
 
@@ -285,10 +286,11 @@ Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 code-complete AND documented for all 8 components (1-3, 7, 8 since M4
 core; 4 now both directions after 645f903; 5+6 since M3b). Both
 delegated jobs (j_893e3a47a6, j_bf063ade65) integrated, accepted, no
-jobs in flight. 452 tests green (2026-10-24, post-M5). **Local main =
-5fe47f1 (M5); origin/main = f5740b2 — M5 committed locally, push only
-on request.** i7 redeployed to the M5 build (below). Nothing
-outstanding unless the user asks.
+jobs in flight. 452 tests green (2026-10-24, post-M5). **Everything pushed:
+origin/main = d7c895c** (5fe47f1 M5 + d7c895c HANDOFF follow-up;
+working tree clean apart from untracked `.resume`). Both machines now
+launch the server via `serve.sh` (item 3). Nothing outstanding unless
+the user asks.
 
 1. **i7 redeploy DONE (2026-10-23, on request).** The old pre-M4 server
    (PID 660597) had already died — port 8000 was free, nothing to kill.
@@ -305,6 +307,21 @@ outstanding unless the user asks.
    Verified LAN healthz + live `POST /v1/commands` "burn in the
    subtitles from subs.srt" → ready, `subtitles=subs.srt` in `-vf`.
    Stop by EXACT PID only.
+3. **serve.sh launch script DONE (2026-10-24, on request).** One
+   idempotent launcher at the repo root, deployed to BOTH machines
+   (local + i7, same path /dd2/andrei/fass/serve.sh): `./serve.sh`
+   launches detached (setsid nohup) and waits for /healthz, or no-ops
+   if a healthy server already answers; `./serve.sh --force` kills the
+   current server and relaunches. Safety: pidfile /tmp/fass-serve.pid
+   + anchored /proc cmdline match (must start with
+   `<repo>/.venv/bin/python -m fass serve`) — never a pattern kill;
+   refuses if the port is held by an unrelated process; aborts (no
+   SIGKILL) if the old server ignores SIGTERM. Verified on both: local
+   server PID **29610** (fresh launch — local :8000 was free); i7 old
+   PID 744429 had died → script relaunched (28686), then `--force`
+   restart exercised → i7 server PID **31580**; i7 re-verified over
+   LAN (healthz + live subtitles POST → ready). Stop: `kill $(cat
+   /tmp/fass-serve.pid)`.
 
 Earlier candidates, still open if requested:
 
