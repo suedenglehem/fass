@@ -280,26 +280,31 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-Milestones 1+2+3 and M4 (core + NLU + audio bsf + docs) all done and
-committed. The 8-component build goal is now code-complete AND
-documented for all 8 components (1-3, 7, 8 since M4 core; 4 now both
-directions after 645f903; 5+6 since M3b). Both delegated jobs
-(j_893e3a47a6, j_bf063ade65) integrated, accepted, no jobs in flight.
-364 tests green. **Everything pushed: origin/main = f5740b2** — incl.
-the README capability-set fix (f5740b2: remux + both-direction
-bitstream filters, N-typed-input shape, revisions). i7 lags only by
-that README file (the serve process doesn't use it — no redeploy
-needed). Nothing outstanding unless the user asks.
+Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
+(subtitles) all done and committed. The 8-component build goal is
+code-complete AND documented for all 8 components (1-3, 7, 8 since M4
+core; 4 now both directions after 645f903; 5+6 since M3b). Both
+delegated jobs (j_893e3a47a6, j_bf063ade65) integrated, accepted, no
+jobs in flight. 452 tests green (2026-10-24, post-M5). **Local main =
+5fe47f1 (M5); origin/main = f5740b2 — M5 committed locally, push only
+on request.** i7 redeployed to the M5 build (below). Nothing
+outstanding unless the user asks.
 
 1. **i7 redeploy DONE (2026-10-23, on request).** The old pre-M4 server
    (PID 660597) had already died — port 8000 was free, nothing to kill.
    rsync'd current `main` (5c3da4f) to /dd2/andrei/fass (excluding
-   .venv/.git/media), started detached via setsid nohup. New server
+   .venv/.git/media), started detached via setsid nohup. Server
    PID **369596** on 0.0.0.0:8000, log /tmp/fass-serve.log. Verified:
    /healthz ok, /v1/support now lists the M4 ops (crop/speed/rotate),
    and a live `POST /v1/commands` "resize to 720p" → status ready,
    correct argv, validation_level static. Stop by EXACT PID only (same
    rule as before, never `pkill -f "fass serve"`).
+2. **i7 redeploy DONE (2026-10-24, M5).** Killed 369596 by exact PID,
+   rsync'd main (5fe47f1), restarted detached via setsid nohup. New
+   server PID **744429** on 0.0.0.0:8000, log /tmp/fass-serve.log.
+   Verified LAN healthz + live `POST /v1/commands` "burn in the
+   subtitles from subs.srt" → ready, `subtitles=subs.srt` in `-vf`.
+   Stop by EXACT PID only.
 
 Earlier candidates, still open if requested:
 
@@ -315,8 +320,8 @@ tokens only, scheme allowlist, stream destinations disclosed.
 1. Deferred M3b scope if requested: HTTP/HLS *output* destinations,
    "stop streaming" negation handling, generic ffmpeg-source-spec inputs
    (e.g. named lavfi sources) beyond files + allowlisted URLs.
-2. More ops beyond the M4 set (volume, subtitles, concatenation, ...),
-   LLM adapter evaluation against the 89-request benchmark.
+2. More ops beyond the current set (volume, concatenation, ...),
+   LLM adapter evaluation against the 91-request benchmark.
 3. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
 4. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
 Remote `origin` (github.com/suedenglehem/fass.git) exists since 2026-10-23;
