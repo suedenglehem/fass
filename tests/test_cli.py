@@ -51,7 +51,7 @@ def test_clarification_exit_code():
 
 
 def test_unsupported_exit_code():
-    r = run_cli("make it 2x faster", "clip.mp4", "--adapter", "rules", "--json")
+    r = run_cli("stabilize the video", "clip.mp4", "--adapter", "rules", "--json")
     assert r.returncode == 4
     data = json.loads(r.stdout)
     assert data["status"] == "unsupported"

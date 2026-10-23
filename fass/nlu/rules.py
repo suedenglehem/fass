@@ -20,6 +20,8 @@ from fass.registry import (
     default_codec,
     matrix_error,
     output_schemes,
+    sample_rates,
+    speed_limits,
     stream_output_info,
 )
 from fass.schema import (
@@ -27,29 +29,40 @@ from fass.schema import (
     AssetKind,
     AudioMode,
     AudioReplaceOp,
+    AudioResampleOp,
     Clarification,
+    CropOp,
     EditPlan,
     GrayscaleOp,
     OutputSpec,
     ParseResult,
     ParseStatus,
     ResizeOp,
+    RotateOp,
+    SpeedOp,
     TrimSpec,
     UnsupportedPart,
     WatermarkOp,
 )
 
 SUPPORTED_SUMMARY = (
-    "Supported: resize (e.g. '720p', '1280x720'), trim ('cut from 00:10 to 00:30', "
-    "'the first 20 seconds'), container conversion (mp4, mov, mkv, webm, mpeg-ts), "
+    "Supported: resize (e.g. '720p', '1280x720'), cropping to exact dimensions "
+    "('crop to 1280x720'), trim ('cut from 00:10 to 00:30', 'the first 20 "
+    "seconds'), speed changes ('make it 2x faster', 'half speed'), rotation "
+    "('rotate 90 degrees'), container conversion (mp4, mov, mkv, webm, mpeg-ts), "
     "video encoding (H.264, H.265, VP9) at quality presets or a target bitrate "
-    "(e.g. 'cbr 10 Mbps'), grayscale ('black and white'), one image watermark "
-    "(position, margin, scale), audio keep/remove, and replacing the audio with "
-    "another file ('replace the audio with music.mp3'). Inputs may also be remote "
-    "streams (http(s)://, rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp:// "
-    "URLs), and the output may be a stream ('stream this to rtmp://host:1935/live', "
-    "'publish to rtsp://server:554/live', 'send it to udp://127.0.0.1:5004') — "
-    "the destination's scheme fixes the output format."
+    "(e.g. 'cbr 10 Mbps'), pixel format ('10-bit', 'yuv444p'), encoder profile "
+    "('baseline profile') and speed preset ('ultrafast preset') for H.264, "
+    "grayscale ('black and white'), one image watermark (position, margin, "
+    "scale), audio keep/remove, audio resampling ('resample audio to 44.1k "
+    "mono'), and replacing the audio with another file ('replace the audio "
+    "with music.mp3'). Inputs may also be remote streams (http(s)://, "
+    "rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp:// URLs), local "
+    "capture sources (lavfi:, v4l2:, alsa:, x11grab: …), and the output may "
+    "be a stream ('stream this to rtmp://host:1935/live', 'publish to "
+    "rtsp://server:554/live', 'send it to udp://127.0.0.1:5004') or a local "
+    "audio device ('play the audio to alsa:hw:0') — the destination's scheme "
+    "fixes the output format."
 )
 
 # ---------------------------------------------------------------- time
@@ -198,8 +211,11 @@ _RESIZE_PHRASES = [
 ]
 
 
-def _detect_resize(t: str):
-    """Return (ResizeOp|None, clarification|None)."""
+def _detect_resize(t: str, exclude: list[tuple[int, int]] | None = None):
+    """Return (ResizeOp|None, clarification|None).
+
+    ``exclude`` lists (start, end) spans already claimed by another detector
+    (crop dimensions) — a WxH inside one of them is not a resize target."""
     heights: list[tuple[int, int, int]] = []  # (value, span_start, span_end)
     for m in re.finditer(r"(?<![\d.])(\d{2,5})\s*p\b", t, re.I):
         heights.append((int(m.group(1)), m.start(), m.end()))
@@ -211,7 +227,11 @@ def _detect_resize(t: str):
             taken.append((m.start(), m.end()))
             heights.append((value, m.start(), m.end()))
 
-    wh = re.search(r"(?<!\d)(\d{2,5})\s*[x×]\s*(\d{2,5})(?!\d)", t)
+    wh = None
+    for m in re.finditer(r"(?<!\d)(\d{2,5})\s*[x×]\s*(\d{2,5})(?!\d)", t):
+        if not any(not (m.end() <= s or m.start() >= e) for s, e in (exclude or [])):
+            wh = m
+            break
     values = sorted({h for h, _, _ in heights})
     if len(values) > 1:
         return None, Clarification(
@@ -222,6 +242,220 @@ def _detect_resize(t: str):
     if values:
         return ResizeOp(height=values[0]), None
     return None, None
+
+
+# ---------------------------------------------------------------- crop
+
+def _detect_crop(t: str):
+    """Return (CropOp|None, clarification|None, unsupported_frag|None, spans).
+
+    ``spans`` are the (start, end) regions of WxH text the crop claimed —
+    resize must not treat them as its own target."""
+    spans: list[tuple[int, int]] = []
+    if not re.search(r"\bcrop(?:s|ping|ped)?\b", t):
+        return None, None, None, spans
+    m = re.search(r"(?<!\d)(\d{2,5})\s*[x×]\s*(\d{2,5})(?!\d)", t) \
+        or re.search(r"(?<!\d)(\d{2,5})\s+by\s+(\d{2,5})(?!\d)", t)
+    if m:
+        w, h = int(m.group(1)), int(m.group(2))
+        if not (16 <= w <= 8192 and 16 <= h <= 8192):
+            return None, None, f"crop to {w}x{h} (dimensions must be 16 to 8192)", spans
+        spans.append((m.start(), m.end()))
+        return CropOp(width=w, height=h), None, None, spans
+    if re.search(r"(?<!\d)\d{1,2}\s*:\s*\d{1,2}(?!\d)", t) or re.search(r"\baspect\s+ratio\b", t):
+        return None, Clarification(
+            question="cropping to an aspect ratio (e.g. 16:9) isn't supported directly — "
+                     "which exact dimensions (e.g. 'crop to 1280x720')?"
+        ), None, spans
+    return None, Clarification(
+        question="crop to what dimensions? (e.g. 'crop to 1280x720')"
+    ), None, spans
+
+
+# ---------------------------------------------------------------- speed
+
+_SPEED_NUM = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:x|×)\b", re.I)
+_SPEED_TIMES = re.compile(
+    r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s+times\s+"
+    r"(as\s+fast|as\s+quick|faster|slower|the\s+speed)",
+    re.I,
+)
+_SPEED_WORDS = [
+    (re.compile(r"twice\s+(?:as\s+fast|faster|the\s+speed)|at\s+twice\s+(?:the\s+)?speed"
+                r"|double\s+(?:the\s+)?speed", re.I), 2.0),
+    (re.compile(r"triple\s+(?:the\s+)?speed|three\s+times\s+(?:as\s+fast|faster|the\s+speed)",
+                re.I), 3.0),
+    (re.compile(r"half\s+(?:the\s+)?(?:speed|as\s+fast)", re.I), 0.5),
+    (re.compile(r"quarter\s+(?:the\s+)?(?:speed|as\s+fast)", re.I), 0.25),
+]
+_SPEED_INTENT = re.compile(
+    r"\bspeed(?:ing|up)?\b|\bfast(?:er)?\b|\bslow(?:er)?\b|time[\s-]?lapse|\bplayback\b",
+    re.I,
+)
+
+
+def _detect_speed(t: str):
+    """Return (SpeedOp|None, clarification|None, unsupported_frag|None).
+
+    'N times slower' / 'Nx slower' invert the factor. A numeric factor with a
+    size word after it ('2x bigger', '2x resolution') is a resize request,
+    not a speed change."""
+    factor: float | None = None
+    m = _SPEED_TIMES.search(t)
+    if m:
+        factor = float(m.group(1))
+        if m.group(2).lower().startswith("slower"):
+            factor = 1.0 / factor
+    if factor is None:
+        m = _SPEED_NUM.search(t)
+        if m:
+            n = float(m.group(1))
+            if re.search(rf"(?<![\d.]){re.escape(m.group(1))}\s*(?:x|×)\s*(?:times\s+)?slower\b", t, re.I):
+                n = 1.0 / n
+            elif re.search(rf"(?<![\d.]){re.escape(m.group(1))}\s*(?:x|×)\s*"
+                           r"(?:bigger|larger|size|dimension|resolution|upscale|scale)\b", t, re.I):
+                m = None  # a size request, not a speed change
+        if m is not None:
+            factor = n
+
+    if factor is None:
+        for pat, value in _SPEED_WORDS:
+            if pat.search(t):
+                factor = value
+                break
+
+    if factor is not None:
+        lo, hi = speed_limits()
+        if not (lo <= factor <= hi):
+            return None, None, f"speed factor {factor:g}x (supported {lo:g}x to {hi:g}x)"
+        return SpeedOp(factor=factor), None, None
+
+    if _SPEED_INTENT.search(t):
+        if _detect_preset(t) is not None:
+            # "encode faster" — an encoding context makes it a speed *preset*,
+            # not a playback change
+            return None, None, None
+        return None, Clarification(
+            question="by what factor? (supported: 0.25x to 8x, e.g. 'make it 2x faster')"
+        ), None
+    return None, None, None
+
+
+# ---------------------------------------------------------------- rotate
+
+def _detect_rotate(t: str):
+    """Return (RotateOp|None, clarification|None, unsupported_frag|None, note|None)."""
+    m_rot = re.search(r"\brotat(?:e|ed|ing)\b", t)
+    if not m_rot:
+        return None, None, None, None
+    window = t[m_rot.start():m_rot.start() + 40]
+    clockwise = not re.search(r"counter[\s-]?clockwise|anti[\s-]?clockwise|anticlockwise", t)
+    angle, explicit = None, False
+    m = re.search(r"(\d{2,3})\s*(?:degrees?|deg\b|°)", window)
+    if m:
+        angle, explicit = int(m.group(1)), True
+    else:
+        m = re.search(r"(?<!\d)(\d{2,3})\b", window)
+        if m and int(m.group(1)) in (90, 180, 270):
+            angle, explicit = int(m.group(1)), True
+    if angle is not None and angle not in (90, 180, 270):
+        return None, None, \
+            f"rotation by {angle}° (only quarter turns — 90, 180 or 270 — are supported)", None
+    if angle is None:
+        angle = 90
+    note = None if explicit else "rotation angle defaulted to 90°"
+    return RotateOp(angle=angle, clockwise=clockwise), None, None, note
+
+
+# ---------------------------------------------------------------- audio resample
+
+def _detect_resample(t: str):
+    """Return (AudioResampleOp|None, clarification|None, unsupported_frag|None).
+
+    'NNk' counts as a sample rate only with an audio context word; a
+    5-6-digit 'NNNNN hz' or 'NN.N khz' is unambiguous on its own."""
+    rate: int | None = None
+    m = re.search(r"(?<![\d.])(\d{4,6})\s*(?:hz|hertz)\b", t, re.I)
+    if m:
+        rate = int(m.group(1))
+    if rate is None:
+        m = re.search(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*(?:khz|k\s*hertz)\b", t, re.I)
+        if m:
+            rate = int(round(float(m.group(1)) * 1000))
+    if rate is None:
+        m = re.search(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*k\b", t, re.I)
+        if m and re.search(r"\b(?:resampl\w*|sample\s*rate|sampling|audio|sound|mono|stereo)\b", t):
+            rate = int(round(float(m.group(1)) * 1000))
+    if rate is not None and rate not in sample_rates():
+        return None, None, (
+            f"sample rate {rate} Hz (supported: {', '.join(str(r) for r in sample_rates())})"
+        )
+
+    channels: int | None = None
+    if re.search(r"\bmono(?:aural)?\b", t):
+        channels = 1
+    elif re.search(r"\bstereo\b", t):
+        channels = 2
+    elif re.search(r"\b5\.1\b|surround\s*(?:sound|audio)|audio\s+surround", t):
+        channels = 6
+
+    if rate is None and channels is None:
+        if re.search(r"\bresampl\w*|sample\s*rate|sampling\b", t):
+            return None, Clarification(
+                question="resample the audio to what sample rate and/or channel count? "
+                         f"(e.g. '44.1k stereo'; rates: {', '.join(str(r) for r in sample_rates())})"
+            ), None
+        return None, None, None
+    return AudioResampleOp(sample_rate=rate, channels=channels), None, None
+
+
+# ---------------------------------------------------------------- pixel format / profile / preset
+
+def _detect_pixel_format(t: str) -> str | None:
+    m = re.search(r"\b(yuv420p10le|yuv420p10|yuv444p|yuv420p)\b", t, re.I)
+    if m:
+        name = m.group(1).lower()
+        return "yuv420p10le" if name in ("yuv420p10le", "yuv420p10") else name
+    if re.search(r"\b10[\s-]?bit\b", t):
+        return "yuv420p10le"
+    if re.search(r"\b8[\s-]?bit\b", t):
+        return "yuv420p"
+    if re.search(r"\b4:4:4\b", t):
+        return "yuv444p"
+    if re.search(r"\b4:2:0\b", t):
+        return "yuv420p"
+    return None
+
+
+def _detect_profile(t: str) -> str | None:
+    m = re.search(r"\bprofile\s+(baseline|main|high)\b", t, re.I)
+    if m:
+        return m.group(1).lower()
+    m = re.search(r"\b(baseline|main|high)\s+profile\b", t, re.I)
+    if m:
+        return m.group(1).lower()
+    if re.search(r"(?:max(?:imum)?|most)\s+compatib|\bfor\s+compatib", t, re.I):
+        return "baseline"
+    return None
+
+
+def _detect_preset(t: str) -> str | None:
+    presets = "|".join((
+        "ultrafast", "superfast", "veryfast", "faster", "fast",
+        "medium", "slow", "slower", "veryslow",
+    ))
+    m = re.search(rf"\bpreset\s+({presets})\b", t, re.I)
+    if m:
+        return m.group(1).lower()
+    m = re.search(r"\b(ultrafast|superfast|veryfast|veryslow)\b", t, re.I)
+    if m:
+        return m.group(1).lower()
+    # 'fast/slow/…' only counts as a preset near an encoding context — on its
+    # own it is a speed request ("make it faster")
+    m = re.search(rf"(?:encod\w*|x264|render\w*)[^.;,]{{0,25}}\b({presets})\b", t, re.I)
+    if m:
+        return m.group(1).lower()
+    return None
 
 
 # ---------------------------------------------------------------- codecs / containers
@@ -383,9 +617,10 @@ def _detect_watermark(t: str, assets: dict):
 # ---------------------------------------------------------------- unsupported
 
 UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"\b(?:speed\s*up|slow\s*down|slow[\s-]?motion|time[\s-]?lapse|faster|slower|twice\s+as\s+fast|three\s+times\s+as\s+fast|\d+(?:\.\d+)?\s*x\s*speed|at\s+\d+(?:\.\d+)?\s*x\b)", re.I), "speed changes"),
-    (re.compile(r"\brotat(?:e|ed|ing)\b|\bflip(?:ping)?\b|\bmirror(?:ing)?\b", re.I), "rotation and flipping"),
-    (re.compile(r"\bcrop(?:s|ping|ing)?\b", re.I), "cropping"),
+    # speed, rotation and cropping are now supported — their detectors run in
+    # parse() before this scan, so only what the detectors cannot resolve
+    # (e.g. an out-of-range factor) reaches the user, with its own message
+    (re.compile(r"\bflip(?:ping)?\b|\bmirror(?:ing)?\b", re.I), "flipping and mirroring"),
     (re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsoften\w*\b|\bamplif\w*\b|\bloudness\b|\bnormali[sz]e\s+audio\b", re.I), "audio level changes"),
     # \bsrt\b must not eat an srt:// stream URL (that is a destination, M3b)
     (re.compile(r"\bsubtitles?\b|\bcaptions?\b|\bsrt\b(?!://)|\bburn\s+(?:in|the)\s+sub\w*", re.I), "subtitles"),
@@ -519,7 +754,14 @@ class RulesAdapter:
 
         # 2. detect
         trim, trim_note, trim_clar = _resolve_trim(t, media.duration if media else None)
-        resize, resize_clar = _detect_resize(t)
+        crop, crop_clar, crop_frag, crop_spans = _detect_crop(t)
+        resize, resize_clar = _detect_resize(t, exclude=crop_spans)
+        speed, speed_clar, speed_frag = _detect_speed(t)
+        rotate, rotate_clar, rotate_frag, rotate_note = _detect_rotate(t)
+        audio_resample, rs_clar, rs_frag = _detect_resample(t)
+        pixel_format = _detect_pixel_format(t)
+        video_profile = _detect_profile(t)
+        video_preset = _detect_preset(t)
         audio = _detect_audio(t)
         watermark, wm_clar, wm_note = _detect_watermark(t, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
@@ -533,6 +775,11 @@ class RulesAdapter:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
             return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
+        for frag in (crop_frag, speed_frag, rotate_frag, rs_frag):
+            if frag is not None:
+                unsupported.append(UnsupportedPart(fragment=frag,
+                                                   reason="outside the MVP support set"))
+                return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
 
         # 2b. stream output destination (M3b) — its scheme fixes the container
         dests = _detect_destination(t, assets)
@@ -575,7 +822,8 @@ class RulesAdapter:
                 wm_note = "watermark: kept the previous image"
 
         # 4. explicit clarifications win (focused, one at a time)
-        for c in (trim_clar, resize_clar, wm_clar, ar_clar, ambiguous):
+        for c in (trim_clar, resize_clar, crop_clar, speed_clar, rotate_clar,
+                  rs_clar, wm_clar, ar_clar, ambiguous):
             if c is not None:
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -593,7 +841,8 @@ class RulesAdapter:
         if previous_plan is not None:
             plan, changed = _merge_revision(
                 previous_plan, t, trim, resize, audio, watermark, grayscale,
-                audio_replace, dest=dest,
+                audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
+                audio_resample=audio_resample,
             )
             if not changed:
                 return ParseResult(
@@ -607,12 +856,20 @@ class RulesAdapter:
             ops = []
             if resize is not None:
                 ops.append(resize)
+            if crop is not None:
+                ops.append(crop)
+            if rotate is not None:
+                ops.append(rotate)
             if grayscale:
                 ops.append(GrayscaleOp())
             if watermark is not None:
                 ops.append(watermark)
+            if speed is not None:
+                ops.append(speed)
             if audio_replace is not None:
                 ops.append(audio_replace)
+            if audio_resample is not None:
+                ops.append(audio_resample)
             plan.operations = ops
             if audio == "remove":
                 plan.output.audio_mode = AudioMode.REMOVE
@@ -622,6 +879,8 @@ class RulesAdapter:
         notes: list[str] = []
         if trim_note:
             notes.append(trim_note)
+        if rotate_note:
+            notes.append(rotate_note)
         if wm_note:
             notes.append(wm_note)
         if ar_note:
@@ -629,10 +888,12 @@ class RulesAdapter:
 
         # 6. resolve output defaults — visible, never hidden
         if previous_plan is None:
-            if trim is None and resize is None and watermark is None and not grayscale \
-                    and codec is None and container is None and audio != "remove" \
-                    and audio_replace is None and bitrate_kbps is None \
-                    and dest is None \
+            if trim is None and resize is None and crop is None and speed is None \
+                    and rotate is None and audio_resample is None and watermark is None \
+                    and not grayscale and pixel_format is None and video_profile is None \
+                    and video_preset is None and codec is None and container is None \
+                    and audio != "remove" and audio_replace is None \
+                    and bitrate_kbps is None and dest is None \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b", t):
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -658,6 +919,15 @@ class RulesAdapter:
                 notes.append(f"video codec defaulted to {codec} (the {container.upper()} preset default)")
             plan.output.container = container
             plan.output.video_codec = codec
+            if pixel_format is not None:
+                plan.output.pixel_format = pixel_format
+                notes.append(f"output pixel format set to {pixel_format}")
+            if video_profile is not None:
+                plan.output.video_profile = video_profile
+                notes.append(f"encoder profile set to {video_profile}")
+            if video_preset is not None:
+                plan.output.video_preset = video_preset
+                notes.append(f"encoding speed preset set to {video_preset}")
             if bitrate_kbps is not None:
                 plan.output.video_bitrate_kbps = bitrate_kbps
                 notes.append(
@@ -683,7 +953,8 @@ class RulesAdapter:
 # ---------------------------------------------------------------- revision
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
-                    audio_replace=None, dest=None):
+                    audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
+                    audio_resample=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
@@ -701,6 +972,18 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if bitrate is not None and plan.output.video_bitrate_kbps != bitrate:
         plan.output.video_bitrate_kbps = bitrate
         changed.append(f"video bitrate -> {bitrate} kbps")
+    pixel_format = _detect_pixel_format(t)
+    if pixel_format and plan.output.pixel_format != pixel_format:
+        plan.output.pixel_format = pixel_format
+        changed.append(f"pixel format -> {pixel_format}")
+    profile = _detect_profile(t)
+    if profile and plan.output.video_profile != profile:
+        plan.output.video_profile = profile
+        changed.append(f"video profile -> {profile}")
+    preset = _detect_preset(t)
+    if preset and plan.output.video_preset != preset:
+        plan.output.video_preset = preset
+        changed.append(f"video preset -> {preset}")
 
     # A newly named destination always wins over the previous one; the scheme
     # fixes the container, so switch it when they disagree.
@@ -748,6 +1031,20 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
         plan.operations = [o for o in plan.operations if o.type != "resize"]
         plan.operations.insert(0, resize)
         changed.append("resize updated")
+    # crop and rotate go right after resize (before watermark/grayscale), so
+    # the filter order matches a fresh plan
+    base = 1 if any(o.type == "resize" for o in plan.operations) else 0
+    for op in (crop, rotate):
+        if op is not None:
+            plan.operations = [o for o in plan.operations if o.type != op.type]
+            plan.operations.insert(base, op)
+            base += 1
+            changed.append(f"{op.type} updated")
+    for op in (speed, audio_resample):
+        if op is not None:
+            plan.operations = [o for o in plan.operations if o.type != op.type]
+            plan.operations.append(op)
+            changed.append(f"{op.type} updated")
     if watermark is not None:
         plan.operations = [o for o in plan.operations if o.type != "watermark"]
         plan.operations.append(watermark)

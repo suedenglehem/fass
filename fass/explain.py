@@ -31,7 +31,14 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         else:
             crf = vc.get("preset", {}).get("crf")
             quality = f", CRF {crf}" if crf is not None else ""
-        lines.append(f"Encode: {out.video_codec} ({vc['encoder']}{quality}) in {out.container.upper()}")
+        extra = ""
+        if out.video_profile:
+            extra += f", {out.video_profile} profile"
+        if out.video_preset:
+            extra += f", {out.video_preset} preset"
+        if out.pixel_format:
+            extra += f", {out.pixel_format}"
+        lines.append(f"Encode: {out.video_codec} ({vc['encoder']}{quality}{extra}) in {out.container.upper()}")
 
     if edit.output_destination:
         lines.append(
@@ -65,6 +72,13 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             else:
                 how = "letterboxed, no stretching" if op.aspect_ratio == "preserve" else "stretched to exact size"
                 lines.append(f"Resize: {op.width}x{op.height} ({how})")
+        elif op.type == "crop":
+            lines.append(f"Crop: keep the center {op.width}x{op.height} of each frame")
+        elif op.type == "rotate":
+            dirn = "clockwise" if op.clockwise else "counterclockwise"
+            lines.append(f"Rotate: {op.angle}° {dirn}")
+        elif op.type == "speed":
+            lines.append(f"Speed: playback at {op.factor:g}x (video and audio together)")
         elif op.type == "grayscale":
             lines.append("Grayscale: video made black and white (audio unaffected)")
         elif op.type == "watermark":
@@ -73,6 +87,13 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
                 f"Watermark: image at {_POS_WORDS[op.position]}, {op.margin_px}px margin, {size}, "
                 "shown throughout the output"
             )
+        elif op.type == "audio_resample":
+            bits = []
+            if op.sample_rate is not None:
+                bits.append(f"{op.sample_rate} Hz")
+            if op.channels is not None:
+                bits.append({1: "mono", 2: "stereo", 6: "5.1 surround"}[op.channels])
+            lines.append(f"Audio resample: to {', '.join(bits)} (codec re-encoded to match)")
 
     ar = next((o for o in edit.operations if o.type == "audio_replace"), None)
     if ar is not None:

@@ -64,7 +64,7 @@ def test_needs_clarification_is_structured_200():
 
 
 def test_unsupported_is_structured_200_with_no_partial_plan():
-    r = post("make it 2x faster", {"main": "clip.mp4"})
+    r = post("stabilize the video", {"main": "clip.mp4"})
     assert r.status_code == 200
     d = r.json()
     assert d["status"] == "unsupported"

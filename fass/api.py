@@ -250,6 +250,7 @@ function addExtra() {
     <div style="flex: 0 0 auto"><select class="extra-kind" style="width:auto">
       <option value="auto">auto</option><option value="video">video</option>
       <option value="audio">audio</option><option value="image">image</option>
+      <option value="source">source</option>
     </select></div>
     <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
   $('extra').appendChild(row);

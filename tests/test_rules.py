@@ -91,15 +91,152 @@ def test_missing_audio_no_metadata_reencodes_with_note(gen):
     assert any("re-encod" in d.lower() or "remux" in d.lower() for d in r.defaults)
 
 
-def test_speed_change_is_unsupported_not_partial(gen):
+def test_speed_change_is_supported(gen):
     r = gen("make it 2x faster", "clip.mp4")
+    assert r.status == "ready"
+    ops = [o["type"] for o in r.plan["operations"]]
+    assert ops == ["speed"]
+
+
+def test_speed_factor_out_of_range_is_unsupported_not_partial(gen):
+    r = gen("make it 20x faster", "clip.mp4")
     assert r.status == "unsupported"
     assert r.unsupported
     assert r.plan is None  # never a partial plan
 
 
-def test_rotate_is_unsupported(gen):
+def test_speed_times_slower_inverts(gen):
+    r = gen("make it 4 times slower", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "speed"][0]
+    assert op["factor"] == 0.25
+
+
+def test_speed_twice_as_fast(gen):
+    r = gen("make it twice as fast", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "speed"][0]
+    assert op["factor"] == 2.0
+
+
+def test_speed_without_factor_clarifies(gen):
+    r = gen("make it faster", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert any("factor" in c["question"].lower() for c in r.clarifications)
+
+
+def test_speed_size_word_is_not_speed(gen):
+    r = gen("make it 2x bigger", "clip.mp4")
+    assert all(o["type"] != "speed" for o in (r.plan or {}).get("operations", []))
+
+
+def test_rotate_is_supported(gen):
     r = gen("rotate the video 90 degrees", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "rotate"][0]
+    assert op["angle"] == 90 and op["clockwise"] is True
+
+
+def test_rotate_ccw_defaults_angle_with_note(gen):
+    r = gen("rotate it counterclockwise", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "rotate"][0]
+    assert op["angle"] == 90 and op["clockwise"] is False
+    assert any("defaulted to 90" in n for n in r.defaults)
+
+
+def test_rotate_non_quarter_turn_is_unsupported(gen):
+    r = gen("rotate the video 45 degrees", "clip.mp4")
+    assert r.status == "unsupported"
+    assert r.plan is None
+
+
+def test_crop_to_exact_dims(gen):
+    r = gen("crop to 640x480", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "crop"][0]
+    assert op["width"] == 640 and op["height"] == 480
+    # the crop's dimensions are not also treated as a resize target
+    assert all(o["type"] != "resize" for o in r.plan["operations"])
+
+
+def test_crop_and_resize_take_different_dims(gen):
+    r = gen("crop to 1280x720 and resize to 640x360", "clip.mp4")
+    assert r.status == "ready"
+    ops = {o["type"]: o for o in r.plan["operations"]}
+    assert (ops["crop"]["width"], ops["crop"]["height"]) == (1280, 720)
+    assert (ops["resize"]["width"], ops["resize"]["height"]) == (640, 360)
+
+
+def test_crop_aspect_ratio_clarifies(gen):
+    r = gen("crop to 16:9", "clip.mp4")
+    assert r.status == "needs_clarification"
+
+
+def test_crop_without_dims_clarifies(gen):
+    r = gen("crop the video", "clip.mp4")
+    assert r.status == "needs_clarification"
+
+
+def test_resample_rate_and_channels(gen):
+    r = gen("resample audio to 44.1k mono", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "audio_resample"][0]
+    assert op["sample_rate"] == 44100 and op["channels"] == 1
+
+
+def test_resample_hertz_form(gen):
+    r = gen("resample the audio to 22050 hz", "clip.mp4")
+    assert r.status == "ready"
+    op = [o for o in r.plan["operations"] if o["type"] == "audio_resample"][0]
+    assert op["sample_rate"] == 22050
+
+
+def test_resample_bad_rate_is_unsupported(gen):
+    r = gen("resample audio to 12345 hz", "clip.mp4")
+    assert r.status == "unsupported"
+    assert r.plan is None
+
+
+def test_resample_without_target_clarifies(gen):
+    r = gen("resample the audio", "clip.mp4")
+    assert r.status == "needs_clarification"
+
+
+def test_pixel_format_10bit(gen):
+    r = gen("encode in 10-bit", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["pixel_format"] == "yuv420p10le"
+
+
+def test_profile_detection(gen):
+    r = gen("use the baseline profile for compatibility", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["video_profile"] == "baseline"
+
+
+def test_preset_detection(gen):
+    r = gen("ultrafast preset", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["video_preset"] == "ultrafast"
+
+
+def test_encode_faster_is_a_preset_not_speed(gen):
+    r = gen("encode faster with x264", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["video_preset"] == "faster"
+    assert all(o["type"] != "speed" for o in r.plan["operations"])
+
+
+def test_m4_ops_combo_order(gen):
+    r = gen("crop to 640x480, make it 2x faster and rotate 90 degrees", "clip.mp4")
+    assert r.status == "ready"
+    ops = [o["type"] for o in r.plan["operations"]]
+    assert ops == ["crop", "rotate", "speed"]
+
+
+def test_flip_still_unsupported(gen):
+    r = gen("flip the video horizontally", "clip.mp4")
     assert r.status == "unsupported"
 
 

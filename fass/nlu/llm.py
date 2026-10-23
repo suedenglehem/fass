@@ -54,10 +54,17 @@ EditPlan schema:
 {schema}
 
 Supported operations: resize (width/height in pixels, aspect_ratio "preserve"|"exact"),
-grayscale, watermark (asset_id, position top_left|top_right|bottom_left|bottom_right|center,
-margin_px, scale_percent), audio_replace (asset_id of an audio file — its first audio
-stream replaces the output audio; the output ends when the shorter of video and
-replacement audio ends). Output containers: {containers}. Video codecs: {codecs}.
+crop (exact width AND height only — an aspect-ratio crop like 16:9 needs a
+clarification asking for exact dimensions), speed (factor 0.25-8; "slower" inverts
+the factor), rotate (angle 90/180/270 only, clockwise by default — anything else is
+unsupported), grayscale, watermark (asset_id, position top_left|top_right|bottom_left|
+bottom_right|center, margin_px, scale_percent), audio_replace (asset_id of an audio
+file — its first audio stream replaces the output audio; the output ends when the
+shorter of video and replacement audio ends), audio_resample (sample_rate and/or
+channels 1|2|6). Output extras (set on "output", only when the user asks):
+"pixel_format" ("yuv420p", "yuv420p10le", "yuv444p" — yuv444p is VP9-only),
+"video_profile" ("baseline"|"main"|"high") and "video_preset" ("ultrafast" through
+"veryslow" — both H.264-only). Output containers: {containers}. Video codecs: {codecs}.
 Codec/container matrix (anything else is unsupported): {matrix}
 Audio: "encode" (default, keep) or "remove". An audio_replace operation implies "encode".
 Target bitrate: an explicit video bitrate ("cbr 10 Mbps", "5 mbps", "2000 kbps") is set as
@@ -83,7 +90,9 @@ Available assets (reference by id ONLY — never emit file paths):
 Rules:
 - Never invent operations, parameters, or FFmpeg flags. No raw ffmpeg options or filter expressions anywhere in the plan.
 - Times are numbers of seconds. "720p" means resize height 720 with aspect_ratio "preserve" (no padding to 1280x720).
-- If any part of the request is beyond the supported set (e.g. speed change, rotation, cropping, volume, subtitles, concatenation, HDR, lossless), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
+- An input asset may have kind "source" (a local capture source such as lavfi:/v4l2:/
+  alsa:/x11grab:) — reference it by id exactly like any other input.
+- If any part of the request is beyond the supported set (e.g. volume changes, subtitles, concatenation, flipping, stabilization, HDR, lossless), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
 - If a detail is missing or ambiguous in a way that materially changes the edit (e.g. "make it smaller" without a target, missing watermark file, exact file size, lossless vs high quality), set status "needs_clarification" with exactly one focused question.
 - Use documented defaults for low-risk choices and record them in "defaults".
 - For revisions: start from the previous plan, change only what the instruction changes, preserve everything else, and return the complete updated plan.
@@ -99,6 +108,9 @@ User: Add my logo to the bottom-right corner.
 
 User: Make it smaller.
 {{"status": "needs_clarification", "plan": null, "clarifications": [{{"question": "do you mean smaller video dimensions (e.g. 720p) or a smaller file (target size)?", "hint": null}}], "unsupported": [], "defaults": []}}
+
+User: Make it 2x faster and crop to 1280x720.
+{{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"container": "mp4", "video_codec": "h264", "audio_mode": "encode"}}, "trim": null, "operations": [{{"type": "crop", "width": 1280, "height": 720}}, {{"type": "speed", "factor": 2}}]}}, "clarifications": [], "unsupported": [], "defaults": ["container defaulted to mp4", "video codec defaulted to h264"]}}
 
 User: Convert to WebM with H.264.
 {{"status": "unsupported", "plan": null, "clarifications": [], "unsupported": [{{"fragment": "H.264 in WebM", "reason": "the supported WebM preset uses VP9"}}], "defaults": []}}

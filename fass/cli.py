@@ -35,11 +35,12 @@ _KIND_PREFIXES = {
     "video:": AssetKind.VIDEO,
     "audio:": AssetKind.AUDIO,
     "image:": AssetKind.IMAGE,
+    "source:": AssetKind.SOURCE,
 }
 
 
 def _parse_asset_spec(spec: str) -> tuple[str, str, AssetKind | None]:
-    """id=path or id=kind:path (kind: video | audio | image)."""
+    """id=path or id=kind:path (kind: video | audio | image | source)."""
     aid, _, rest = spec.partition("=")
     if not aid or not rest:
         raise SystemExit(f"--asset expects id=path or id=kind:path, got {spec!r}")
@@ -108,7 +109,8 @@ def _generate_cli(argv: list[str]) -> int:
                         "(rtmp://, rtmps://, rtsp://, rtsps://, srt://, udp://, rtp://, tcp://)")
     p.add_argument("--watermark", help="watermark image file")
     p.add_argument("--asset", action="append",
-                   help="extra asset: id=path or id=kind:path (kind: video | audio | image)")
+                   help="extra asset: id=path or id=kind:path "
+                        "(kind: video | audio | image | source)")
     p.add_argument("--adapter", choices=["auto", "rules", "llm"], default="auto")
     p.add_argument("--previous", help="previous plan JSON file (revision)")
     p.add_argument("--metadata", help="pre-collected ffprobe JSON for the input")

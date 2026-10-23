@@ -49,7 +49,7 @@
   {
     "id": "bench-010",
     "instruction": "Make it 2x faster",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "ops": ["speed"], "container": "mp4", "video_codec": "h264"}
   },
   {
     "id": "bench-011",
@@ -307,7 +307,7 @@
   {
     "id": "bench-059",
     "instruction": "Rotate the video 90 degrees",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "ops": ["rotate"], "container": "mp4", "video_codec": "h264"}
   },
   {
     "id": "bench-060",
@@ -337,12 +337,12 @@
   {
     "id": "bench-065",
     "instruction": "Crop it to 16:9",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "needs_clarification"}
   },
   {
     "id": "bench-066",
     "instruction": "Make it twice as fast",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "ops": ["speed"], "container": "mp4", "video_codec": "h264"}
   },
   {
     "id": "bench-067",
@@ -362,7 +362,7 @@
   {
     "id": "bench-070",
     "instruction": "Make the intro slow motion",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "needs_clarification"}
   },
   {
     "id": "bench-071",
