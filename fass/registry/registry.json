@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.4.0",
+  "registry_version": "1.5.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -99,8 +99,9 @@
     "min": 16, "max": 8192
   },
   "bitstream_filters": {
-    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; the filter runs on the compressed stream without re-encoding.",
-    "mp4_mov_to_mpegts": { "h264": "h264_mp4toannexb", "h265": "hevc_mp4toannexb" }
+    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; when remuxing AAC audio out of MPEG-TS into MP4/MOV, the ADTS header must be stripped. Filters run on the compressed stream only, without re-encoding.",
+    "mp4_mov_to_mpegts": { "h264": "h264_mp4toannexb", "h265": "hevc_mp4toannexb" },
+    "mpegts_to_mp4_mov": { "aac": "aac_adtstoasc" }
   },
   "sources": {
     "description": "Generic ffmpeg input sources (the input/output-devices component). An asset whose path is '<format>:<spec>' with an allowlisted format is a source spec, not a file: it gets -f <format> plus ;key=value options as separate option tokens. Output devices carry audio only (pcm) — a plan that produces video cannot target one.",
@@ -178,7 +179,7 @@
     "transpose_filter": "https://ffmpeg.org/ffmpeg-filters.html#transpose_2",
     "setpts": "https://ffmpeg.org/ffmpeg-filters.html#setpts-settb-setpts_2",
     "atempo_filter": "https://ffmpeg.org/ffmpeg-filters.html#atempo_2",
-    "bitstream_filters": "https://ffmpeg.org/ffmpeg-bitstream-filters.html (h264_mp4toannexb, hevc_mp4toannexb)",
+    "bitstream_filters": "https://ffmpeg.org/ffmpeg-bitstream-filters.html (h264_mp4toannexb, hevc_mp4toannexb, aac_adtstoasc)",
     "devices": "https://ffmpeg.org/ffmpeg-devices.html (lavfi, v4l2, alsa, dshow, avfoundation, x11grab)"
   }
 }

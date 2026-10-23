@@ -164,6 +164,17 @@ def bsf_for_copy(source_container: str, target_container: str,
     return REGISTRY["bitstream_filters"]["mp4_mov_to_mpegts"].get(video_codec)
 
 
+def audio_bsf_for_copy(source_container: str, target_container: str,
+                       audio_codec: str) -> str | None:
+    """Audio bitstream filter a remux needs (None = plain stream copy).
+
+    MPEG-TS -> MP4/MOV requires stripping the ADTS header from AAC; MPEG-TS
+    carries AAC in ADTS form while MP4/MOV store it in raw (LOAS) form."""
+    if source_container != "mpegts" or target_container not in ("mp4", "mov"):
+        return None
+    return REGISTRY["bitstream_filters"]["mpegts_to_mp4_mov"].get(audio_codec)
+
+
 # ---------------------------------------------------------------- source specs
 
 # '<format>:<spec>' plus optional ';key=value' device options. The spec may

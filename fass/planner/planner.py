@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from fass.probe.ffprobe import MediaInfo
 from fass.registry import (
     REGISTRY,
+    audio_bsf_for_copy,
     audio_for,
     atempo_limits,
     bsf_for_copy,
@@ -515,6 +516,20 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
             f"remuxing to MPEG-TS needs bitstream filter '{bsf}' — the compressed "
             "stream is re-stamped to Annex-B without re-encoding"
         )
+    # Audio direction: AAC in MPEG-TS is ADTS-framed; MP4/MOV need the ADTS
+    # header stripped. The codec name only comes from the probe.
+    if not audio_remove and metadata is not None and metadata.audio_codec:
+        absf = audio_bsf_for_copy(
+            _container_from_path(in_path) or "",
+            edit.output.container,
+            metadata.audio_codec,
+        )
+        if absf:
+            opts += ["-bsf:a", absf]
+            defaults.append(
+                f"remuxing AAC to MP4/MOV needs bitstream filter '{absf}' — the "
+                "ADTS header is stripped from the compressed stream without re-encoding"
+            )
     return ExecutionPlan(
         mode="copy",
         inputs=[_main_input(in_path)],

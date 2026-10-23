@@ -1,6 +1,7 @@
 from fass.registry.loader import (  # noqa: F401
     REGISTRY,
     RegistryError,
+    audio_bsf_for_copy,
     audio_for,
     atempo_limits,
     bsf_for_copy,
