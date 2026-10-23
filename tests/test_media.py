@@ -10,6 +10,7 @@ builder's argv is executed exactly as emitted (no ``-y`` is added).
 
 from __future__ import annotations
 
+import array
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,17 +72,25 @@ def media(tmp_path_factory) -> SimpleNamespace:
         "-frames:v", "1", "-pix_fmt", "rgba", str(logo),
     ])
 
+    # 3 s of 880 Hz (PCM WAV) — replacement audio for the audio_replace
+    # outcome test; distinguishable from the 440 Hz tone in the clips.
+    sine880 = d / "sine880.wav"
+    _ffmpeg(["-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100:duration=3",
+             "-c:a", "pcm_s16le", str(sine880)])
+
     return SimpleNamespace(base=base, portrait=portrait, silent=silent,
-                           odd=odd, hostile=hostile, logo=logo)
+                           odd=odd, hostile=hostile, logo=logo,
+                           sine880=sine880)
 
 
 # ------------------------------------------------------------- helpers
 
 def _run_plan(gen, instruction: str, input_path: Path, out_path: Path,
-              watermark: Path | None = None):
+              watermark: Path | None = None, audio: Path | None = None):
     """Generate the plan for a real input file, run argv shell=False, probe output."""
     r = gen(instruction, input_path=str(input_path),
             watermark=str(watermark) if watermark else None,
+            audio=str(audio) if audio else None,
             output_filename=str(out_path))
     assert r.status == "ready", f"expected ready plan, got {r.status}"
     proc = subprocess.run(
@@ -131,6 +140,23 @@ def _mean_chroma(src: Path) -> tuple[float, float]:
     u = data[y_size:y_size + c_size]
     v = data[y_size + c_size:y_size + 2 * c_size]
     return sum(u) / c_size, sum(v) / c_size
+
+
+def _audio_dominant_freq(src: Path, seconds: float = 2.0) -> float:
+    """Dominant frequency of the output audio, via zero-crossing rate at
+    8 kHz mono (clean sine tones — no audio libs needed)."""
+    rate = 8000
+    p = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(src),
+         "-t", str(seconds), "-ac", "1", "-ar", str(rate),
+         "-c:a", "pcm_s16le", "-f", "s16le", "-"],
+        capture_output=True, timeout=120, check=False,
+    )
+    assert p.returncode == 0, p.stderr.decode()
+    a = array.array("h")
+    a.frombytes(p.stdout[:len(p.stdout) // 2 * 2])
+    zc = sum(1 for i in range(1, len(a)) if (a[i - 1] < 0) != (a[i] < 0))
+    return zc / 2 / (len(a) / rate)
 
 
 # ------------------------------------------------------------- outcomes
@@ -217,3 +243,23 @@ def test_silent_clip_trim_stays_silent(gen, media, tmp_path):
     _, info = _run_plan(gen, "trim the first 5 seconds", media.silent, out)
     assert abs(info.duration - 5.0) <= 0.25
     assert not info.has_audio
+
+
+def test_audio_replaced_with_other_file(gen, media, tmp_path):
+    out = tmp_path / "replaced.mp4"
+    r, info = _run_plan(gen, "replace the audio with sine880.wav",
+                        media.base, out, audio=media.sine880)
+    # the replacement stream is the output's only audio stream
+    assert info.has_audio and info.audio_streams == 1
+    assert info.video_streams == 1
+    # -shortest: the 15 s video ends at the 3 s replacement audio,
+    # not the other way around
+    assert info.duration is not None
+    assert abs(info.duration - 3.0) <= 0.75, info.duration
+    # the audio content is the 880 Hz replacement, not the original 440 Hz
+    # fixture tone (zero-crossing rate reports the tone's own frequency)
+    f = _audio_dominant_freq(out)
+    assert 750 < f < 1000, f
+    # and the argv really mapped the second input's audio
+    maps = [r.arguments[i + 1] for i, v in enumerate(r.arguments) if v == "-map"]
+    assert "1:a:0" in maps and "-shortest" in r.arguments

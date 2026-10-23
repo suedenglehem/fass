@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from fass.schema import EditPlan
+from fass.schema import Asset, EditPlan, guess_kind
 
 REQUESTS = json.loads((Path(__file__).parent / "benchmark" / "requests.json").read_text())
 
@@ -40,11 +40,17 @@ def _describe(r) -> str:
 def test_benchmark(gen, entry):
     assets_spec = entry.get("assets") or {}
     previous = entry.get("previous_plan")
+    # Extra asset keys (e.g. "music": "song.mp3") become typed assets so the
+    # NLU can bind them — the web UI's "+ add input" path.
+    extra = {aid: Asset(path=path, kind=guess_kind(path))
+             for aid, path in assets_spec.items()
+             if aid not in ("input", "watermark")}
     r = gen(
         entry["instruction"],
         input_path=assets_spec.get("input", "clip.mp4"),
         watermark=assets_spec.get("watermark"),
         previous_plan=EditPlan.model_validate(previous) if previous else None,
+        extra=extra or None,
     )
     exp = entry["expected"]
     eid = entry["id"]

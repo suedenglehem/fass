@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.1.0",
+  "registry_version": "1.2.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -63,11 +63,15 @@
       "filter": "overlay (labeled filter graph)",
       "defaults": { "position": "bottom_right", "margin_px": 16, "scale_percent": 100 },
       "note": "Image is shown at original size unless scaled; margin is in output pixels; the overlay persists for the whole interval (single-frame input never bounds duration)."
+    },
+    "audio_replace": {
+      "description": "Replace the output audio with the first audio stream of another input (an audio file).",
+      "note": "Emits -map N:a:0 for the replacement input plus -shortest, so the output ends when the shorter of the video and the replacement audio ends. The replacement audio is encoded to the container's audio codec (no stream copy)."
     }
   },
   "stream_selection": {
     "video": "0:v:0",
-    "audio": "0:a:0 (first audio stream only; additional streams are excluded)",
+    "audio": "0:a:0 (first audio stream only; additional streams are excluded). With audio_replace, the mapped audio stream is the first audio stream of the replacement input instead.",
     "note": "Additional streams beyond the first video and first audio are not carried over (visible notice in the explanation)."
   },
   "trim_policy": "Trimming re-encodes: the MVP prioritizes accurate cuts over fast stream-copy cuts (PRD FR-4).",

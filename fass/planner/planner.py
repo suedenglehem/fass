@@ -172,11 +172,22 @@ def plan_execution(
         else:
             wm_assets.append(a)
 
+    ar_assets: list = []
+    for o in edit.ops_of("audio_replace"):
+        a = assets.get(o.asset_id)
+        if a is None:
+            errors.append(f"audio-replacement asset id '{o.asset_id}' is not in the asset map")
+        elif a.kind != AssetKind.AUDIO:
+            errors.append(f"audio-replacement asset '{o.asset_id}' is not an audio file")
+        else:
+            ar_assets.append(a)
+
     if errors:
         raise PlanError(errors)
 
     in_path = input_asset.path
     wm_path = wm_assets[0].path if wm_assets else None
+    ar_path = ar_assets[0].path if ar_assets else None
 
     defaults: list[str] = []
     warnings: list[str] = []
@@ -200,6 +211,8 @@ def plan_execution(
         raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
     if wm_path and real_out == os.path.realpath(wm_path):
         raise PlanError(["output path resolves to the watermark file — refusing to overwrite it"])
+    if ar_path and real_out == os.path.realpath(ar_path):
+        raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
 
     # -- remux vs re-encode (plan0.md section 3) ---------------------------
     has_trim = edit.trim is not None
@@ -228,7 +241,7 @@ def plan_execution(
         mode = "reencode"
 
     ep = _build_copy_plan(edit, in_path, out_path) if mode == "copy" else _build_reencode_plan(
-        edit, in_path, wm_path, out_path, defaults, warnings
+        edit, in_path, wm_path, ar_path, out_path, defaults, warnings
     )
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
@@ -257,13 +270,19 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str) -> ExecutionPl
 
 
 def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
+                         audio_path: str | None,
                          out_path: str, defaults: list[str], warnings: list[str]) -> ExecutionPlan:
     inputs = [InputSpec(in_path)]
     if edit.trim is not None:
         # -ss as an input option: frame-accurate when followed by decoding.
         inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    # Input order is fixed: main=0, watermark=1 (build_video_chain hardcodes
+    # [1:v]), replacement audio last.
     if wm_path:
         inputs.append(InputSpec(wm_path))
+    if audio_path:
+        inputs.append(InputSpec(audio_path))
+    audio_idx = len(inputs) - 1 if audio_path else None
 
     chain_mode, chain, vlabel = build_video_chain(edit.operations, defaults)
     if chain_mode == "complex":
@@ -273,8 +292,13 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         vf, fcomplex = (chain or None), None
         maps = ["0:v:0"]
 
-    audio_remove = edit.output.audio_mode == AudioMode.REMOVE
-    if not audio_remove:
+    ar_op = edit.ops_of("audio_replace")
+    audio_remove = edit.output.audio_mode == AudioMode.REMOVE and not ar_op
+    if ar_op:
+        # replacement audio: first audio stream of the extra input, never the
+        # input's own track (and never an optional map)
+        maps.append(f"{audio_idx}:a:0")
+    elif not audio_remove:
         maps.append("0:a?")
 
     opts: list[str] = []
@@ -302,7 +326,17 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
             opts += ["-b:v", preset["bitrate"]]
     opts += ["-pix_fmt", vc["pix_fmt"]]
 
-    if audio_remove:
+    if ar_op:
+        # Replacement audio is encoded to the container's audio codec (no
+        # stream copy); -shortest ends the output when the shorter of the
+        # video and the replacement audio ends.
+        ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]
+        opts += ["-c:a", ac["encoder"], "-b:a", f"{ac['bitrate_kbps']}k", "-shortest"]
+        defaults.append(
+            f"audio replaced with the first audio stream of '{audio_path}'; "
+            "-shortest: output ends when the shorter of video and replacement audio ends"
+        )
+    elif audio_remove:
         opts.append("-an")
     else:
         ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]

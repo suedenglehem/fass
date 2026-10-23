@@ -94,6 +94,18 @@ class GrayscaleOp(BaseModel):
     type: Literal["grayscale"] = "grayscale"
 
 
+class AudioReplaceOp(BaseModel):
+    """Replace the output audio with the first audio stream of another
+    input (an audio file bound in the asset map). The output still runs
+    with ``-shortest``: it ends when the shorter of the video and the
+    replacement audio ends."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["audio_replace"] = "audio_replace"
+    asset_id: str = Field(min_length=1, max_length=64)
+
+
 class WatermarkOp(BaseModel):
     """One static image overlay. Applied with the rest of the video chain;
     the builder uses a labeled filter graph so the image (a single-frame
@@ -111,7 +123,8 @@ class WatermarkOp(BaseModel):
 
 
 Operation = Annotated[
-    Union[ResizeOp, GrayscaleOp, WatermarkOp], Field(discriminator="type")
+    Union[ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp],
+    Field(discriminator="type"),
 ]
 
 # ---------------------------------------------------------------- plan
@@ -129,6 +142,8 @@ class EditPlan(BaseModel):
     def _at_most_one_watermark(self) -> "EditPlan":
         if sum(1 for o in self.operations if o.type == "watermark") > 1:
             raise ValueError("the MVP supports at most one watermark")
+        if sum(1 for o in self.operations if o.type == "audio_replace") > 1:
+            raise ValueError("the MVP supports at most one audio replacement")
         return self
 
     def ops_of(self, op_type: str) -> list:
@@ -172,17 +187,27 @@ class ParseResult(BaseModel):
 class AssetKind(str, Enum):
     VIDEO = "video"
     IMAGE = "image"
+    AUDIO = "audio"
 
 
 _REMOTE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://|^//")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+AUDIO_EXTENSIONS = {
+    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".flac",
+    ".opus", ".aiff", ".aif", ".wma",
+}
 
 
 def guess_kind(path: str) -> AssetKind:
     import os
 
-    return AssetKind.IMAGE if os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS else AssetKind.VIDEO
+    ext = os.path.splitext(path)[1].lower()
+    if ext in IMAGE_EXTENSIONS:
+        return AssetKind.IMAGE
+    if ext in AUDIO_EXTENSIONS:
+        return AssetKind.AUDIO
+    return AssetKind.VIDEO
 
 
 class Asset(BaseModel):

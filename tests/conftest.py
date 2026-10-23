@@ -28,12 +28,14 @@ def make_media(**kw) -> MediaInfo:
 
 
 def assets_for(input_path: str = "clip.mp4", watermark_path: str | None = None,
-               extra: dict | None = None) -> dict:
+               audio_path: str | None = None, extra: dict | None = None) -> dict:
     out = {"main": Asset(path=input_path, kind=guess_kind(input_path))}
     if watermark_path:
         from fass.schema import AssetKind
 
         out["watermark"] = Asset(path=watermark_path, kind=AssetKind.IMAGE)
+    if audio_path:
+        out["audio"] = Asset(path=audio_path, kind=guess_kind(audio_path))
     if extra:
         out.update(extra)
     return out
@@ -43,11 +45,11 @@ def assets_for(input_path: str = "clip.mp4", watermark_path: str | None = None,
 def gen():
     """generate() pinned to the deterministic rules adapter."""
 
-    def _gen(instruction, input_path="clip.mp4", watermark=None, media=None,
-             previous_plan=None, output_filename=None, **kw):
+    def _gen(instruction, input_path="clip.mp4", watermark=None, audio=None, media=None,
+             previous_plan=None, output_filename=None, extra=None, **kw):
         return generate(
             instruction,
-            assets_for(input_path, watermark),
+            assets_for(input_path, watermark, audio, extra),
             output_filename=output_filename,
             previous_plan=previous_plan,
             media=media,

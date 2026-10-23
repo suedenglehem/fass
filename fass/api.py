@@ -209,6 +209,9 @@ li { margin: 2px 0; }
       <div><label for="ad">Adapter</label>
         <select id="ad"><option>auto</option><option>rules</option><option>llm</option></select></div>
     </div>
+    <label for="extra-h">Additional inputs (optional — audio/video/image files, e.g. "replace the audio with song.mp3")</label>
+    <div id="extra"></div>
+    <button type="button" class="copy" onclick="addExtra()">+ add input</button>
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
     <button type="submit">Generate</button>
   </form>
@@ -217,10 +220,24 @@ li { margin: 2px 0; }
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let extraN = 0;
+function addExtra() {
+  extraN += 1;
+  const id = 'in' + extraN;
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<div><input class="extra-inp" data-id="${id}" placeholder="e.g. song.mp3 (id: ${id})"></div>
+    <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
+  $('extra').appendChild(row);
+}
 async function submit(e) {
   e.preventDefault();
   const assets = { main: $('inp').value.trim() };
   if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
+  document.querySelectorAll('.extra-inp').forEach(i => {
+    const v = i.value.trim();
+    if (v) assets[i.dataset.id] = v;
+  });
   const body = {
     instruction: $('instr').value.trim(),
     assets,

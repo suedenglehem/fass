@@ -138,6 +138,32 @@ def test_bitrate_and_mpegts_round_trip():
     assert args[-1].endswith(".ts")
 
 
+def test_audio_replace_round_trip_with_extra_input():
+    # The web UI's "+ add input" path: an asset id the user mentions in the
+    # instruction, typed automatically from its extension.
+    r = post("replace the audio with song.mp3",
+             {"main": "clip.mp4", "in1": "song.mp3"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    ops = d["plan"]["operations"]
+    assert len(ops) == 1 and ops[0]["type"] == "audio_replace"
+    assert ops[0]["asset_id"] == "in1"
+    args = d["arguments"]
+    maps = [args[i + 1] for i, v in enumerate(args) if v == "-map"]
+    assert maps == ["0:v:0", "1:a:0"]
+    assert "-shortest" in args
+    assert "song.mp3" in d["command"]
+
+
+def test_audio_replace_without_audio_input_clarifies():
+    r = post("replace the audio with song.mp3", {"main": "clip.mp4"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "needs_clarification"
+    assert d["arguments"] is None
+
+
 def test_media_metadata_payload_is_accepted():
     # Pre-collected ffprobe JSON (as the local helper would emit) changes the
     # planner's decision: matching codecs in mov → stream copy.

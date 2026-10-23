@@ -21,6 +21,7 @@ from fass.schema import (
     Asset,
     AssetKind,
     AudioMode,
+    AudioReplaceOp,
     Clarification,
     EditPlan,
     GrayscaleOp,
@@ -38,7 +39,8 @@ SUPPORTED_SUMMARY = (
     "'the first 20 seconds'), container conversion (mp4, mov, mkv, webm, mpeg-ts), "
     "video encoding (H.264, H.265, VP9) at quality presets or a target bitrate "
     "(e.g. 'cbr 10 Mbps'), grayscale ('black and white'), one image watermark "
-    "(position, margin, scale), and audio keep/remove."
+    "(position, margin, scale), audio keep/remove, and replacing the audio with "
+    "another file ('replace the audio with music.mp3')."
 )
 
 # ---------------------------------------------------------------- time
@@ -271,6 +273,28 @@ def _detect_audio(t: str) -> str | None:
     return None
 
 
+_AUDIO_REPLACE = re.compile(
+    r"\b(?:replace|swap|change|set|switch|put)\s+(?:the\s+)?(?:audio|music|soundtrack|sound)\s+(?:with|to|from)"
+    r"|\b(?:use|put|take|set)\s+.{0,40}?\b(?:as|for)\s+(?:the\s+)?(?:audio|music|soundtrack)\b"
+    r"|\b(?:new|different|other|replacement)\s+(?:audio|music|soundtrack)\b"
+    r"|\b(?:replace|swap)\s+(?:it|that)\s+(?:with|to|from)\b",
+    re.I,
+)
+
+
+def _detect_audio_replace(t: str, assets: dict):
+    """Return (AudioReplaceOp|None, clarification|None, note|None)."""
+    if not _AUDIO_REPLACE.search(t):
+        return None, None, None
+    aid, note = _bind_asset(t, assets, AssetKind.AUDIO)
+    if aid is None:
+        return None, Clarification(
+            question="which file should provide the new audio?",
+            hint="bind an audio file (e.g. --asset music=song.mp3, or add it in the web UI) and refer to it in the request",
+        ), None
+    return AudioReplaceOp(asset_id=aid), None, note
+
+
 _POSITIONS = [
     (re.compile(r"(?:top|upper)[\s-]+right", re.I), "top_right"),
     (re.compile(r"(?:top|upper)[\s-]+left", re.I), "top_left"),
@@ -460,6 +484,9 @@ class RulesAdapter:
         resize, resize_clar = _detect_resize(t)
         audio = _detect_audio(t)
         watermark, wm_clar, wm_note = _detect_watermark(t, assets)
+        audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
+        if audio_replace is not None and audio in ("remove", "conflict"):
+            audio = None  # a replacement wins over remove / keep+remove
         grayscale = GRAYSCALE_RE.search(t) is not None
         codec = _detect_codec(t)
         container, unsupported_container = _detect_container(t)
@@ -487,7 +514,7 @@ class RulesAdapter:
                 wm_note = "watermark: kept the previous image"
 
         # 4. explicit clarifications win (focused, one at a time)
-        for c in (trim_clar, resize_clar, wm_clar, ambiguous):
+        for c in (trim_clar, resize_clar, wm_clar, ar_clar, ambiguous):
             if c is not None:
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -504,7 +531,8 @@ class RulesAdapter:
         # 5. build / merge the plan
         if previous_plan is not None:
             plan, changed = _merge_revision(
-                previous_plan, t, trim, resize, audio, watermark, grayscale
+                previous_plan, t, trim, resize, audio, watermark, grayscale,
+                audio_replace,
             )
             if not changed:
                 return ParseResult(
@@ -522,6 +550,8 @@ class RulesAdapter:
                 ops.append(GrayscaleOp())
             if watermark is not None:
                 ops.append(watermark)
+            if audio_replace is not None:
+                ops.append(audio_replace)
             plan.operations = ops
             if audio == "remove":
                 plan.output.audio_mode = AudioMode.REMOVE
@@ -531,12 +561,14 @@ class RulesAdapter:
             notes.append(trim_note)
         if wm_note:
             notes.append(wm_note)
+        if ar_note:
+            notes.append(ar_note)
 
         # 6. resolve output defaults — visible, never hidden
         if previous_plan is None:
             if trim is None and resize is None and watermark is None and not grayscale \
                     and codec is None and container is None and audio != "remove" \
-                    and bitrate_kbps is None \
+                    and audio_replace is None and bitrate_kbps is None \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b", t):
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -582,7 +614,8 @@ class RulesAdapter:
 
 # ---------------------------------------------------------------- revision
 
-def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale):
+def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
+                    audio_replace=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
@@ -607,6 +640,17 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     elif audio == "remove" and plan.output.audio_mode != AudioMode.REMOVE:
         plan.output.audio_mode = AudioMode.REMOVE
         changed.append("audio -> remove")
+
+    if audio_replace is not None:
+        # a replacement replaces any prior replacement and implies encoded audio
+        plan.operations = [o for o in plan.operations if o.type != "audio_replace"]
+        plan.operations.append(audio_replace)
+        if plan.output.audio_mode != AudioMode.ENCODE:
+            plan.output.audio_mode = AudioMode.ENCODE
+        changed.append(f"audio -> replaced ({audio_replace.asset_id})")
+    elif audio == "remove" and any(o.type == "audio_replace" for o in plan.operations):
+        plan.operations = [o for o in plan.operations if o.type != "audio_replace"]
+        changed.append("audio replacement removed")
 
     if re.search(r"\b(?:no|without|drop|remove|get\s+rid\s+of)\s+(?:the\s+)?watermark\b", t, re.I):
         plan.operations = [o for o in plan.operations if o.type != "watermark"]

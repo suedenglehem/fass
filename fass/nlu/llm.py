@@ -55,9 +55,11 @@ EditPlan schema:
 
 Supported operations: resize (width/height in pixels, aspect_ratio "preserve"|"exact"),
 grayscale, watermark (asset_id, position top_left|top_right|bottom_left|bottom_right|center,
-margin_px, scale_percent). Output containers: {containers}. Video codecs: {codecs}.
+margin_px, scale_percent), audio_replace (asset_id of an audio file — its first audio
+stream replaces the output audio; the output ends when the shorter of video and
+replacement audio ends). Output containers: {containers}. Video codecs: {codecs}.
 Codec/container matrix (anything else is unsupported): {matrix}
-Audio: "encode" (default, keep) or "remove".
+Audio: "encode" (default, keep) or "remove". An audio_replace operation implies "encode".
 Target bitrate: an explicit video bitrate ("cbr 10 Mbps", "5 mbps", "2000 kbps") is set as
 "video_bitrate_kbps" on the output (integer kbps, e.g. 10000 for 10 Mbps) — a CBR-style
 target that overrides the quality preset. A *file size* target ("5 MB file") is NOT a

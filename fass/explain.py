@@ -68,7 +68,15 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
                 "shown throughout the output"
             )
 
-    if out.audio_mode.value == "remove":
+    ar = next((o for o in edit.operations if o.type == "audio_replace"), None)
+    if ar is not None:
+        ac = REGISTRY["audio_codecs"][REGISTRY["matrix"][out.container]["audio_codec"]]
+        lines.append(
+            f"Audio: replaced with the first audio stream of input '{ar.asset_id}' "
+            f"(encoded as {ac['encoder'].upper()} {ac['bitrate_kbps']}k); "
+            "output ends when the shorter of video and replacement audio ends (-shortest)"
+        )
+    elif out.audio_mode.value == "remove":
         lines.append("Audio: removed")
     elif ep.mode == "copy":
         lines.append("Audio: kept (copied)")

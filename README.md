@@ -64,7 +64,10 @@ unsupported · `5` error.
 ```
 
 `GET /` serves a minimal self-contained UI (request form, clarification flow,
-command output — PRD §9). The same endpoints the UI uses:
+command output — PRD §9). The UI's **"+ add input"** rows bind extra audio /
+video / image files as assets (ids `in1`, `in2`, …), auto-typed by extension —
+the web path to multi-input requests like audio replacement. The same
+endpoints the UI uses:
 
 | Endpoint | Purpose |
 |---|---|
@@ -102,6 +105,12 @@ no media upload endpoints: assets are local paths the client binds.
 - **One static watermark** — preset positions (corners/center), margin,
   percent scale; labeled `filter_complex` + `overlay`, `eof_action=repeat` so a
   single-frame image never bounds the video.
+- **Audio replacement** — `replace the audio with song.mp3`, `use this file
+  as the soundtrack`: binds a bound audio file (CLI `--asset id=path`, web UI
+  "+ add input"), maps its first audio stream (`-map N:a:0` + `-shortest`),
+  encoded to the container's audio codec — never stream-copied, so it forces
+  a re-encode. No audio file bound → `needs_clarification` ("which file should
+  provide the new audio?").
 - **Audio keep/remove** and **compositions** of any of the above, in the
   order the user stated them.
 
@@ -174,5 +183,9 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] FastAPI web layer over the same `generate()` — `fass/api.py`,
   `POST /v1/commands` + `/v1/support` + `/v1/env`, minimal UI at `GET /`,
   `fass serve` subcommand
+- [x] multi local typed inputs + audio replacement — `AudioReplaceOp`,
+  `--asset id=path` / UI "+ add input", `-map N:a:0` + `-shortest`
+- [ ] stream / remote sources and stream outputs (would relax
+  `Asset._local_only`; destinations stay disclosed in the rendered command)
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`

@@ -144,3 +144,27 @@ def test_guess_kind():
     assert guess_kind("logo.PNG") is AssetKind.IMAGE
     assert guess_kind("photo.jpg") is AssetKind.IMAGE
     assert guess_kind("clip.mkv") is AssetKind.VIDEO
+    assert guess_kind("song.mp3") is AssetKind.AUDIO
+    assert guess_kind("tune.ogg") is AssetKind.AUDIO
+    assert guess_kind("track.flac") is AssetKind.AUDIO
+    assert guess_kind("voice.wav") is AssetKind.AUDIO
+
+
+def test_audio_replace_op():
+    from fass.schema import AudioReplaceOp
+
+    op = AudioReplaceOp(asset_id="music")
+    assert op.type == "audio_replace"
+    assert op.asset_id == "music"
+    with pytest.raises(ValidationError):
+        AudioReplaceOp(asset_id="")
+    with pytest.raises(ValidationError):
+        AudioReplaceOp(asset_id="x", bogus=1)
+
+
+def test_at_most_one_audio_replace():
+    from fass.schema import AudioReplaceOp
+
+    plan(operations=[AudioReplaceOp(asset_id="music")])  # one is fine
+    with pytest.raises(ValidationError):
+        plan(operations=[AudioReplaceOp(asset_id="a"), AudioReplaceOp(asset_id="b")])

@@ -472,5 +472,17 @@
     "id": "bench-081",
     "instruction": "Save the first 30 seconds as a .ts file at 8 mbps",
     "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 0, "duration_seconds": 30}, "container": "mpegts", "video_bitrate_kbps": 8000}
+  },
+  {
+    "id": "bench-082",
+    "instruction": "Replace the audio with the music file",
+    "assets": {"input": "clip.mp4", "music": "song.mp3"},
+    "expected": {"status": "ready", "ops": ["audio_replace"], "audio_mode": "encode"}
+  },
+  {
+    "id": "bench-083",
+    "instruction": "Use this file as the soundtrack",
+    "assets": {"input": "clip.mp4", "bgm": "bgm.wav"},
+    "expected": {"status": "ready", "ops": ["audio_replace"], "audio_mode": "encode"}
   }
 ]

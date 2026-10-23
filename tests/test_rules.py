@@ -6,7 +6,7 @@ operation multiset, trim interval, container/codec/audio mode.
 
 from __future__ import annotations
 
-from fass.schema import EditPlan, OutputSpec
+from fass.schema import Asset, AudioReplaceOp, EditPlan, OutputSpec, guess_kind
 from tests.conftest import make_media
 
 
@@ -241,3 +241,77 @@ def test_revision_sets_bitrate(gen):
     r = gen("actually make it 12 mbps", "clip.mp4", previous_plan=prev)
     assert r.status == "ready"
     assert r.plan["output"]["video_bitrate_kbps"] == 12000
+
+
+# ------------------------------------------------------------ audio replace
+
+def test_audio_replace_named_asset(gen):
+    r = gen("replace the audio with song.mp3", "clip.mp4", audio="song.mp3")
+    assert r.status == "ready"
+    ar = ops_by_type(r.plan)["audio_replace"]
+    assert len(ar) == 1
+    assert ar[0]["asset_id"] == "audio"
+    assert r.plan["output"]["audio_mode"] == "encode"
+
+
+def test_audio_replace_fallback_sole_audio_asset(gen):
+    # asset id not mentioned in the instruction (nor a filename) → fallback
+    # binds the sole audio asset and says so.
+    tune = Asset(path="song.mp3", kind=guess_kind("song.mp3"))
+    r = gen("replace the audio with the music file", "clip.mp4", extra={"tune": tune})
+    assert r.status == "ready"
+    ar = ops_by_type(r.plan)["audio_replace"]
+    assert len(ar) == 1 and ar[0]["asset_id"] == "tune"
+    assert any("only audio asset" in n for n in r.defaults)
+
+
+def test_audio_replace_paraphrases(gen):
+    for instr in (
+        "swap the soundtrack to song.mp3",
+        "change the music to song.mp3",
+        "put song.mp3 as the audio",
+        "use song.mp3 for the audio",
+    ):
+        r = gen(instr, "clip.mp4", audio="song.mp3")
+        assert r.status == "ready", instr
+        assert ops_by_type(r.plan)["audio_replace"][0]["asset_id"] == "audio", instr
+
+
+def test_audio_replace_no_audio_asset_clarifies(gen):
+    r = gen("replace the audio with song.mp3", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert any("audio" in c["question"].lower() for c in r.clarifications)
+
+
+def test_audio_replace_wins_over_remove(gen):
+    r = gen("remove the audio and replace it with song.mp3", "clip.mp4", audio="song.mp3")
+    assert r.status == "ready"
+    assert r.plan["output"]["audio_mode"] == "encode"
+    assert len(ops_by_type(r.plan)["audio_replace"]) == 1
+
+
+def test_audio_asset_alone_does_not_replace(gen):
+    # merely binding an audio file must not add a replacement operation
+    r = gen("resize to 720p", "clip.mp4", audio="song.mp3")
+    assert r.status == "ready"
+    assert "audio_replace" not in ops_by_type(r.plan)
+
+
+def test_revision_remove_audio_clears_replacement(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[AudioReplaceOp(asset_id="audio")])
+    r = gen("remove the audio", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert "audio_replace" not in ops_by_type(r.plan)
+    assert r.plan["output"]["audio_mode"] == "remove"
+
+
+def test_revision_swap_replacement_asset(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[AudioReplaceOp(asset_id="audio")])
+    jingle = Asset(path="jingle.wav", kind=guess_kind("jingle.wav"))
+    r = gen("replace it with jingle.wav", "clip.mp4",
+            extra={"jingle": jingle}, previous_plan=prev)
+    assert r.status == "ready"
+    ar = ops_by_type(r.plan)["audio_replace"]
+    assert len(ar) == 1 and ar[0]["asset_id"] == "jingle"
