@@ -132,6 +132,16 @@ smoke-tested live (healthz, /v1/commands, UI).
   Deferred (standing decisions): HTTP/HLS *output*, "stop streaming"
   negation; two destinations (inline + `-o` file, or two stream URLs) →
   structured error, never silent.
+  i7 redeployed same day: rsync → killed old server by exact PID 511780 →
+  restarted detached (PID **660597**, 0.0.0.0:8000). LAN-verified on the
+  live build: stream-out rtmp (flv + `-f flv` + disclosure + preflight ok),
+  stream-in rtmp (accepted, no missing-file warning), `file://` → 422, UI
+  kind select present.
+  **REPO PUBLISHED (2026-10-23)**: remote `origin` =
+  git@github.com:suedenglehem/fass.git, `main` pushed (first push, full
+  history incl. media/titan.mp4). README.md became a short landing page;
+  the full pre-existing README moved intact to docs/DEVELOPMENT.md
+  (commit 5338297).
 
 ## Key decisions
 - argv arrays are the source of truth; shell rendering is shlex.join only.
@@ -195,7 +205,8 @@ tokens only, scheme allowlist, stream destinations disclosed.
    against the 89-request benchmark.
 3. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
 4. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
-No commits/pushes beyond milestone work unless asked (no remote exists).
+Remote `origin` (github.com/suedenglehem/fass.git) exists since 2026-10-23;
+commit/push with it only when asked.
 
 ## Environment notes
 - Python 3.12.3, `.venv` (PEP 668 blocks system pip) — use `./.venv/bin/python -m pytest`.

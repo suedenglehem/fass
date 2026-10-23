@@ -15,14 +15,33 @@ from fass.probe.ffprobe import MediaInfo
 from fass.registry import (
     REGISTRY,
     audio_for,
+    atempo_limits,
+    bsf_for_copy,
     capability_check,
     extension_for,
     input_format_for,
+    output_device_for,
+    output_device_parts,
     output_schemes,
+    pixel_format_error,
+    sample_rates,
+    source_spec_parts,
     stream_output_info,
     stream_scheme,
+    video_presets_for,
+    video_profiles_for,
 )
-from fass.schema import AssetKind, AudioMode, EditPlan, ResizeOp, WatermarkOp
+from fass.schema import (
+    AssetKind,
+    AudioMode,
+    AudioResampleOp,
+    CropOp,
+    EditPlan,
+    ResizeOp,
+    RotateOp,
+    SpeedOp,
+    WatermarkOp,
+)
 
 MAX_OPERATIONS = 8
 
@@ -43,20 +62,32 @@ class InputSpec:
 
 @dataclass
 class ExecutionPlan:
-    mode: str  # "copy" (remux) | "reencode"
+    mode: str  # "copy" (remux) | "reencode" | "device"
     inputs: list[InputSpec]
     vf: str | None  # simple -vf chain (no watermark)
     filter_complex: str | None  # labeled graph (watermark present)
     maps: list[str]
     output_opts: list[str]
     output_path: str
+    af: str | None = None  # audio filter chain (-af): speed changes
     defaults: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
 def _main_input(path: str) -> InputSpec:
-    """Main input spec. Raw udp/rtp/tcp demuxes need an explicit -f
-    (registry streaming.input_format); other schemes let ffmpeg probe."""
+    """Main input spec.
+
+    Generic source specs ('lavfi:testsrc=…', 'v4l2:/dev/video0;video_size=…')
+    get -f <format> plus their ';key=value' options as separate option
+    tokens (registry sources); raw udp/rtp/tcp stream demuxes get an
+    explicit -f (registry streaming.input_format); everything else is
+    probed by ffmpeg."""
+    parts = source_spec_parts(path)
+    if parts is not None:
+        fmt, spec, opts = parts
+        pre = ["-f", fmt]
+        pre += [token for k, v in opts for token in (f"-{k}", v)]
+        return InputSpec(spec, pre_opts=pre)
     fmt = input_format_for(path)
     return InputSpec(path, pre_opts=["-f", fmt] if fmt else [])
 
@@ -95,6 +126,81 @@ def _scale_expr(op: ResizeOp, defaults: list[str]) -> str:
     )
 
 
+def _crop_expr(op: CropOp, defaults: list[str]) -> str:
+    w, h = even(op.width), even(op.height)
+    if (w, h) != (op.width, op.height):
+        defaults.append(
+            f"crop dimensions snapped to {w}x{h} (even dimensions required for yuv420p)"
+        )
+    # crop=w:h is centered by FFmpeg's default x=(iw-ow)/2, y=(ih-oh)/2 —
+    # the plan carries no offset, so "crop to WxH" always means the center.
+    return f"crop={w}:{h}"
+
+
+_ROTATE_FILTERS = {
+    (90, True): "transpose=1",   # 90° clockwise
+    (270, True): "transpose=2",  # 270° clockwise == 90° counter-clockwise
+    (90, False): "transpose=2",
+    (270, False): "transpose=1",
+    (180, True): "hflip,vflip",  # direction is irrelevant at 180°
+    (180, False): "hflip,vflip",
+}
+
+
+def _rotate_expr(op: RotateOp) -> str:
+    return _ROTATE_FILTERS[(op.angle, op.clockwise)]
+
+
+def _setpts_expr(op: SpeedOp) -> str:
+    # factor 2 -> PTS/2 (half the duration); factor 0.5 -> PTS/0.5 (twice)
+    return f"setpts=PTS/{fmt_num(op.factor)}"
+
+
+def _atempo_chain(op: SpeedOp) -> str:
+    """atempo accepts 0.5-2.0 per instance; wider factors chain instances
+    (4x -> atempo=2,atempo=2; 0.25x -> atempo=0.5,atempo=0.5)."""
+    lo, hi = atempo_limits()
+    f = op.factor
+    parts: list[float] = []
+    while f > hi:
+        parts.append(hi)
+        f /= hi
+    while f < lo:
+        parts.append(lo)
+        f /= lo
+    parts.append(f)
+    return ",".join("atempo=" + fmt_num(p) for p in parts)
+
+
+def _crop_too_big(edit: EditPlan, metadata: MediaInfo) -> str | None:
+    """A crop must fit the video as it exists at that point in the chain —
+    earlier rotate/resize ops change the working dimensions."""
+    if not (metadata.width and metadata.height):
+        return None
+    w, h = float(metadata.width), float(metadata.height)
+    for o in edit.operations:
+        if o.type == "rotate" and o.angle in (90, 270):
+            w, h = h, w
+        elif o.type == "resize" and (o.width is not None or o.height is not None):
+            if o.width is not None and o.height is None:
+                if w:
+                    h = round(h * even(o.width) / w)
+                w = even(o.width)
+            elif o.width is None and o.height is not None:
+                if h:
+                    w = round(w * even(o.height) / h)
+                h = even(o.height)
+            else:
+                w, h = even(o.width), even(o.height)
+        elif o.type == "crop":
+            if o.width > w or o.height > h:
+                return (
+                    f"crop {o.width}x{o.height} is larger than the video at that "
+                    f"point in the edit ({w:g}x{h:g})"
+                )
+    return None
+
+
 def _overlay_position(op: WatermarkOp) -> tuple[str, str]:
     m = op.margin_px
     return {
@@ -123,6 +229,12 @@ def build_video_chain(operations: list, defaults: list[str]):
                 parts.append(_scale_expr(o, defaults))
             elif o.type == "grayscale":
                 parts.append("hue=s=0")
+            elif o.type == "crop":
+                parts.append(_crop_expr(o, defaults))
+            elif o.type == "rotate":
+                parts.append(_rotate_expr(o))
+            elif o.type == "speed":
+                parts.append(_setpts_expr(o))
         return "vf", ",".join(parts) or None, None
 
     segs: list[str] = []
@@ -134,6 +246,12 @@ def build_video_chain(operations: list, defaults: list[str]):
             segs.append(f"{src}{_scale_expr(o, defaults)}[{out}]")
         elif o.type == "grayscale":
             segs.append(f"{src}hue=s=0[{out}]")
+        elif o.type == "crop":
+            segs.append(f"{src}{_crop_expr(o, defaults)}[{out}]")
+        elif o.type == "rotate":
+            segs.append(f"{src}{_rotate_expr(o)}[{out}]")
+        elif o.type == "speed":
+            segs.append(f"{src}{_setpts_expr(o)}[{out}]")
         elif o.type == "watermark":
             wm_scale = ""
             if o.scale_percent != 100:
@@ -172,11 +290,30 @@ def plan_execution(
     if len(edit.operations) > MAX_OPERATIONS:
         errors.append(f"at most {MAX_OPERATIONS} operations are supported per request")
 
+    out = edit.output
+    if out.pixel_format is not None:
+        pf_err = pixel_format_error(out.video_codec, out.pixel_format)
+        if pf_err:
+            errors.append(pf_err)
+    if out.video_profile is not None and not video_profiles_for(out.video_codec):
+        errors.append(
+            f"encoder profiles are only supported for H.264 in the MVP "
+            f"('{out.video_profile}' does not apply to {out.video_codec.upper()})"
+        )
+    if out.video_preset is not None and out.video_codec != "h264":
+        errors.append(
+            f"encoder presets are only supported for H.264 (x264) in the MVP "
+            f"('{out.video_preset}' does not apply to {out.video_codec.upper()})"
+        )
+    resample = edit.ops_of("audio_resample")
+    if resample and out.audio_mode == AudioMode.REMOVE:
+        errors.append("the audio is removed, so it cannot be resampled")
+
     input_asset = assets.get(edit.input_id)
     if input_asset is None:
         errors.append(f"asset id '{edit.input_id}' is not in the asset map")
-    elif input_asset.kind != AssetKind.VIDEO:
-        errors.append(f"asset '{edit.input_id}' is not a video")
+    elif input_asset.kind not in (AssetKind.VIDEO, AssetKind.SOURCE):
+        errors.append(f"asset '{edit.input_id}' is not a video or a source")
 
     wm_assets: list = []
     for o in edit.ops_of("watermark"):
@@ -201,6 +338,10 @@ def plan_execution(
     if errors:
         raise PlanError(errors)
 
+    crop_err = _crop_too_big(edit, metadata) if metadata is not None else None
+    if crop_err:
+        raise PlanError([crop_err])
+
     in_path = input_asset.path
     wm_path = wm_assets[0].path if wm_assets else None
     ar_path = ar_assets[0].path if ar_assets else None
@@ -208,9 +349,10 @@ def plan_execution(
     defaults: list[str] = []
     warnings: list[str] = []
 
-    # -- output destination: file path or stream URL (M3b) -----------------
+    # -- output destination: stream URL (M3b), device (M4), or file --------
     dest = output_filename or edit.output_destination
     muxer: str | None = None
+    device: str | None = None
     if dest and stream_scheme(dest) is not None:
         # A stream destination: its scheme fixes the container and muxer.
         info = stream_output_info(dest)
@@ -230,6 +372,32 @@ def plan_execution(
         warnings.append(
             f"output streams to {dest} — data is sent to a remote endpoint; "
             "nothing is saved locally"
+        )
+    elif dest and output_device_for(dest) is not None:
+        # Output device (alsa/pulse): audio only — a plan that produces video
+        # cannot target one, and nothing is ever saved to a file.
+        parts = output_device_parts(dest)
+        if parts[2]:
+            raise PlanError([
+                f"device output '{dest}' must not carry options "
+                "(write e.g. 'alsa:hw:0' without ';key=value')"
+            ])
+        device, out_path = parts[0], parts[1]
+        video_ops = sorted({
+            o.type for o in edit.operations
+            if o.type in ("resize", "crop", "rotate", "speed", "grayscale", "watermark")
+        })
+        if video_ops:
+            raise PlanError([
+                f"output device '{dest}' carries audio only — remove the video "
+                f"edits ({', '.join(video_ops)}) or use a file/stream output"
+            ])
+        if edit.output.audio_mode == AudioMode.REMOVE and not edit.ops_of("audio_replace"):
+            raise PlanError([
+                f"output device '{dest}' needs audio, but the plan removes the audio"
+            ])
+        warnings.append(
+            f"output goes to the local audio device {dest} — nothing is saved to a file"
         )
     else:
         if edit.output.container == "rtsp" or edit.output.container == "srt":
@@ -293,9 +461,14 @@ def plan_execution(
     else:
         mode = "reencode"
 
-    ep = _build_copy_plan(edit, in_path, out_path) if mode == "copy" else _build_reencode_plan(
-        edit, in_path, wm_path, ar_path, out_path, defaults, warnings
-    )
+    if device is not None:
+        ep = _build_device_plan(edit, in_path, out_path, device, ar_path, defaults)
+    elif mode == "copy":
+        ep = _build_copy_plan(edit, in_path, out_path, metadata)
+    else:
+        ep = _build_reencode_plan(
+            edit, in_path, wm_path, ar_path, out_path, defaults, warnings
+        )
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
     if muxer:
@@ -306,7 +479,19 @@ def plan_execution(
     return ep
 
 
-def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str) -> ExecutionPlan:
+def _container_from_path(path: str) -> str | None:
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    for name, info in REGISTRY["containers"].items():
+        if ext in info["extensions"]:
+            return name
+    return None
+
+
+_FFPROBE_CODEC = {"hevc": "h265"}  # ffprobe name -> fass codec name
+
+
+def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
+                     metadata: MediaInfo | None) -> ExecutionPlan:
     audio_remove = edit.output.audio_mode == AudioMode.REMOVE
     maps = ["0:v:0"]
     opts: list[str] = []
@@ -315,6 +500,21 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str) -> ExecutionPl
     if not audio_remove:
         maps.append("0:a?")
     opts += ["-c", "copy"]
+    # Bitstream filter (no re-encode): remuxing MP4/MOV into MPEG-TS requires
+    # H.264/HEVC to be re-stamped into Annex-B form. The source codec comes
+    # from the probe when one exists, else from the plan.
+    if metadata is not None and metadata.video_codec:
+        codec = _FFPROBE_CODEC.get(metadata.video_codec, metadata.video_codec)
+    else:
+        codec = edit.output.video_codec
+    bsf = bsf_for_copy(_container_from_path(in_path) or "", edit.output.container, codec)
+    defaults: list[str] = []
+    if bsf:
+        opts += ["-bsf:v", bsf]
+        defaults.append(
+            f"remuxing to MPEG-TS needs bitstream filter '{bsf}' — the compressed "
+            "stream is re-stamped to Annex-B without re-encoding"
+        )
     return ExecutionPlan(
         mode="copy",
         inputs=[_main_input(in_path)],
@@ -323,6 +523,7 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str) -> ExecutionPl
         maps=maps,
         output_opts=opts,
         output_path=out_path,
+        defaults=defaults,
     )
 
 
@@ -358,9 +559,27 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     elif not audio_remove:
         maps.append("0:a?")
 
+    # Speed change: video timestamps are scaled in the filter chain
+    # (setpts, built above); the audio side is an atempo chain on -af.
+    # -af is inert when the output has no audio stream, so it is only
+    # emitted when audio survives.
+    speed_ops = edit.ops_of("speed")
+    speed_op = speed_ops[0] if speed_ops else None
+    af = _atempo_chain(speed_op) if speed_op is not None and not audio_remove else None
+
     opts: list[str] = []
     if edit.trim is not None and edit.trim.is_bounded:
-        opts += ["-t", fmt_num(edit.trim.duration_seconds)]
+        dur = edit.trim.duration_seconds
+        if speed_op is not None:
+            # -t bounds the *output* timeline; at Nx speed the cut interval
+            # (source seconds) produces dur/N output seconds.
+            dur = dur / speed_op.factor
+            defaults.append(
+                f"output duration {fmt_num(dur)}s: the trimmed "
+                f"{fmt_num(edit.trim.duration_seconds)}s of source at "
+                f"{fmt_num(speed_op.factor)}x speed"
+            )
+        opts += ["-t", fmt_num(dur)]
 
     vc = REGISTRY["video_codecs"][edit.output.video_codec]
     opts += ["-c:v", vc["encoder"]]
@@ -381,7 +600,21 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
             opts += ["-crf", str(preset["crf"])]
         if "bitrate" in preset:
             opts += ["-b:v", preset["bitrate"]]
-    opts += ["-pix_fmt", vc["pix_fmt"]]
+    if edit.output.video_profile is not None:
+        opts += ["-profile:v", edit.output.video_profile]
+        defaults.append(f"encoder profile {edit.output.video_profile} (maximum-compatibility setting)")
+    if edit.output.video_preset is not None:
+        opts += ["-preset", edit.output.video_preset]
+        defaults.append(f"encoder preset {edit.output.video_preset}")
+    # Pixel-format conversion (scaler component): the codec default unless
+    # the plan names one (validated against the registry matrix in plan_execution).
+    pix_fmt = edit.output.pixel_format or vc["pix_fmt"]
+    opts += ["-pix_fmt", pix_fmt]
+    if pix_fmt != vc["pix_fmt"]:
+        defaults.append(
+            f"pixel format {pix_fmt} instead of the {edit.output.video_codec} "
+            f"default {vc['pix_fmt']}"
+        )
 
     if ar_op:
         # Replacement audio is encoded to the container's audio codec (no
@@ -398,6 +631,15 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     else:
         ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]
         opts += ["-c:a", ac["encoder"], "-b:a", f"{ac['bitrate_kbps']}k"]
+        # Audio resampler targets (-ar / -ac); inert when the output has no
+        # audio stream.
+        for ro in edit.ops_of("audio_resample"):
+            if ro.sample_rate is not None:
+                opts += ["-ar", str(ro.sample_rate)]
+                defaults.append(f"audio sample rate {ro.sample_rate} Hz")
+            if ro.channels is not None:
+                opts += ["-ac", str(ro.channels)]
+                defaults.append(f"audio channels {ro.channels}")
 
     opts += REGISTRY["matrix"][edit.output.container].get("flags", [])
 
@@ -406,6 +648,45 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         inputs=inputs,
         vf=vf,
         filter_complex=fcomplex,
+        maps=maps,
+        output_opts=opts,
+        output_path=out_path,
+        af=af,
+    )
+
+
+def _build_device_plan(edit: EditPlan, in_path: str, out_path: str,
+                       device: str, ar_path: str | None,
+                       defaults: list[str]) -> ExecutionPlan:
+    """Output to a local audio device (alsa/pulse): audio only, pcm_s16le.
+
+    plan_execution has already rejected plans with video edits or removed
+    audio, so this builds the audio path alone (trim, optional replacement,
+    optional resample)."""
+    inputs = [_main_input(in_path)]
+    if edit.trim is not None:
+        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    if ar_path:
+        inputs.append(InputSpec(ar_path))
+    maps = [f"{len(inputs) - 1}:a:0" if ar_path else "0:a?"]
+
+    opts: list[str] = []
+    if edit.trim is not None and edit.trim.is_bounded:
+        opts += ["-t", fmt_num(edit.trim.duration_seconds)]
+    for ro in edit.ops_of("audio_resample"):
+        if ro.sample_rate is not None:
+            opts += ["-ar", str(ro.sample_rate)]
+        if ro.channels is not None:
+            opts += ["-ac", str(ro.channels)]
+    opts += ["-acodec", "pcm_s16le", "-f", device]
+    if ar_path:
+        defaults.append(f"audio replaced with the first audio stream of '{ar_path}'")
+    defaults.append(f"audio device output: encoded as pcm_s16le for '{device}'")
+    return ExecutionPlan(
+        mode="device",
+        inputs=inputs,
+        vf=None,
+        filter_complex=None,
         maps=maps,
         output_opts=opts,
         output_path=out_path,

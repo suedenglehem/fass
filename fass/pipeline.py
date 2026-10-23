@@ -24,7 +24,7 @@ from fass.probe.ffprobe import (
     probe_media,
     preflight,
 )
-from fass.registry import REGISTRY, stream_output_info, stream_scheme
+from fass.registry import REGISTRY, is_source_spec, stream_output_info, stream_scheme
 from fass.schema import AssetMap, EditPlan, ParseResult, ParseStatus
 
 
@@ -51,7 +51,8 @@ class GenerationResponse:
 def _used_filters(ep) -> list[str]:
     chain = f"{ep.vf or ''}{ep.filter_complex or ''}"
     used = []
-    for name in ("scale", "pad", "hue", "overlay", "format"):
+    for name in ("scale", "pad", "hue", "overlay", "format",
+                 "crop", "transpose", "hflip", "vflip", "setpts"):
         if name in chain:
             used.append(name)
     return used
@@ -159,8 +160,10 @@ def generate(
     resp.warnings.extend(ep.warnings)
 
     main_path = assets[edit.input_id].path
-    # A stream URL never "exists" locally — that is its nature, not a problem.
-    if stream_scheme(main_path) is None and not Path(main_path).exists():
+    # A stream URL or a source spec (lavfi:/dev/video0) never "exists" as a
+    # file — that is its nature, not a problem.
+    if stream_scheme(main_path) is None and not is_source_spec(main_path) \
+            and not Path(main_path).exists():
         resp.warnings.append(
             "input file was not found on this machine — the command references it exactly as given"
         )

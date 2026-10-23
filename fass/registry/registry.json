@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.3.0",
+  "registry_version": "1.4.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -70,6 +70,50 @@
     "note": "HTTP output (e.g. HLS .m3u8) is not in the MVP stream set — it writes segment files locally and needs per-destination tuning. Scheme defaults come from https://ffmpeg.org/ffmpeg-formats.html (rtmp->flv, rtsp->rtsp, udp/rtp/tcp->mpegts); fass still emits an explicit -f for stream destinations."
   },
   "bitrate_policy": "An explicit target video bitrate (plan.output.video_bitrate_kbps) overrides the quality preset: -b:v and -maxrate at the target, plus -bufsize at 2x the target for H.264/H.265 (a CBR-style target; audio keeps its codec-preset bitrate).",
+  "pixel_formats": {
+    "description": "Output pixel formats per video codec (the scaling/pixel-format-conversion component). The codec's video_codecs[*].pix_fmt is the default; yuv420p10le is the 10-bit form, yuv444p full chroma (VP9 only in the MVP).",
+    "h264": ["yuv420p", "yuv420p10le"],
+    "h265": ["yuv420p", "yuv420p10le"],
+    "vp9": ["yuv420p", "yuv420p10le", "yuv444p"]
+  },
+  "video_profiles": {
+    "description": "Encoder profiles (H.264 in the MVP): 'baseline' maximizes compatibility with old players.",
+    "h264": ["baseline", "main", "high"]
+  },
+  "video_presets": {
+    "description": "x264 speed/quality trade-off presets (H.264 in the MVP; libhevc/libvpx-vp9 presets differ and are not exposed).",
+    "h264": ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
+  },
+  "audio_resample": {
+    "description": "Audio resampler targets: -ar sample rate (Hz) and -ac channel count (1 mono, 2 stereo, 6 5.1).",
+    "sample_rates": [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 192000],
+    "channel_layouts": [1, 2, 6]
+  },
+  "speed": {
+    "description": "Playback-speed change: setpts=PTS/factor on video, an atempo chain on audio (atempo accepts 0.5-2.0 per instance, so larger factors chain instances).",
+    "min": 0.25, "max": 8.0,
+    "atempo_min": 0.5, "atempo_max": 2.0
+  },
+  "crop": {
+    "description": "Crop to exact output dimensions, centered (FFmpeg's crop default).",
+    "min": 16, "max": 8192
+  },
+  "bitstream_filters": {
+    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; the filter runs on the compressed stream without re-encoding.",
+    "mp4_mov_to_mpegts": { "h264": "h264_mp4toannexb", "h265": "hevc_mp4toannexb" }
+  },
+  "sources": {
+    "description": "Generic ffmpeg input sources (the input/output-devices component). An asset whose path is '<format>:<spec>' with an allowlisted format is a source spec, not a file: it gets -f <format> plus ;key=value options as separate option tokens. Output devices carry audio only (pcm) — a plan that produces video cannot target one.",
+    "input": {
+      "lavfi":        { "options": false, "note": "synthetic sources, e.g. 'lavfi:testsrc=duration=5:size=640x480' — headless-testable" },
+      "v4l2":         { "options": true, "note": "Linux camera/USB capture, e.g. 'v4l2:/dev/video0;video_size=1280x720;framerate=30'" },
+      "alsa":         { "options": true, "note": "Linux audio capture, e.g. 'alsa:hw:0'" },
+      "dshow":        { "options": true, "note": "Windows devices" },
+      "avfoundation": { "options": true, "note": "macOS devices" },
+      "x11grab":      { "options": true, "note": "X11 screen capture, e.g. 'x11grab::1.0+10,20;framerate=10'" }
+    },
+    "output": ["alsa", "pulse"]
+  },
   "operations": {
     "resize": {
       "description": "Scale the video. A height (e.g. 720p) or width keeps the aspect ratio; width+height letterboxes (preserve) or stretches (exact).",
@@ -89,6 +133,27 @@
     "audio_replace": {
       "description": "Replace the output audio with the first audio stream of another input (an audio file).",
       "note": "Emits -map N:a:0 for the replacement input plus -shortest, so the output ends when the shorter of the video and the replacement audio ends. The replacement audio is encoded to the container's audio codec (no stream copy)."
+    },
+    "crop": {
+      "description": "Crop to exact output dimensions, centered (FFmpeg's crop default).",
+      "filter": "crop=w:h",
+      "note": "Width/height snap to even (yuv420p); the planner rejects a crop larger than the probed source dimensions."
+    },
+    "speed": {
+      "description": "Change playback speed (factor 0.25-8).",
+      "filter": "setpts=PTS/factor (video)",
+      "audio": "-af atempo chain (0.5-2.0 per instance, chained for larger factors)",
+      "note": "A trim's source duration is divided by the factor; the output is shorter than the cut interval."
+    },
+    "rotate": {
+      "description": "Rotate by a quarter turn (90/180/270; clockwise by default).",
+      "filter": "transpose=1 (90 CW), transpose=2 (90 CCW / 270 CW), hflip+vflip (180)",
+      "note": "90/270 swap the output dimensions."
+    },
+    "audio_resample": {
+      "description": "Resample the audio to a target sample rate and/or channel count.",
+      "options": "-ar (Hz) / -ac (channels)",
+      "note": "Targets come from the audio_resample matrix; an audio-removed plan cannot resample."
     }
   },
   "stream_selection": {
@@ -106,6 +171,14 @@
     "overlay_filter": "https://ffmpeg.org/ffmpeg-filters.html#overlay_2",
     "pad_filter": "https://ffmpeg.org/ffmpeg-filters.html#pad",
     "encoders": "https://ffmpeg.org/ffmpeg-all.html (libx264, libhevc, libvpx-vp9, aac, libopus)",
-    "formats": "https://ffmpeg.org/ffmpeg-formats.html (mp4, mov, matroska, webm)"
+    "formats": "https://ffmpeg.org/ffmpeg-formats.html (mp4, mov, matroska, webm)",
+    "scaler": "https://ffmpeg.org/ffmpeg-scaler.html (pixel-format conversion, -pix_fmt)",
+    "resampler": "https://ffmpeg.org/ffmpeg-resampler.html (-ar, -ac)",
+    "crop_filter": "https://ffmpeg.org/ffmpeg-filters.html#crop_2",
+    "transpose_filter": "https://ffmpeg.org/ffmpeg-filters.html#transpose_2",
+    "setpts": "https://ffmpeg.org/ffmpeg-filters.html#setpts-settb-setpts_2",
+    "atempo_filter": "https://ffmpeg.org/ffmpeg-filters.html#atempo_2",
+    "bitstream_filters": "https://ffmpeg.org/ffmpeg-bitstream-filters.html (h264_mp4toannexb, hevc_mp4toannexb)",
+    "devices": "https://ffmpeg.org/ffmpeg-devices.html (lavfi, v4l2, alsa, dshow, avfoundation, x11grab)"
   }
 }

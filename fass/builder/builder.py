@@ -20,6 +20,8 @@ def build_argv(ep: ExecutionPlan) -> list[str]:
         argv += ["-filter_complex", ep.filter_complex]
     elif ep.vf:
         argv += ["-vf", ep.vf]
+    if ep.af:
+        argv += ["-af", ep.af]
     for m in ep.maps:
         argv += ["-map", m]
     argv += ep.output_opts

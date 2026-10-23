@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fass.registry import (
     input_schemes,
+    is_source_spec,
     output_schemes,
     stream_output_info,
     stream_scheme,
@@ -77,6 +78,24 @@ class OutputSpec(BaseModel):
                     "Overrides the quality preset with CBR-style flags "
                     "(-b:v/-maxrate at target, -bufsize 2x).",
     )
+    pixel_format: Literal["yuv420p", "yuv420p10le", "yuv444p"] | None = Field(
+        default=None,
+        description="Output pixel format (the scaling/conversion component). "
+                    "None keeps the codec's default (yuv420p). Allowed values "
+                    "depend on the codec — see the registry matrix.",
+    )
+    video_profile: Literal["baseline", "main", "high"] | None = Field(
+        default=None,
+        description="Encoder profile (H.264 in the MVP): 'baseline' for "
+                    "maximum compatibility.",
+    )
+    video_preset: Literal[
+        "ultrafast", "superfast", "veryfast", "faster", "fast",
+        "medium", "slow", "slower", "veryslow",
+    ] | None = Field(
+        default=None,
+        description="x264 speed/size preset (H.264 in the MVP).",
+    )
 
 # ---------------------------------------------------------------- operations
 
@@ -99,6 +118,54 @@ class GrayscaleOp(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["grayscale"] = "grayscale"
+
+
+class CropOp(BaseModel):
+    """Crop to exact output dimensions, centered (FFmpeg's crop default)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["crop"] = "crop"
+    width: int = Field(ge=16, le=8192)
+    height: int = Field(ge=16, le=8192)
+
+
+class SpeedOp(BaseModel):
+    """Change playback speed. factor > 1 is faster, < 1 is slower.
+
+    The builder scales video timestamps (setpts) and audio tempo (atempo);
+    a trim's source duration is divided by the factor in the planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["speed"] = "speed"
+    factor: float = Field(ge=0.25, le=8)
+
+
+class RotateOp(BaseModel):
+    """Rotate by a quarter turn. 90/270 swap the output dimensions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["rotate"] = "rotate"
+    angle: Literal[90, 180, 270] = 90
+    clockwise: bool = True
+
+
+class AudioResampleOp(BaseModel):
+    """Audio resampler: target sample rate and/or channel count."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["audio_resample"] = "audio_resample"
+    sample_rate: int | None = Field(default=None, ge=8000, le=192000)
+    channels: int | None = Field(default=None, ge=1, le=6)
+
+    @model_validator(mode="after")
+    def _has_target(self) -> "AudioResampleOp":
+        if self.sample_rate is None and self.channels is None:
+            raise ValueError("audio_resample needs a sample_rate and/or channels")
+        return self
 
 
 class AudioReplaceOp(BaseModel):
@@ -130,7 +197,10 @@ class WatermarkOp(BaseModel):
 
 
 Operation = Annotated[
-    Union[ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp],
+    Union[
+        ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp,
+        CropOp, SpeedOp, RotateOp, AudioResampleOp,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -171,10 +241,10 @@ class EditPlan(BaseModel):
 
     @model_validator(mode="after")
     def _at_most_one_watermark(self) -> "EditPlan":
-        if sum(1 for o in self.operations if o.type == "watermark") > 1:
-            raise ValueError("the MVP supports at most one watermark")
-        if sum(1 for o in self.operations if o.type == "audio_replace") > 1:
-            raise ValueError("the MVP supports at most one audio replacement")
+        for op_type in ("watermark", "audio_replace", "crop", "speed",
+                        "rotate", "audio_resample"):
+            if sum(1 for o in self.operations if o.type == op_type) > 1:
+                raise ValueError(f"the MVP supports at most one {op_type} operation")
         return self
 
     def ops_of(self, op_type: str) -> list:
@@ -219,6 +289,7 @@ class AssetKind(str, Enum):
     VIDEO = "video"
     IMAGE = "image"
     AUDIO = "audio"
+    SOURCE = "source"  # a generic ffmpeg source spec (lavfi, v4l2, x11grab, …)
 
 
 _REMOTE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://|^//")
@@ -233,6 +304,10 @@ AUDIO_EXTENSIONS = {
 def guess_kind(path: str) -> AssetKind:
     import os
 
+    # A generic ffmpeg source spec ('lavfi:testsrc=…', 'v4l2:/dev/video0')
+    # wins over the extension heuristic — it has no file semantics at all.
+    if is_source_spec(path):
+        return AssetKind.SOURCE
     # URLs may carry query/fragment suffixes — drop them before the
     # extension check ("http://x/live.mp4?token=…" is a video).
     bare = path.split("?", 1)[0].split("#", 1)[0]
@@ -261,6 +336,13 @@ class Asset(BaseModel):
         p = self.path.strip()
         if not p or any(c in p for c in "\x00\n\r\t"):
             raise ValueError("asset path must be a nonempty local path")
+        if self.kind == AssetKind.SOURCE:
+            if not is_source_spec(p):
+                raise ValueError(
+                    "a source asset must be an allowlisted ffmpeg source spec "
+                    "(e.g. 'lavfi:testsrc=duration=5', 'v4l2:/dev/video0')"
+                )
+            return self
         if _REMOTE.match(p):
             if stream_scheme(p) not in input_schemes():
                 allowed = ", ".join(input_schemes())

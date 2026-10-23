@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 REG_PATH = Path(__file__).parent / "registry.json"
@@ -108,3 +109,120 @@ def input_format_for(url: str) -> str | None:
 def output_schemes() -> list[str]:
     """URL schemes allowed on stream *output* destinations."""
     return list(_streaming()["output"])
+
+
+# ---------------------------------------------------------------- M4 helpers
+
+def pixel_formats_for(video_codec: str) -> list[str]:
+    """Output pixel formats the codec supports (scaling/conversion matrix)."""
+    return list(REGISTRY["pixel_formats"].get(video_codec, []))
+
+
+def pixel_format_error(video_codec: str, pixel_format: str) -> str | None:
+    allowed = pixel_formats_for(video_codec)
+    if pixel_format not in allowed:
+        return (
+            f"pixel format '{pixel_format}' is not supported by "
+            f"{video_codec.upper()} (supported: {', '.join(allowed)})"
+        )
+    return None
+
+
+def video_profiles_for(video_codec: str) -> list[str]:
+    return list(REGISTRY["video_profiles"].get(video_codec, []))
+
+
+def video_presets_for(video_codec: str) -> list[str]:
+    return list(REGISTRY["video_presets"].get(video_codec, []))
+
+
+def sample_rates() -> list[int]:
+    return list(REGISTRY["audio_resample"]["sample_rates"])
+
+
+def channel_layouts() -> list[int]:
+    return list(REGISTRY["audio_resample"]["channel_layouts"])
+
+
+def speed_limits() -> tuple[float, float]:
+    s = REGISTRY["speed"]
+    return float(s["min"]), float(s["max"])
+
+
+def atempo_limits() -> tuple[float, float]:
+    s = REGISTRY["speed"]
+    return float(s["atempo_min"]), float(s["atempo_max"])
+
+
+def bsf_for_copy(source_container: str, target_container: str,
+                 video_codec: str) -> str | None:
+    """Bitstream filter a remux needs (None = plain stream copy).
+
+    MP4/MOV -> MPEG-TS requires re-stamping H.264/HEVC into Annex-B form."""
+    if target_container != "mpegts" or source_container not in ("mp4", "mov"):
+        return None
+    return REGISTRY["bitstream_filters"]["mp4_mov_to_mpegts"].get(video_codec)
+
+
+# ---------------------------------------------------------------- source specs
+
+# '<format>:<spec>' plus optional ';key=value' device options. The spec may
+# itself contain ':' (lavfi parameter lists, x11grab display names), so only
+# the FIRST colon splits format from spec; semicolons always start options.
+_SOURCE_SPEC = re.compile(
+    r"^(?P<fmt>[a-z0-9][a-z0-9_]*):(?P<spec>[^\s;]+)"
+    r"(?P<opts>(?:;[a-z0-9][a-z0-9_]*=[^\s;]+)*)$"
+)
+
+
+def source_input_formats() -> list[str]:
+    """Allowlisted generic input source formats (lavfi, v4l2, …)."""
+    return list(REGISTRY["sources"]["input"])
+
+
+def is_source_spec(path: str) -> bool:
+    """True if the path is an allowlisted '<format>:<spec>' source, not a file.
+
+    Stream URLs ('rtmp://…') are NOT source specs — they carry '://' and are
+    handled by the streaming block. A local filename with a colon whose
+    prefix is not allowlisted stays a filename."""
+    m = _SOURCE_SPEC.match(path)
+    return bool(m and m.group("fmt") in source_input_formats())
+
+
+def source_spec_parts(path: str) -> tuple[str, str, list[tuple[str, str]]] | None:
+    """(format, spec, [(key, value), …]) for an allowlisted source spec."""
+    m = _SOURCE_SPEC.match(path)
+    if not m or m.group("fmt") not in source_input_formats():
+        return None
+    opts: list[tuple[str, str]] = []
+    for kv in m.group("opts").split(";"):
+        if kv:
+            k, v = kv.split("=", 1)
+            opts.append((k, v))
+    return m.group("fmt"), m.group("spec"), opts
+
+
+def output_device_formats() -> list[str]:
+    """Allowlisted output device formats (alsa, pulse) — audio only."""
+    return list(REGISTRY["sources"]["output"])
+
+
+def output_device_parts(path: str) -> tuple[str, str, list[tuple[str, str]]] | None:
+    """(format, spec, options) if the *output* path is an allowlisted device
+    spec ('alsa:hw:0', 'pulse:default'), else None (plain filename or URL)."""
+    m = _SOURCE_SPEC.match(path)
+    if m and m.group("fmt") in output_device_formats():
+        opts: list[tuple[str, str]] = []
+        for kv in m.group("opts").split(";"):
+            if kv:
+                k, v = kv.split("=", 1)
+                opts.append((k, v))
+        return m.group("fmt"), m.group("spec"), opts
+    return None
+
+
+def output_device_for(path: str) -> str | None:
+    """Device format for an allowlisted output device spec, else None."""
+    parts = output_device_parts(path)
+    return parts[0] if parts else None
