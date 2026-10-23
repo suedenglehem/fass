@@ -184,8 +184,8 @@ def _subcommand(argv: list[str]) -> int:
         return 0
     if cmd == "serve":
         p = argparse.ArgumentParser(prog="fass serve")
-        p.add_argument("--host", default="127.0.0.1",
-                       help="bind address (default 127.0.0.1 — local-first)")
+        p.add_argument("--host", default="0.0.0.0",
+                       help="bind address (default 0.0.0.0 — all interfaces)")
         p.add_argument("--port", type=int, default=8000)
         a = p.parse_args(rest)
         try:
@@ -194,8 +194,9 @@ def _subcommand(argv: list[str]) -> int:
             print("error: uvicorn is required to serve (pip install uvicorn)", file=sys.stderr)
             return 1
         from fass.api import app
-        print(f"fass API on http://{a.host}:{a.port} (open / for the web UI; "
-              "the service never executes generated commands)")
+        bind = "0.0.0.0" if a.host == "0.0.0.0" else a.host
+        print(f"fass API on http://{bind}:{a.port} — open <this host's IP>:{a.port} "
+              f"for the web UI; the service never executes generated commands")
         uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
         return 0
     if cmd == "feedback":

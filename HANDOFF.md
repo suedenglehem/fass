@@ -27,7 +27,8 @@ smoke-tested live (healthz, /v1/commands, UI).
   /healthz, / (self-contained UI, no external assets). No subprocess in the
   API — PRD §10: the service never executes.
 - serve subcommand added to cli.py ("serve" in main() routing tuple +
-  handler; --host defaults 127.0.0.1, --port 8000).
+  handler; --host defaults 0.0.0.0 — all interfaces, per user request —
+  --port 8000; LAN reachability smoke-verified).
 - BUG FIX found via API tests: probe_ffmpeg() filter parsing used a substring
   test (`line.split()[0] in "TS.-"`) that only matched "TS." flag rows and
   captured description words. Now: first column must match ^[TSC.-]+$ and

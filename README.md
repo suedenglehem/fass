@@ -58,8 +58,9 @@ unsupported · `5` error.
 ## Web API
 
 ```bash
-./.venv/bin/python -m fass serve            # http://127.0.0.1:8000
-# or: uvicorn fass.api:app
+./.venv/bin/python -m fass serve            # binds 0.0.0.0:8000
+# then open <host IP>:8000 in a browser
+# or: uvicorn fass.api:app --host 0.0.0.0
 ```
 
 `GET /` serves a minimal self-contained UI (request form, clarification flow,

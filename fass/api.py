@@ -14,7 +14,7 @@ Security invariants (PRD §10), all enforced by design here:
 - target shell is POSIX only — other shells are deferred and a non-POSIX
   value is a validation error, not a best-effort render.
 
-Run:  fass serve [--host 127.0.0.1] [--port 8000]
+Run:  fass serve [--host 0.0.0.0] [--port 8000]
      (or: uvicorn fass.api:app)
 """
 
