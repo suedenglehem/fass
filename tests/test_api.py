@@ -124,6 +124,20 @@ def test_revision_with_previous_plan():
     assert types == ["grayscale", "resize"]
 
 
+def test_bitrate_and_mpegts_round_trip():
+    r = post("cut from 20 to 30 secs and transcode to cbr 10Mbps mpeg ts",
+             {"main": "clip.mp4"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready"
+    assert d["plan"]["output"]["container"] == "mpegts"
+    assert d["plan"]["output"]["video_bitrate_kbps"] == 10000
+    args = d["arguments"]
+    assert "-b:v" in args and args[args.index("-b:v") + 1] == "10000k"
+    assert "-crf" not in args
+    assert args[-1].endswith(".ts")
+
+
 def test_media_metadata_payload_is_accepted():
     # Pre-collected ffprobe JSON (as the local helper would emit) changes the
     # planner's decision: matching codecs in mov → stream copy.

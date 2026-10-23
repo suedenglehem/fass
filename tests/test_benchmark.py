@@ -85,8 +85,12 @@ def test_benchmark(gen, entry):
                 f"{exp_trim['duration_seconds']} (±{TRIM_TOLERANCE})"
             )
 
-    for key in ("container", "video_codec", "audio_mode"):
+    for key in ("container", "video_codec", "audio_mode", "video_bitrate_kbps"):
         if key in exp:
-            assert plan["output"][key] == exp[key], (
-                f"{eid}: output.{key} {plan['output'][key]!r} != expected {exp[key]!r}"
+            got = plan["output"].get(key)
+            want = exp[key]
+            if key == "audio_mode":
+                got = got.value if hasattr(got, "value") else got
+            assert got == want, (
+                f"{eid}: output.{key} {got!r} != expected {want!r}"
             )

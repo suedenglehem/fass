@@ -66,3 +66,17 @@ def test_titan_remove_audio(gen, tmp_path):
     _, info = _run(gen, "remove the audio", tmp_path / "titan_silent.mp4")
     assert not info.has_audio
     assert info.audio_streams == 0
+
+
+def test_titan_cbr_10mbps_mpegts(gen, tmp_path):
+    # The user's real request, with a range that fits this 20 s fixture:
+    # trim + CBR 10 Mbps target + mpeg-ts container. The CBR target must
+    # actually land near 10 Mbps (10 s * 10 Mbps ~= 12.5 MB of video).
+    out = tmp_path / "titan.ts"
+    r, info = _run(gen, "cut from 5 to 15 secs and transcode to cbr 10Mbps mpeg ts", out)
+    assert info.video_codec == "h264"
+    assert abs(info.duration - 10.0) <= 0.25
+    # CBR-style 10 Mbps target: the 10 s output must be close to ~12.5 MB,
+    # not the multi-MB a quality preset (CRF 23) would produce for this clip.
+    size_mb = out.stat().st_size / (1024 * 1024)
+    assert 8.0 <= size_mb <= 20.0, f"10 Mbps CBR 10s output should be ~12.5 MB, got {size_mb:.1f} MB"

@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.0.0",
+  "registry_version": "1.1.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -10,7 +10,8 @@
     "mp4": { "extensions": ["mp4", "m4v"] },
     "mov": { "extensions": ["mov", "qt"] },
     "mkv": { "extensions": ["mkv"] },
-    "webm": { "extensions": ["webm"] }
+    "webm": { "extensions": ["webm"] },
+    "mpegts": { "extensions": ["ts", "mts", "m2ts"] }
   },
   "video_codecs": {
     "h264": {
@@ -43,8 +44,10 @@
     "mp4":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
     "mov":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
     "mkv":  { "video": ["h264", "h265", "vp9"], "audio": ["aac", "opus"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
-    "webm": { "video": ["vp9"], "audio": ["opus"], "default_video": "vp9", "audio_codec": "opus", "flags": [] }
+    "webm": { "video": ["vp9"], "audio": ["opus"], "default_video": "vp9", "audio_codec": "opus", "flags": [] },
+    "mpegts": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [] }
   },
+  "bitrate_policy": "An explicit target video bitrate (plan.output.video_bitrate_kbps) overrides the quality preset: -b:v and -maxrate at the target, plus -bufsize at 2x the target for H.264/H.265 (a CBR-style target; audio keeps its codec-preset bitrate).",
   "operations": {
     "resize": {
       "description": "Scale the video. A height (e.g. 720p) or width keeps the aspect ratio; width+height letterboxes (preserve) or stretches (exact).",

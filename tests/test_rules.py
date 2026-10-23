@@ -191,3 +191,53 @@ def test_revision_unrelated_asks(gen):
     prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
     r = gen("hello there", "clip.mp4", previous_plan=prev)
     assert r.status == "needs_clarification"
+
+
+# ------------------------------------------------------- bitrate + mpegts
+
+def test_cbr_bitrate_and_mpegts(gen):
+    # "Mbps" is a bitrate, not a file size — must not clarify.
+    r = gen("cut from 20 to 30 secs and transcode to cbr 10Mbps mpeg ts", "titan.mp4")
+    assert r.status == "ready"
+    assert r.plan["trim"]["start_seconds"] == 20
+    assert r.plan["trim"]["duration_seconds"] == 10
+    assert r.plan["output"]["container"] == "mpegts"
+    assert r.plan["output"]["video_codec"] == "h264"
+    assert r.plan["output"]["video_bitrate_kbps"] == 10000
+
+
+def test_mbps_and_kbps_units(gen):
+    r = gen("export at 5 mbps", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["video_bitrate_kbps"] == 5000
+    r = gen("target 2000 kbps", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["video_bitrate_kbps"] == 2000
+
+
+def test_exact_file_size_still_clarifies(gen):
+    # Byte units remain a file-size target: the MVP cannot guarantee it.
+    for instr in ("make it exactly 5 MB", "compress to 10 mb", "target a 2 GB file"):
+        r = gen(instr, "clip.mp4")
+        assert r.status == "needs_clarification", instr
+
+
+def test_mpegts_container_variants(gen):
+    for instr in ("convert to mpeg ts", "save as .ts", "make it a transport stream",
+                  "convert to mts", "to m2ts please"):
+        r = gen(instr, "clip.mp4")
+        assert r.status == "ready", instr
+        assert r.plan["output"]["container"] == "mpegts", instr
+
+
+def test_mpegts_rejects_vp9_via_matrix(gen):
+    r = gen("convert to mpeg ts with vp9", "clip.mp4")
+    assert r.status == "unsupported"
+    assert r.plan is None
+
+
+def test_revision_sets_bitrate(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    r = gen("actually make it 12 mbps", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["output"]["video_bitrate_kbps"] == 12000

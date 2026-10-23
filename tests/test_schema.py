@@ -98,6 +98,29 @@ def test_matrix_is_enforced_at_plan_level_via_registry():
 
     assert matrix_error("webm", "h264") is not None
     assert matrix_error("mp4", "h264") is None
+    assert matrix_error("mpegts", "h264") is None
+    assert matrix_error("mpegts", "vp9") is not None
+
+
+def test_video_bitrate_field():
+    o = OutputSpec(container="mp4", video_codec="h264", video_bitrate_kbps=10000)
+    assert o.video_bitrate_kbps == 10000
+    # defaults to None (quality preset)
+    assert OutputSpec(container="mp4", video_codec="h264").video_bitrate_kbps is None
+    # bounds
+    with pytest.raises(ValidationError):
+        OutputSpec(container="mp4", video_codec="h264", video_bitrate_kbps=50)
+    with pytest.raises(ValidationError):
+        OutputSpec(container="mp4", video_codec="h264", video_bitrate_kbps=200_001)
+    with pytest.raises(ValidationError):
+        OutputSpec(container="mp4", video_codec="h264", video_bitrate_kbps="10mb")
+
+
+def test_mpegts_container_accepted():
+    plan(output=OutputSpec(container="mpegts", video_codec="h264"))
+    plan(output=OutputSpec(container="mpegts", video_codec="h265"))
+    with pytest.raises(ValidationError):
+        OutputSpec(container="avi", video_codec="h264")
 
 
 def test_asset_rejects_urls():

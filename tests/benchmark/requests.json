@@ -456,5 +456,21 @@
       "operations": []
     },
     "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 10, "duration_seconds": 20}, "container": "mkv", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-079",
+    "instruction": "Cut from 20 to 30 secs and transcode to CBR 10Mbps MPEG-TS",
+    "assets": {"input": "titan.mp4"},
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 20, "duration_seconds": 10}, "container": "mpegts", "video_codec": "h264", "video_bitrate_kbps": 10000}
+  },
+  {
+    "id": "bench-080",
+    "instruction": "Make it exactly 5 MB",
+    "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-081",
+    "instruction": "Save the first 30 seconds as a .ts file at 8 mbps",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 0, "duration_seconds": 30}, "container": "mpegts", "video_bitrate_kbps": 8000}
   }
 ]

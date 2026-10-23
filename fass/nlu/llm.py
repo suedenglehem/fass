@@ -58,6 +58,10 @@ grayscale, watermark (asset_id, position top_left|top_right|bottom_left|bottom_r
 margin_px, scale_percent). Output containers: {containers}. Video codecs: {codecs}.
 Codec/container matrix (anything else is unsupported): {matrix}
 Audio: "encode" (default, keep) or "remove".
+Target bitrate: an explicit video bitrate ("cbr 10 Mbps", "5 mbps", "2000 kbps") is set as
+"video_bitrate_kbps" on the output (integer kbps, e.g. 10000 for 10 Mbps) — a CBR-style
+target that overrides the quality preset. A *file size* target ("5 MB file") is NOT a
+bitrate: return "needs_clarification".
 {ops_doc}
 
 Available assets (reference by id ONLY — never emit file paths):

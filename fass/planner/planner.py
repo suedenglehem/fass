@@ -204,7 +204,9 @@ def plan_execution(
     # -- remux vs re-encode (plan0.md section 3) ---------------------------
     has_trim = edit.trim is not None
     has_ops = bool(edit.operations)
-    needs_reencode = has_trim or has_ops  # PRD FR-4: trimming re-encodes
+    # PRD FR-4: trimming re-encodes. An explicit target bitrate also forces
+    # a re-encode: stream copy cannot honor a bitrate the input does not have.
+    needs_reencode = has_trim or has_ops or edit.output.video_bitrate_kbps is not None
 
     if not needs_reencode:
         if metadata and metadata.video_codec == edit.output.video_codec and \
@@ -281,11 +283,23 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
 
     vc = REGISTRY["video_codecs"][edit.output.video_codec]
     opts += ["-c:v", vc["encoder"]]
-    preset = vc.get("preset", {})
-    if "crf" in preset:
-        opts += ["-crf", str(preset["crf"])]
-    if "bitrate" in preset:
-        opts += ["-b:v", preset["bitrate"]]
+    kbps = edit.output.video_bitrate_kbps
+    if kbps is not None:
+        # CBR-style target overrides the quality preset (registry bitrate_policy):
+        # -b:v and -maxrate at the target; -bufsize 2x where the encoder takes it.
+        opts += ["-b:v", f"{kbps}k", "-maxrate", f"{kbps}k"]
+        if edit.output.video_codec in ("h264", "h265"):
+            opts += ["-bufsize", f"{2 * kbps}k"]
+        details = f"-b:v/-maxrate {kbps}k"
+        if edit.output.video_codec in ("h264", "h265"):
+            details += f", -bufsize {2 * kbps}k"
+        defaults.append(f"target video bitrate {kbps} kbps (CBR-style: {details})")
+    else:
+        preset = vc.get("preset", {})
+        if "crf" in preset:
+            opts += ["-crf", str(preset["crf"])]
+        if "bitrate" in preset:
+            opts += ["-b:v", preset["bitrate"]]
     opts += ["-pix_fmt", vc["pix_fmt"]]
 
     if audio_remove:

@@ -155,3 +155,59 @@ def test_scale_expr_letterbox_when_preserve_both():
 
 def test_scale_expr_exact():
     assert _scale_expr(ResizeOp(width=640, height=360, aspect_ratio="exact"), []) == "scale=640:360"
+
+
+# ------------------------------------------------------- bitrate + mpegts
+
+def test_bitrate_overrides_crf():
+    # An explicit target bitrate replaces the quality preset (no -crf).
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="h264", video_bitrate_kbps=10000))
+    assert "-crf" not in argv
+    assert argv[argv.index("-b:v") + 1] == "10000k"
+    assert argv[argv.index("-maxrate") + 1] == "10000k"
+    assert argv[argv.index("-bufsize") + 1] == "20000k"  # 2x, for H.264
+
+
+def test_bitrate_bufsize_only_for_h264_h265():
+    # libvpx-vp9 takes -b:v/-maxrate but not -bufsize.
+    argv = argv_for(output=OutputSpec(container="webm", video_codec="vp9", video_bitrate_kbps=3000))
+    assert argv[argv.index("-b:v") + 1] == "3000k"
+    assert "-maxrate" in argv
+    assert "-bufsize" not in argv
+
+
+def test_bitrate_forces_reencode_even_when_copy_would_fit():
+    # Matching codecs would normally remux, but a bitrate target must be
+    # encoded — never stream-copied.
+    media = make_media(video_codec="h264", audio_codec="aac", has_audio=True)
+    ep = ep_for(output=OutputSpec(container="mp4", video_codec="h264", video_bitrate_kbps=5000),
+                media=media)
+    assert ep.mode == "reencode"
+    assert "copy" not in ep.output_opts
+    assert any("bitrate" in d.lower() for d in ep.defaults)
+
+
+def test_mpegts_output_extension():
+    ep = ep_for(output=OutputSpec(container="mpegts", video_codec="h264", video_bitrate_kbps=10000))
+    assert ep.output_path.endswith(".ts")
+    # mpegts has no -movflags
+    assert "-movflags" not in ep.output_opts
+    assert "libx264" in ep.output_opts
+
+
+def test_cbr_trim_argv_full_shape():
+    # The user's exact request: trim 20-30s, CBR 10 Mbps, mpeg ts.
+    argv = argv_for(
+        trim=TrimSpec(start_seconds=20, duration_seconds=10),
+        output=OutputSpec(container="mpegts", video_codec="h264", video_bitrate_kbps=10000),
+    )
+    # -ss before -i, -t after
+    assert argv.index("-ss") < argv.index("-i")
+    assert argv[argv.index("-ss") + 1] == "20"
+    assert argv[argv.index("-t") + 1] == "10"
+    # CBR video at the target, AAC audio at its preset
+    assert argv[argv.index("-c:v") + 1] == "libx264"
+    assert argv[argv.index("-b:v") + 1] == "10000k"
+    assert argv[argv.index("-c:a") + 1] == "aac"
+    assert argv[argv.index("-b:a") + 1] == "160k"
+    assert argv[-1].endswith(".ts")

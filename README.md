@@ -88,10 +88,16 @@ no media upload endpoints: assets are local paths the client binds.
 - **Resize** — `resize to 720p` (aspect-preserving, `scale=-2:H`), width or
   height, `exact` dims, letterbox when both dims are given with preserve.
   Odd dimensions snap to even (yuv420p) with a visible note.
-- **Container conversion** — MP4 / MOV / MKV / WebM, with a codec matrix
-  (e.g. H.264 in WebM is rejected as *unsupported*, not guessed).
+- **Container conversion** — MP4 / MOV / MKV / WebM / MPEG-TS (`.ts`/`.mts`/
+  `.m2ts`), with a codec matrix (e.g. H.264 in WebM is rejected as
+  *unsupported*, not guessed).
 - **Video encode** — H.264 (`libx264 crf 23`), H.265 (`libhevc crf 28`),
   VP9 (`libvpx-vp9 crf 32 -b:v 0`); audio AAC 160k or Opus 128k for WebM.
+- **Target bitrate (CBR-style)** — `cbr 10 Mbps`, `5 mbps`, `2000 kbps` set a
+  target video bitrate: `-b:v`/`-maxrate` at the target (+ `-bufsize` 2× for
+  H.264/H.265), overriding the quality preset and forcing a re-encode.
+  A *file-size* target (`exactly 5 MB`) is still `needs_clarification` —
+  bit rates are honored, exact byte sizes are not.
 - **Grayscale** — `hue=s=0`, audio kept.
 - **One static watermark** — preset positions (corners/center), margin,
   percent scale; labeled `filter_complex` + `overlay`, `eof_action=repeat` so a

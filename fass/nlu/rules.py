@@ -35,9 +35,10 @@ from fass.schema import (
 
 SUPPORTED_SUMMARY = (
     "Supported: resize (e.g. '720p', '1280x720'), trim ('cut from 00:10 to 00:30', "
-    "'the first 20 seconds'), container conversion (mp4, mov, mkv, webm), video "
-    "encoding (H.264, H.265, VP9), grayscale ('black and white'), one image "
-    "watermark (position, margin, scale), and audio keep/remove."
+    "'the first 20 seconds'), container conversion (mp4, mov, mkv, webm, mpeg-ts), "
+    "video encoding (H.264, H.265, VP9) at quality presets or a target bitrate "
+    "(e.g. 'cbr 10 Mbps'), grayscale ('black and white'), one image watermark "
+    "(position, margin, scale), and audio keep/remove."
 )
 
 # ---------------------------------------------------------------- time
@@ -227,6 +228,7 @@ def _detect_codec(t: str) -> str | None:
 _EXT_TO_CONTAINER = {
     "mp4": "mp4", "m4v": "mp4", "mov": "mov", "qt": "mov",
     "mkv": "mkv", "webm": "webm",
+    "ts": "mpegts", "mts": "mpegts", "m2ts": "mpegts",
 }
 
 
@@ -237,6 +239,8 @@ def _detect_container(t: str) -> tuple[str | None, str | None]:
     m = re.search(r"\b(mp4|mkv|webm|mov|m4v)\b", t, re.I)
     if m:
         return _EXT_TO_CONTAINER[m.group(1)], None
+    if re.search(r"\bmpeg[-\s]?ts\b|\.ts\b|\bts\s+file\b|\btransport\s+stream\b|\bmts\b|\bm2ts\b", t, re.I):
+        return "mpegts", None
     if re.search(r"\bavi\b", t, re.I):
         return None, "AVI container (not in the MVP container set)"
     return None, None
@@ -377,10 +381,30 @@ def _scan_unsupported(t: str) -> list[UnsupportedPart]:
 
 # ---------------------------------------------------------------- ambiguous
 
+# Exact file-size targets (byte units only — bit units are bitrates, which
+# the MVP *can* honor; see _detect_bitrate below).
 _SIZE_TARGET = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:kb|mb|gb|megabytes?|gigabytes?|kilobytes?|kilobits?|megabits?|kbps|mbps)\b",
+    r"\b\d+(?:\.\d+)?\s*(?:kb|mb|gb|kilobytes?|megabytes?|gigabytes?)\b",
     re.I,
 )
+_BITRATE = re.compile(
+    r"\b(\d+(?:\.\d+)?)\s*(mbps|kbps|mbit(?:s?)?|kbit(?:s?)?|megabits?|kilobits?)\b",
+    re.I,
+)
+
+
+def _detect_bitrate(t: str) -> int | None:
+    """Target video bitrate in kbps, when the instruction names one
+    ('cbr 10 Mbps', '5 mbps', '2000 kbps')."""
+    m = _BITRATE.search(t)
+    if not m:
+        return None
+    value = float(m.group(1))
+    unit = m.group(2).lower()
+    kbps = int(round(value * 1000)) if unit.startswith("m") else int(round(value))
+    if not (100 <= kbps <= 200000):
+        return None
+    return kbps
 _VAGUE_SIZE = re.compile(
     r"\b(smaller|small|shrink|shrunk|bigger|enlarge|larger|compress(?:ion|ed)?|lighter)\b", re.I
 )
@@ -439,6 +463,7 @@ class RulesAdapter:
         grayscale = GRAYSCALE_RE.search(t) is not None
         codec = _detect_codec(t)
         container, unsupported_container = _detect_container(t)
+        bitrate_kbps = _detect_bitrate(t)
         if unsupported_container:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
@@ -511,6 +536,7 @@ class RulesAdapter:
         if previous_plan is None:
             if trim is None and resize is None and watermark is None and not grayscale \
                     and codec is None and container is None and audio != "remove" \
+                    and bitrate_kbps is None \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b", t):
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -532,6 +558,11 @@ class RulesAdapter:
                 notes.append(f"video codec defaulted to {codec} (the {container.upper()} preset default)")
             plan.output.container = container
             plan.output.video_codec = codec
+            if bitrate_kbps is not None:
+                plan.output.video_bitrate_kbps = bitrate_kbps
+                notes.append(
+                    f"targeting a {bitrate_kbps / 1000:g} Mbps video bitrate (CBR-style target)"
+                )
         else:
             # revision: keep previously resolved container/codec unless the
             # instruction changed them (already applied in _merge_revision)
@@ -565,6 +596,10 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if container and plan.output.container != container:
         plan.output.container = container
         changed.append(f"container -> {container}")
+    bitrate = _detect_bitrate(t)
+    if bitrate is not None and plan.output.video_bitrate_kbps != bitrate:
+        plan.output.video_bitrate_kbps = bitrate
+        changed.append(f"video bitrate -> {bitrate} kbps")
 
     if audio == "keep" and plan.output.audio_mode != AudioMode.ENCODE:
         plan.output.audio_mode = AudioMode.ENCODE

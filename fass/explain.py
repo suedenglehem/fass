@@ -26,8 +26,11 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         lines.append("Remux (stream copy): no re-encoding — the input streams already match the target")
     else:
         vc = REGISTRY["video_codecs"][out.video_codec]
-        crf = vc.get("preset", {}).get("crf")
-        quality = f", CRF {crf}" if crf is not None else ""
+        if out.video_bitrate_kbps is not None:
+            quality = f", target ~{out.video_bitrate_kbps / 1000:g} Mbps (CBR-style)"
+        else:
+            crf = vc.get("preset", {}).get("crf")
+            quality = f", CRF {crf}" if crf is not None else ""
         lines.append(f"Encode: {out.video_codec} ({vc['encoder']}{quality}) in {out.container.upper()}")
 
     trim = edit.trim

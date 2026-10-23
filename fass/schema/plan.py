@@ -61,9 +61,15 @@ class TrimSpec(BaseModel):
 class OutputSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    container: Literal["mp4", "mov", "mkv", "webm"]
+    container: Literal["mp4", "mov", "mkv", "webm", "mpegts"]
     video_codec: Literal["h264", "h265", "vp9"]
     audio_mode: AudioMode = AudioMode.ENCODE
+    video_bitrate_kbps: int | None = Field(
+        default=None, ge=100, le=200000,
+        description="Target video bitrate in kbps (e.g. 10000 for 10 Mbps). "
+                    "Overrides the quality preset with CBR-style flags "
+                    "(-b:v/-maxrate at target, -bufsize 2x).",
+    )
 
 # ---------------------------------------------------------------- operations
 
