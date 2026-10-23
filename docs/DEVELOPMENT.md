@@ -151,10 +151,11 @@ or allowlisted stream URLs the client binds.
   one.
 - **Stream-copy remux + bitstream filters** — when metadata proves the
   input streams already match the target codecs, the planner remuxes
-  (`-c copy`) instead of re-encoding; crossing mp4/mov → mpegts restamps
+  (`-c copy`) instead of re-encoding. Crossing mp4/mov → mpegts restamps
   H.264/HEVC with the video bitstream filters `h264_mp4toannexb` /
-  `hevc_mp4toannexb`. Audio-side bitstream filtering is not yet
-  available.
+  `hevc_mp4toannexb`; remuxing AAC out of mpegts into mp4/mov strips the
+  ADTS header with `aac_adtstoasc` (added only when audio is kept — the
+  codec is known from the probe, so copy mode always has it).
 - **Audio keep/remove** and **compositions** of any of the above, in the
   order the user stated them.
 
@@ -177,7 +178,7 @@ truth; availability on the installed build is checked by `fass env` /
 | Video scaling & pixel format | `scale` / `pad` filters (resize, letterbox), `-pix_fmt` (8-bit / 10-bit / 4:4:4) | `pixel_formats`; `planner/` scale math |
 | Audio resampler | `-ar` sample rate, `-ac` channels (1 / 2 / 6) | `audio_resample`; `AudioResampleOp` |
 | Encoders & decoders | Registry-driven codec selection (H.264 / H.265 / VP9, AAC / Opus) validated by the codec/container matrix | `video_codecs`, `audio_codecs`, `matrix` |
-| Bitstream filters | Video remux only: `h264_mp4toannexb` / `hevc_mp4toannexb` when stream-copying mp4/mov → mpegts; audio-side bitstream filtering is not yet available | `bitstream_filters`; `builder/` |
+| Bitstream filters | Remux in both directions: `h264_mp4toannexb` / `hevc_mp4toannexb` for stream-copies mp4/mov → mpegts (Annex-B restamp), `aac_adtstoasc` for mpegts → mp4/mov (ADTS header stripped from AAC) | `bitstream_filters`; `planner/` copy plan |
 | Muxers & demuxers | Container matrix (mp4 / mov / mkv / webm / mpegts / flv; rtsp / srt stream-only) + explicit `-f` for stream destinations | `containers`, `matrix`, `streaming.output` |
 | Protocols | Allowlisted URL schemes in and out (http(s), rtmp(s), rtsp(s), srt, udp, rtp, tcp, tls) | `streaming.input_schemes`, `streaming.output` |
 | Input/output devices | Input sources `lavfi` / `v4l2` / `alsa` / `dshow` / `avfoundation` / `x11grab`; audio-only output devices (`alsa`, `pulse`) | `sources` |
@@ -264,10 +265,10 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] input sources + audio-only output devices — `lavfi:` / `v4l2:` /
   `alsa:` / `dshow:` / `avfoundation:` / `x11grab:` asset specs with
   `-f` + option tokens (registry `sources`)
-- [x] video remux bitstream filters — mp4/mov → mpegts Annex-B restamp
-  (registry `bitstream_filters`)
+- [x] remux bitstream filters, both directions — mp4/mov → mpegts
+  Annex-B restamp + mpegts → mp4/mov ADTS strip (registry
+  `bitstream_filters`)
 - [ ] deferred (PRD §5): subtitles, concatenation, transitions, audio
-  mixing, HDR, hardware acceleration, batch processing; audio-side
-  bitstream filtering
+  mixing, HDR, hardware acceleration, batch processing
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`
