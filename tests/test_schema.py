@@ -8,12 +8,17 @@ from pydantic import ValidationError
 from fass.schema import (
     Asset,
     AssetKind,
+    AudioResampleOp,
+    CropOp,
     EditPlan,
     GrayscaleOp,
     OutputSpec,
     ResizeOp,
+    RotateOp,
+    SpeedOp,
     TrimSpec,
     WatermarkOp,
+    guess_kind,
 )
 
 
@@ -261,3 +266,242 @@ def test_flv_rtsp_srt_matrix():
          output_destination="srt://10.0.0.5:9000/live")
     # (the flv+h265 *combination* is rejected at the registry level above —
     # OutputSpec alone only validates the literals)
+
+
+# ---------------------------------------------------------------- M4 operations
+
+
+def test_crop_bounds():
+    CropOp(width=16, height=16)
+    CropOp(width=8192, height=8192)
+    with pytest.raises(ValidationError):
+        CropOp(width=15, height=16)
+    with pytest.raises(ValidationError):
+        CropOp(width=16, height=15)
+    with pytest.raises(ValidationError):
+        CropOp(width=8193, height=16)
+    with pytest.raises(ValidationError):
+        CropOp(width=16, height=8193)
+    # crop needs *exact* dimensions — both are required (unlike resize)
+    with pytest.raises(ValidationError):
+        CropOp(width=640)
+    with pytest.raises(ValidationError):
+        CropOp(height=480)
+
+
+def test_speed_bounds():
+    assert SpeedOp(factor=0.25).factor == 0.25
+    assert SpeedOp(factor=8).factor == 8
+    assert SpeedOp(factor=1.5).factor == 1.5
+    with pytest.raises(ValidationError):
+        SpeedOp(factor=0.24)
+    with pytest.raises(ValidationError):
+        SpeedOp(factor=8.01)
+    with pytest.raises(ValidationError):
+        SpeedOp(factor=0)
+
+
+def test_rotate_angle_literal():
+    op = RotateOp()  # defaults: 90° clockwise
+    assert op.angle == 90 and op.clockwise is True
+    RotateOp(angle=90)
+    RotateOp(angle=180)
+    RotateOp(angle=270)
+    with pytest.raises(ValidationError):
+        RotateOp(angle=45)
+    with pytest.raises(ValidationError):
+        RotateOp(angle=0)
+    with pytest.raises(ValidationError):
+        RotateOp(angle=360)
+
+
+def test_audio_resample_bounds():
+    AudioResampleOp(sample_rate=8000, channels=1)
+    AudioResampleOp(sample_rate=192000, channels=6)
+    with pytest.raises(ValidationError):
+        AudioResampleOp(sample_rate=7999)
+    with pytest.raises(ValidationError):
+        AudioResampleOp(sample_rate=192001)
+    with pytest.raises(ValidationError):
+        AudioResampleOp(channels=0)
+    with pytest.raises(ValidationError):
+        AudioResampleOp(channels=7)
+
+
+def test_audio_resample_needs_a_target():
+    # one of the two targets is enough; neither alone is not
+    assert AudioResampleOp(sample_rate=22050).channels is None
+    assert AudioResampleOp(channels=2).sample_rate is None
+    with pytest.raises(ValidationError):
+        AudioResampleOp()
+    with pytest.raises(ValidationError):
+        AudioResampleOp(sample_rate=None, channels=None)
+
+
+def test_at_most_one_of_each_m4_op():
+    factories = [
+        lambda: CropOp(width=640, height=480),
+        lambda: SpeedOp(factor=2),
+        lambda: RotateOp(angle=90),
+        lambda: AudioResampleOp(sample_rate=48000),
+    ]
+    for make in factories:
+        plan(operations=[make()])  # one is fine
+        with pytest.raises(ValidationError):
+            plan(operations=[make(), make()])  # the second is not
+
+
+def test_m4_ops_discriminated_union():
+    # all four new ops round-trip through the plan's discriminated list
+    p = plan(operations=[
+        CropOp(width=640, height=480),
+        SpeedOp(factor=2),
+        RotateOp(angle=90, clockwise=False),
+        AudioResampleOp(sample_rate=22050, channels=1),
+    ])
+    types = [o.type for o in p.operations]
+    assert types == ["crop", "speed", "rotate", "audio_resample"]
+    assert p.ops_of("speed")[0].factor == 2
+
+
+# ---------------------------------------------------------------- M4 output fields
+
+
+def test_output_spec_m4_literals():
+    o = OutputSpec(container="mp4", video_codec="h264", pixel_format="yuv420p10le",
+                   video_profile="baseline", video_preset="ultrafast")
+    assert o.pixel_format == "yuv420p10le"
+    assert o.video_profile == "baseline"
+    assert o.video_preset == "ultrafast"
+    # all three default to None (codec defaults apply)
+    d = OutputSpec(container="mp4", video_codec="h264")
+    assert d.pixel_format is None
+    assert d.video_profile is None
+    assert d.video_preset is None
+
+
+def test_output_spec_rejects_bad_m4_literals():
+    for kw in ({"pixel_format": "rgb24"},
+               {"video_profile": "extended"},
+               {"video_preset": "turbofast"}):
+        with pytest.raises(ValidationError):
+            OutputSpec(container="mp4", video_codec="h264", **kw)
+
+
+# ---------------------------------------------------------------- M4 source assets
+
+
+def test_asset_kind_source_accepts_source_specs():
+    Asset(path="lavfi:testsrc=duration=5:size=640x480", kind=AssetKind.SOURCE)
+    Asset(path="v4l2:/dev/video0", kind=AssetKind.SOURCE)
+    Asset(path="x11grab::1.0+10,20;framerate=10", kind=AssetKind.SOURCE)
+    Asset(path="alsa:hw:0", kind=AssetKind.SOURCE)
+
+
+def test_asset_kind_source_rejects_plain_paths():
+    # 'source' is only for allowlisted '<format>:<spec>' strings
+    with pytest.raises(ValidationError):
+        Asset(path="clip.mp4", kind=AssetKind.SOURCE)
+    with pytest.raises(ValidationError):
+        Asset(path="rtmp://host/live", kind=AssetKind.SOURCE)
+    with pytest.raises(ValidationError):
+        Asset(path="mp4:file.mp4", kind=AssetKind.SOURCE)  # 'mp4' not an input format
+
+
+def test_guess_kind_source_specs():
+    assert guess_kind("lavfi:testsrc=duration=5") is AssetKind.SOURCE
+    assert guess_kind("v4l2:/dev/video0") is AssetKind.SOURCE
+    assert guess_kind("x11grab::1.0+10,20;framerate=10") is AssetKind.SOURCE
+    # the source-spec check wins over the extension heuristic
+    assert guess_kind("lavfi:testsrc=duration=5.mp4") is AssetKind.SOURCE
+
+
+# ---------------------------------------------------------------- M4 registry helpers
+
+
+def test_is_source_spec():
+    from fass.registry import is_source_spec
+
+    for s in ("lavfi:testsrc=duration=5", "v4l2:/dev/video0",
+              "v4l2:/dev/video0;video_size=1280x720",
+              "x11grab::1.0+10,20;framerate=10", "alsa:hw:0"):
+        assert is_source_spec(s), s
+    for s in ("clip.mp4", "rtmp://x/live", "12:30", "mp4:file.mp4",
+              "C:\\videos\\a.mp4", ""):
+        assert not is_source_spec(s), s
+
+
+def test_source_spec_parts():
+    from fass.registry import source_spec_parts
+
+    assert source_spec_parts("v4l2:/dev/video0;video_size=1280x720") == \
+        ("v4l2", "/dev/video0", [("video_size", "1280x720")])
+    assert source_spec_parts("x11grab::1.0+10,20;framerate=10") == \
+        ("x11grab", ":1.0+10,20", [("framerate", "10")])
+    # only the FIRST colon splits format from spec (lavfi lists carry ':')
+    assert source_spec_parts("lavfi:testsrc=duration=5:size=640x480") == \
+        ("lavfi", "testsrc=duration=5:size=640x480", [])
+    assert source_spec_parts("clip.mp4") is None
+    assert source_spec_parts("mp4:file.mp4") is None  # format not allowlisted
+
+
+def test_output_device_parts_and_for():
+    from fass.registry import output_device_for, output_device_parts
+
+    assert output_device_parts("alsa:hw:0") == ("alsa", "hw:0", [])
+    assert output_device_parts("pulse:default") == ("pulse", "default", [])
+    # lavfi is an input format, not an output device
+    assert output_device_parts("lavfi:testsrc=duration=5") is None
+    assert output_device_for("pulse:default") == "pulse"
+    assert output_device_for("alsa:hw:0") == "alsa"
+    assert output_device_for("out.mp4") is None
+    assert output_device_for("rtmp://host/live") is None
+
+
+def test_pixel_format_matrix():
+    from fass.registry import pixel_format_error, pixel_formats_for
+
+    assert pixel_formats_for("h264") == ["yuv420p", "yuv420p10le"]
+    assert "yuv444p" in pixel_formats_for("vp9")
+    assert pixel_formats_for("nope") == []
+    assert pixel_format_error("h264", "yuv420p") is None
+    assert pixel_format_error("h264", "yuv420p10le") is None
+    err = pixel_format_error("h264", "yuv444p")
+    assert err is not None and "yuv444p" in err
+
+
+def test_video_profiles_and_presets_matrix():
+    from fass.registry import video_presets_for, video_profiles_for
+
+    assert video_profiles_for("h264") == ["baseline", "main", "high"]
+    assert video_profiles_for("h265") == []  # profiles are H.264-only in the MVP
+    assert len(video_presets_for("h264")) == 9
+    assert "ultrafast" in video_presets_for("h264")
+    assert video_presets_for("h265") == []  # presets are x264-only in the MVP
+
+
+def test_audio_resample_registry():
+    from fass.registry import channel_layouts, sample_rates
+
+    assert 22050 in sample_rates() and 48000 in sample_rates()
+    assert sample_rates()[0] == 8000 and sample_rates()[-1] == 192000
+    assert channel_layouts() == [1, 2, 6]
+
+
+def test_speed_and_atempo_limits():
+    from fass.registry import atempo_limits, speed_limits
+
+    assert speed_limits() == (0.25, 8.0)
+    assert atempo_limits() == (0.5, 2.0)
+
+
+def test_bsf_for_copy():
+    from fass.registry import bsf_for_copy
+
+    assert bsf_for_copy("mp4", "mpegts", "h264") == "h264_mp4toannexb"
+    assert bsf_for_copy("mov", "mpegts", "h264") == "h264_mp4toannexb"
+    assert bsf_for_copy("mp4", "mpegts", "h265") == "hevc_mp4toannexb"
+    # plain copy when no restamping is needed
+    assert bsf_for_copy("mp4", "mp4", "h264") is None
+    assert bsf_for_copy("mpegts", "mp4", "h264") is None
+    assert bsf_for_copy("mp4", "mpegts", "vp9") is None

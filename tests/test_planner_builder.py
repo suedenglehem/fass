@@ -11,10 +11,14 @@ from fass.schema import (
     Asset,
     AssetKind,
     AudioReplaceOp,
+    AudioResampleOp,
+    CropOp,
     EditPlan,
     GrayscaleOp,
     OutputSpec,
     ResizeOp,
+    RotateOp,
+    SpeedOp,
     TrimSpec,
     WatermarkOp,
 )
@@ -374,3 +378,296 @@ def test_remote_stream_input_notes_reencode_default():
     ep = plan_execution(edit, assets, None, None)
     assert ep.mode == "reencode"
     assert any("remote stream" in d for d in ep.defaults)
+
+
+# ------------------------------------------------------------------ M4: speed
+
+def test_speed_setpts_and_atempo():
+    ep = ep_for(operations=[SpeedOp(factor=2)])
+    assert ep.vf == "setpts=PTS/2"
+    assert ep.af == "atempo=2"  # audio kept -> tempo chain on -af
+
+
+def test_speed_atempo_chains_beyond_one_instance():
+    # atempo accepts 0.5-2.0 per instance; wider factors chain instances
+    assert ep_for(operations=[SpeedOp(factor=4)]).af == "atempo=2,atempo=2"
+    assert ep_for(operations=[SpeedOp(factor=8)]).af == "atempo=2,atempo=2,atempo=2"
+    ep = ep_for(operations=[SpeedOp(factor=0.25)])
+    assert ep.vf == "setpts=PTS/0.25"
+    assert ep.af == "atempo=0.5,atempo=0.5"
+
+
+def test_speed_fractional_factor_format():
+    ep = ep_for(operations=[SpeedOp(factor=1.5)])
+    assert ep.vf == "setpts=PTS/1.5"
+    assert ep.af == "atempo=1.5"
+
+
+def test_speed_remove_audio_drops_atempo():
+    # -af is inert without an audio stream: the planner omits it entirely
+    ep = ep_for(operations=[SpeedOp(factor=2)],
+                output=OutputSpec(container="mp4", video_codec="h264", audio_mode="remove"))
+    assert ep.vf == "setpts=PTS/2"
+    assert ep.af is None
+    argv = build_argv(ep)
+    assert "-af" not in argv
+
+
+def test_speed_argv_carries_af_and_vf():
+    argv = argv_for(operations=[SpeedOp(factor=2)])
+    assert argv[argv.index("-vf") + 1] == "setpts=PTS/2"
+    assert argv[argv.index("-af") + 1] == "atempo=2"
+
+
+# ------------------------------------------------------------------- M4: crop
+
+def test_crop_even_snap_note():
+    ep = ep_for(operations=[CropOp(width=641, height=480)])
+    assert ep.vf == "crop=642:480"
+    assert any("snapped to 642x480" in d for d in ep.defaults)
+
+
+def test_crop_even_dims_no_snap_note():
+    ep = ep_for(operations=[CropOp(width=640, height=480)])
+    assert ep.vf == "crop=640:480"
+    assert not any("snapped" in d for d in ep.defaults)
+
+
+def test_crop_larger_than_source_rejected():
+    # the planner checks the crop against the probed geometry
+    with pytest.raises(PlanError, match="larger than the video"):
+        ep_for(operations=[CropOp(width=2000, height=2000)],
+               media=make_media(width=1280, height=720))
+
+
+def test_crop_after_rotate_checked_against_rotated_geometry():
+    # 90° rotation swaps the working dimensions: 1280x720 -> 720x1280,
+    # so a 700x1200 crop fits *after* the rotate but not before it
+    ep_for(operations=[RotateOp(angle=90), CropOp(width=700, height=1200)],
+           media=make_media(width=1280, height=720))
+    with pytest.raises(PlanError, match="larger than the video"):
+        ep_for(operations=[CropOp(width=700, height=1200), RotateOp(angle=90)],
+               media=make_media(width=1280, height=720))
+
+
+# ----------------------------------------------------------------- M4: rotate
+
+@pytest.mark.parametrize(
+    ("angle", "clockwise", "vf"),
+    [
+        (90, True, "transpose=1"),
+        (270, True, "transpose=2"),
+        (90, False, "transpose=2"),
+        (270, False, "transpose=1"),
+        (180, True, "hflip,vflip"),
+        (180, False, "hflip,vflip"),
+    ],
+)
+def test_rotate_transpose_mapping(angle, clockwise, vf):
+    ep = ep_for(operations=[RotateOp(angle=angle, clockwise=clockwise)])
+    assert ep.vf == vf
+
+
+# ------------------------------------------------------------- M4: resample
+
+def test_resample_emits_ar_ac():
+    ep = ep_for(operations=[AudioResampleOp(sample_rate=48000, channels=1)])
+    opts = ep.output_opts
+    assert opts[opts.index("-ar") + 1] == "48000"
+    assert opts[opts.index("-ac") + 1] == "1"
+    assert any("sample rate 48000" in d for d in ep.defaults)
+    assert any("channels 1" in d for d in ep.defaults)
+
+
+def test_resample_single_target():
+    ep = ep_for(operations=[AudioResampleOp(sample_rate=22050)])
+    assert "-ar" in ep.output_opts and "-ac" not in ep.output_opts
+    ep = ep_for(operations=[AudioResampleOp(channels=2)])
+    assert "-ac" in ep.output_opts and "-ar" not in ep.output_opts
+
+
+def test_resample_with_removed_audio_rejected():
+    with pytest.raises(PlanError, match="cannot be resampled"):
+        ep_for(operations=[AudioResampleOp(sample_rate=48000)],
+               output=OutputSpec(container="mp4", video_codec="h264", audio_mode="remove"))
+
+
+# ------------------------------------------------- M4: profile/preset/pix_fmt
+
+def test_profile_preset_pix_fmt_opts():
+    ep = ep_for(output=OutputSpec(
+        container="mp4", video_codec="h264",
+        pixel_format="yuv420p10le", video_profile="baseline", video_preset="ultrafast",
+    ))
+    opts = ep.output_opts
+    assert opts[opts.index("-profile:v") + 1] == "baseline"
+    assert opts[opts.index("-preset") + 1] == "ultrafast"
+    assert opts[opts.index("-pix_fmt") + 1] == "yuv420p10le"
+    assert any("profile baseline" in d for d in ep.defaults)
+    assert any("preset ultrafast" in d for d in ep.defaults)
+    assert any("yuv420p10le" in d for d in ep.defaults)
+
+
+def test_default_pix_fmt_is_codec_default():
+    ep = ep_for(output=OutputSpec(container="mp4", video_codec="h264"))
+    opts = ep.output_opts
+    assert opts[opts.index("-pix_fmt") + 1] == "yuv420p"
+    assert "-profile:v" not in opts and "-preset" not in opts
+
+
+def test_profile_rejected_for_h265():
+    with pytest.raises(PlanError, match="only supported for H.264 in the MVP"):
+        ep_for(output=OutputSpec(container="mkv", video_codec="h265", video_profile="baseline"))
+
+
+def test_preset_rejected_for_non_h264():
+    with pytest.raises(PlanError, match="only supported for H.264"):
+        ep_for(output=OutputSpec(container="mkv", video_codec="h265", video_preset="ultrafast"))
+    with pytest.raises(PlanError, match="only supported for H.264"):
+        ep_for(output=OutputSpec(container="webm", video_codec="vp9", video_preset="fast"))
+
+
+def test_pixel_format_outside_matrix_rejected():
+    with pytest.raises(PlanError, match="not supported by H264"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="h264", pixel_format="yuv444p"))
+
+
+# ------------------------------------------------------------- M4: trim+speed
+
+def test_trim_plus_speed_scales_output_duration():
+    ep = ep_for(trim=TrimSpec(start_seconds=5, duration_seconds=10),
+                operations=[SpeedOp(factor=2)])
+    # -ss stays an input option at the source position
+    assert ep.inputs[0].pre_opts == ["-ss", "5"]
+    # -t bounds the *output* timeline: 10 source seconds at 2x = 5 output seconds
+    opts = ep.output_opts
+    assert opts[opts.index("-t") + 1] == "5"
+    assert any("output duration 5s" in d and "10s of source at 2x speed" in d
+               for d in ep.defaults)
+
+
+def test_trim_plus_slow_speed_scales_output_duration():
+    ep = ep_for(trim=TrimSpec(start_seconds=0, duration_seconds=10),
+                operations=[SpeedOp(factor=0.5)])
+    opts = ep.output_opts
+    assert opts[opts.index("-t") + 1] == "20"
+
+
+# ------------------------------------------------------------- M4: copy + bsf
+
+def test_copy_mpegts_h264_gets_annexb_bsf():
+    media = make_media(video_codec="h264", audio_codec="aac", has_audio=True)
+    ep = ep_for(output=OutputSpec(container="mpegts", video_codec="h264"), media=media)
+    assert ep.mode == "copy"
+    opts = ep.output_opts
+    assert opts[:4] == ["-c", "copy", "-bsf:v", "h264_mp4toannexb"]
+    assert any("Annex-B" in d for d in ep.defaults)
+    argv = build_argv(ep)
+    assert argv[argv.index("-bsf:v") + 1] == "h264_mp4toannexb"
+
+
+def test_copy_mpegts_h265_gets_hevc_bsf():
+    media = make_media(video_codec="h265", audio_codec="aac", has_audio=True)
+    ep = ep_for(output=OutputSpec(container="mpegts", video_codec="h265"), media=media)
+    assert ep.mode == "copy"
+    assert ep.output_opts[:4] == ["-c", "copy", "-bsf:v", "hevc_mp4toannexb"]
+
+
+def test_copy_mp4_to_mp4_needs_no_bsf():
+    media = make_media(video_codec="h264", audio_codec="aac", has_audio=True)
+    ep = ep_for(output=OutputSpec(container="mp4", video_codec="h264"), media=media)
+    assert ep.mode == "copy"
+    assert "-bsf:v" not in ep.output_opts
+
+
+def test_ffprobe_style_hevc_metadata_reencodes_to_h265():
+    # ffprobe reports 'hevc' where the plan says 'h265': the codec strings
+    # don't match, so the planner re-encodes (and says why) instead of
+    # attempting a copy remux.
+    media = make_media(video_codec="hevc", audio_codec="aac", has_audio=True)
+    ep = ep_for(output=OutputSpec(container="mpegts", video_codec="h265"), media=media)
+    assert ep.mode == "reencode"
+    assert any("hevc" in w for w in ep.warnings)
+
+
+# ------------------------------------------------------------- M4: source inputs
+
+def test_lavfi_source_input_pre_opts():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    trim=TrimSpec(start_seconds=0, duration_seconds=2))
+    assets = {"main": Asset(path="lavfi:testsrc=duration=5:size=640x480",
+                            kind=AssetKind.SOURCE)}
+    ep = plan_execution(edit, assets, None, "out.mp4")
+    assert ep.inputs[0].path == "testsrc=duration=5:size=640x480"
+    assert ep.inputs[0].pre_opts[:2] == ["-f", "lavfi"]
+    argv = build_argv(ep)
+    i = argv.index("-i")
+    assert argv[i + 1] == "testsrc=duration=5:size=640x480"
+    f = argv.index("-f")
+    assert argv[f + 1] == "lavfi" and f < i  # -f lavfi precedes -i
+
+
+def test_v4l2_source_input_carries_device_options():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    trim=TrimSpec(start_seconds=0, duration_seconds=2))
+    assets = {"main": Asset(path="v4l2:/dev/video0;video_size=1280x720",
+                            kind=AssetKind.SOURCE)}
+    ep = plan_execution(edit, assets, None, "out.mp4")
+    assert ep.inputs[0].path == "/dev/video0"
+    assert ep.inputs[0].pre_opts[:4] == ["-f", "v4l2", "-video_size", "1280x720"]
+
+
+def test_source_asset_accepted_as_main_input():
+    # a SOURCE asset is a valid main input for the planner
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    assets = {"main": Asset(path="lavfi:testsrc=duration=5", kind=AssetKind.SOURCE)}
+    ep = plan_execution(edit, assets, None, "out.mp4")
+    assert ep.mode == "reencode"
+
+
+# ------------------------------------------------------------- M4: device output
+
+def test_device_output_plan_shape():
+    ep = ep_for(out="alsa:hw:0")
+    assert ep.mode == "device"
+    assert ep.maps == ["0:a?"]
+    assert ep.output_opts[-4:] == ["-acodec", "pcm_s16le", "-f", "alsa"]
+    assert ep.output_path == "hw:0"
+    assert any(w.startswith("output goes to the local audio device alsa:hw:0")
+               and "nothing is saved to a file" in w for w in ep.warnings)
+
+
+def test_device_output_with_audio_replace():
+    ep = ep_for(operations=[AudioReplaceOp(asset_id="aud")],
+                audio_path="song.mp3", out="alsa:hw:0")
+    assert ep.mode == "device"
+    assert ep.maps == ["1:a:0"]
+    assert len(ep.inputs) == 2
+    assert any("replaced" in d for d in ep.defaults)
+
+
+def test_device_output_with_resample_and_trim():
+    ep = ep_for(operations=[AudioResampleOp(sample_rate=22050, channels=1)],
+                trim=TrimSpec(start_seconds=1, duration_seconds=4), out="alsa:hw:0")
+    assert ep.inputs[0].pre_opts == ["-ss", "1"]
+    opts = ep.output_opts
+    assert opts[opts.index("-t") + 1] == "4"
+    assert opts[opts.index("-ar") + 1] == "22050"
+    assert opts[opts.index("-ac") + 1] == "1"
+    assert opts[-4:] == ["-acodec", "pcm_s16le", "-f", "alsa"]
+
+
+def test_device_output_rejects_video_edits():
+    with pytest.raises(PlanError, match="carries audio only"):
+        ep_for(operations=[CropOp(width=640, height=480)], out="alsa:hw:0")
+
+
+def test_device_output_rejects_removed_audio():
+    with pytest.raises(PlanError, match="needs audio, but the plan removes"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="h264", audio_mode="remove"),
+               out="alsa:hw:0")
+
+
+def test_device_output_rejects_device_options():
+    with pytest.raises(PlanError, match="must not carry options"):
+        ep_for(out="alsa:hw:0;freq=44100")

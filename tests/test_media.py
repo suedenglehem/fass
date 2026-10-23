@@ -20,11 +20,27 @@ from types import SimpleNamespace
 
 import pytest
 
+from fass.builder import build_argv
+from fass.planner import plan_execution
 from fass.probe.ffprobe import ffmpeg_available, ffprobe_available, probe_media
+from fass.schema import (
+    Asset,
+    AssetKind,
+    AudioResampleOp,
+    CropOp,
+    EditPlan,
+    OutputSpec,
+    RotateOp,
+    SpeedOp,
+    TrimSpec,
+)
+
+REPO = Path(__file__).resolve().parent.parent
+TITAN = REPO / "media" / "titan.mp4"
 
 pytestmark = pytest.mark.skipif(
-    not (ffmpeg_available() and ffprobe_available()),
-    reason="ffmpeg/ffprobe not installed — media-outcome tests need real media",
+    not (ffmpeg_available() and ffprobe_available() and TITAN.exists()),
+    reason="ffmpeg/ffprobe or media/titan.mp4 not available — media-outcome tests need real media",
 )
 
 FPS = 15
@@ -363,3 +379,142 @@ def test_stream_input_tcp_mpegts(gen, media, tmp_path):
     assert info is not None
     assert info.duration is not None
     assert abs(info.duration - 2.0) <= 0.5, info.duration
+
+
+# ------------------------------------------------------------- M4 outcomes
+#
+# The NLU layer does not yet speak crop/speed/rotate/resample, so these
+# tests build the EditPlan directly and drive plan_execution + build_argv —
+# the same planner/builder the pipeline uses. Inputs are the committed
+# real-world fixture media/titan.mp4 (1280x720 h264+AAC, ~20.08 s).
+
+def _titan_assets() -> dict:
+    return {"main": Asset(path=str(TITAN), kind=AssetKind.VIDEO)}
+
+
+@pytest.fixture(scope="module")
+def titan_media():
+    info = probe_media(str(TITAN))
+    assert info is not None, "media/titan.mp4 is not probeable"
+    return info
+
+
+def _run_direct(edit: EditPlan, assets: dict, media, out: Path):
+    """Plan + build + execute the argv exactly as emitted, then probe."""
+    ep = plan_execution(edit, assets, media, str(out))
+    argv = build_argv(ep)
+    proc = subprocess.run(
+        argv, shell=False, cwd=str(out.parent),
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert proc.returncode == 0, f"argv={argv}\nstderr={proc.stderr}"
+    info = probe_media(str(out))
+    assert info is not None, f"output {out} is not probeable"
+    return ep, argv, info
+
+
+def _probe_audio_stream(path: Path) -> tuple[int, int]:
+    """(sample_rate, channels) of the first audio stream."""
+    p = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=sample_rate,channels",
+         "-of", "default=noprint_wrappers=1", str(path)],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert p.returncode == 0, p.stderr
+    kv = dict(line.split("=", 1) for line in p.stdout.strip().splitlines() if "=" in line)
+    return int(kv["sample_rate"]), int(kv["channels"])
+
+
+def _probe_format_name(path: Path) -> str:
+    p = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=format_name",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert p.returncode == 0, p.stderr
+    return p.stdout.strip()
+
+
+def test_titan_crop_to_exact_dims(titan_media, tmp_path):
+    out = tmp_path / "crop.mp4"
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[CropOp(width=640, height=480)])
+    _, argv, info = _run_direct(edit, _titan_assets(), titan_media, out)
+    assert (info.width, info.height) == (640, 480)
+    assert argv[argv.index("-vf") + 1] == "crop=640:480"
+
+
+def test_titan_rotate_90_swaps_dims(titan_media, tmp_path):
+    out = tmp_path / "rot90.mp4"
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[RotateOp(angle=90, clockwise=True)])
+    _, argv, info = _run_direct(edit, _titan_assets(), titan_media, out)
+    assert (info.width, info.height) == (720, 1280)
+    assert argv[argv.index("-vf") + 1] == "transpose=1"
+
+
+def test_titan_speed_2x_over_10s_trim(titan_media, tmp_path):
+    # 10 source seconds at 2x -> ~5 output seconds (-t 5)
+    out = tmp_path / "speed2.mp4"
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    trim=TrimSpec(start_seconds=0, duration_seconds=10),
+                    operations=[SpeedOp(factor=2)])
+    _, argv, info = _run_direct(edit, _titan_assets(), titan_media, out)
+    assert argv[argv.index("-t") + 1] == "5"
+    assert argv[argv.index("-af") + 1] == "atempo=2"
+    assert info.duration is not None
+    assert abs(info.duration - 5.0) <= 0.3, info.duration
+
+
+def test_titan_resample_22050_mono(titan_media, tmp_path):
+    out = tmp_path / "resampled.mp4"
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[AudioResampleOp(sample_rate=22050, channels=1)])
+    _, argv, info = _run_direct(edit, _titan_assets(), titan_media, out)
+    assert argv[argv.index("-ar") + 1] == "22050"
+    assert argv[argv.index("-ac") + 1] == "1"
+    assert info.has_audio
+    rate, channels = _probe_audio_stream(out)
+    assert rate == 22050
+    assert channels == 1
+
+
+def test_titan_10bit_pixel_format(tmp_path):
+    # No probe metadata: the planner re-encodes, so -pix_fmt is emitted
+    # (a copy remux would carry the source's pixel format untouched).
+    out = tmp_path / "p10le.mp4"
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264",
+                                      pixel_format="yuv420p10le"))
+    _, argv, info = _run_direct(edit, _titan_assets(), None, out)
+    assert argv[argv.index("-pix_fmt") + 1] == "yuv420p10le"
+    assert info.pix_fmt == "yuv420p10le"
+
+
+def test_titan_mp4_to_ts_bsf_remux(titan_media, tmp_path):
+    # No ops, matching codecs: stream copy, with the Annex-B restamp bsf.
+    out = tmp_path / "remux.ts"
+    edit = EditPlan(output=OutputSpec(container="mpegts", video_codec="h264"))
+    ep, argv, info = _run_direct(edit, _titan_assets(), titan_media, out)
+    assert ep.mode == "copy"
+    assert argv[argv.index("-bsf:v") + 1] == "h264_mp4toannexb"
+    assert _probe_format_name(out) == "mpegts"
+    assert info.video_codec == "h264"
+    assert info.has_audio  # audio survived the remux
+    assert abs(info.duration - titan_media.duration) <= 0.5
+
+
+def test_lavfi_source_input_end_to_end(tmp_path):
+    # A 'lavfi:<spec>' source asset (kind='source') is read as a synthetic
+    # input: -f lavfi + the bare spec, producing a playable file.
+    out = tmp_path / "from_source.mp4"
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    assets = {"main": Asset(path="lavfi:testsrc=duration=2:size=320x240",
+                            kind=AssetKind.SOURCE)}
+    _, argv, info = _run_direct(edit, assets, None, out)
+    i = argv.index("-i")
+    assert argv[i + 1] == "testsrc=duration=2:size=320x240"
+    assert argv[i - 1] == "lavfi" and argv[i - 2] == "-f"
+    assert (info.width, info.height) == (320, 240)
+    assert info.duration is not None
+    assert 1.5 <= info.duration <= 2.5
