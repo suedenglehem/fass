@@ -96,3 +96,52 @@ def test_feedback_instruction_only_with_consent(tmp_path):
     )
     line = json.loads(out.read_text().strip().splitlines()[-1])
     assert line["instruction"] == "resize to 720p"
+
+
+# ------------------------------------------------------------- stream I/O (M3b)
+
+def test_stream_output_destination_cli():
+    r = run_cli("cut the first 5 seconds and send it to udp://127.0.0.1:5004",
+                "clip.mp4", "--adapter", "rules", "--json")
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["status"] == "ready"
+    assert data["arguments"][-1] == "udp://127.0.0.1:5004"
+    f = data["arguments"].index("-f")
+    assert data["arguments"][f + 1] == "mpegts"
+
+
+def test_stream_output_flag_fixes_defaulted_container():
+    # -o is a stream URL: the user named no format, so the destination's
+    # scheme fixes the container.
+    r = run_cli("resize to 720p", "clip.mp4", "--adapter", "rules", "--json",
+                "-o", "rtmp://host:1935/live")
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["status"] == "ready", data
+    assert data["plan"]["output_destination"] == "rtmp://host:1935/live"
+    assert data["plan"]["output"]["container"] == "flv"
+    assert data["arguments"][-1] == "rtmp://host:1935/live"
+
+
+def test_stream_input_url_cli():
+    r = run_cli("resize to 720p", "rtmp://host:1935/live",
+                "--adapter", "rules", "--json")
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["status"] == "ready"
+    assert "rtmp://host:1935/live" in data["arguments"]
+    assert not any("not found on this machine" in w for w in data["warnings"])
+
+
+def test_asset_kind_prefix_cli():
+    # --asset id=kind:path pins the kind for extensionless stream URLs
+    r = run_cli("replace the audio with the music stream", "clip.mp4",
+                "--adapter", "rules", "--json",
+                "--asset", "radio=audio:http://radio.example.com/stream")
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["status"] == "ready", data
+    ops = data["plan"]["operations"]
+    assert len(ops) == 1 and ops[0]["type"] == "audio_replace"
+    assert ops[0]["asset_id"] == "radio"

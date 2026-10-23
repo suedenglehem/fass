@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fass.planner import ExecutionPlan, fmt_num
 from fass.probe.ffprobe import MediaInfo
-from fass.registry import REGISTRY
+from fass.registry import REGISTRY, stream_scheme
 from fass.schema import EditPlan
 
 _POS_WORDS = {
@@ -32,6 +32,12 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             crf = vc.get("preset", {}).get("crf")
             quality = f", CRF {crf}" if crf is not None else ""
         lines.append(f"Encode: {out.video_codec} ({vc['encoder']}{quality}) in {out.container.upper()}")
+
+    if edit.output_destination:
+        lines.append(
+            f"Output: streams to {edit.output_destination} — data is sent to the endpoint; "
+            "nothing is saved to a file"
+        )
 
     trim = edit.trim
     if trim is not None:
@@ -87,4 +93,9 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
     if media is not None:
         lines.append(f"Input: {media.width}x{media.height}, {media.duration:g}s, {media.video_codec}"
                      + ("" if media.has_audio else ", no audio stream"))
+    elif ep.inputs and stream_scheme(ep.inputs[0].path) is not None:
+        lines.append(
+            f"Input: remote stream {ep.inputs[0].path} "
+            "(not probed — remote sources can't be inspected locally)"
+        )
     return lines

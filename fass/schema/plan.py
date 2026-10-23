@@ -15,6 +15,13 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from fass.registry import (
+    input_schemes,
+    output_schemes,
+    stream_output_info,
+    stream_scheme,
+)
+
 SCHEMA_VERSION = "1.0"
 
 # ---------------------------------------------------------------- audio
@@ -61,7 +68,7 @@ class TrimSpec(BaseModel):
 class OutputSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    container: Literal["mp4", "mov", "mkv", "webm", "mpegts"]
+    container: Literal["mp4", "mov", "mkv", "webm", "mpegts", "flv", "rtsp", "srt"]
     video_codec: Literal["h264", "h265", "vp9"]
     audio_mode: AudioMode = AudioMode.ENCODE
     video_bitrate_kbps: int | None = Field(
@@ -137,6 +144,30 @@ class EditPlan(BaseModel):
     output: OutputSpec
     trim: TrimSpec | None = None
     operations: list[Operation] = Field(default_factory=list, max_length=8)
+    output_destination: str | None = Field(
+        default=None, max_length=1024,
+        description="Stream destination for the output (M3b). Only stream "
+                    "schemes are allowed (rtmp://, rtmps://, rtsp://, rtsps://"
+                    ", srt://, udp://, rtp://, tcp://); the scheme fixes the "
+                    "output container (see the registry).",
+    )
+
+    @model_validator(mode="after")
+    def _destination_is_stream(self) -> "EditPlan":
+        d = self.output_destination
+        if d is None:
+            return self
+        d = d.strip()
+        if not d or any(c in d for c in "\x00\n\r\t"):
+            raise ValueError("output destination must be a nonempty stream URL")
+        if stream_output_info(d) is None:
+            allowed = ", ".join(s + "://" for s in output_schemes())
+            raise ValueError(
+                f"output destination must be a stream URL ({allowed}); "
+                "plain filenames are set by the application, not the plan"
+            )
+        self.output_destination = d
+        return self
 
     @model_validator(mode="after")
     def _at_most_one_watermark(self) -> "EditPlan":
@@ -202,7 +233,10 @@ AUDIO_EXTENSIONS = {
 def guess_kind(path: str) -> AssetKind:
     import os
 
-    ext = os.path.splitext(path)[1].lower()
+    # URLs may carry query/fragment suffixes — drop them before the
+    # extension check ("http://x/live.mp4?token=…" is a video).
+    bare = path.split("?", 1)[0].split("#", 1)[0]
+    ext = os.path.splitext(bare)[1].lower()
     if ext in IMAGE_EXTENSIONS:
         return AssetKind.IMAGE
     if ext in AUDIO_EXTENSIONS:
@@ -211,7 +245,10 @@ def guess_kind(path: str) -> AssetKind:
 
 
 class Asset(BaseModel):
-    """A local file reference bound by the application (never by the model)."""
+    """A media source bound by the application (never by the model): either
+    a local file path or a URL with an allowlisted streaming scheme (M3b).
+    fass never fetches or executes anything — the user's local ffmpeg reads
+    the source when the rendered command runs."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -220,12 +257,17 @@ class Asset(BaseModel):
     label: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
-    def _local_only(self) -> "Asset":
+    def _valid_source(self) -> "Asset":
         p = self.path.strip()
         if not p or any(c in p for c in "\x00\n\r\t"):
             raise ValueError("asset path must be a nonempty local path")
         if _REMOTE.match(p):
-            raise ValueError("remote URLs are not supported in the MVP")
+            if stream_scheme(p) not in input_schemes():
+                allowed = ", ".join(input_schemes())
+                raise ValueError(
+                    "asset URLs must use an allowlisted streaming scheme "
+                    f"({allowed})"
+                )
         return self
 
 

@@ -123,11 +123,34 @@ def test_mpegts_container_accepted():
         OutputSpec(container="avi", video_codec="h264")
 
 
-def test_asset_rejects_urls():
+def test_asset_accepts_allowlisted_stream_urls():
+    # M3b: remote sources are allowed for the streaming schemes only
+    Asset(path="https://example.com/clip.mp4")
+    Asset(path="http://cam.local/stream.ts")
+    Asset(path="rtmp://host:1935/live")
+    Asset(path="rtmps://host/live")
+    Asset(path="rtsp://10.0.0.5:554/live")
+    Asset(path="rtsps://host/live")
+    Asset(path="srt://10.0.0.5:9000/live")
+    Asset(path="udp://239.0.0.1:5004")
+    Asset(path="rtp://239.0.0.1:5004")
+    Asset(path="tcp://host:8554/live")
+    Asset(path="tls://host:5001/live")
+
+
+def test_asset_rejects_non_stream_urls():
     with pytest.raises(ValidationError):
-        Asset(path="https://example.com/clip.mp4")
+        Asset(path="ftp://example.com/clip.mp4")
+    with pytest.raises(ValidationError):
+        Asset(path="file:///tmp/clip.mp4")
+    with pytest.raises(ValidationError):
+        Asset(path="gopher://example.com")
+    # protocol-relative is not an allowlisted scheme
     with pytest.raises(ValidationError):
         Asset(path="//evil/clip.mp4")
+    # control characters are rejected even inside a URL
+    with pytest.raises(ValidationError):
+        Asset(path="http://example.com/clip\n.mp4")
 
 
 def test_asset_rejects_control_chars():
@@ -148,6 +171,13 @@ def test_guess_kind():
     assert guess_kind("tune.ogg") is AssetKind.AUDIO
     assert guess_kind("track.flac") is AssetKind.AUDIO
     assert guess_kind("voice.wav") is AssetKind.AUDIO
+    # M3b: URLs — query/fragment suffixes are dropped before the extension check
+    assert guess_kind("http://x/live.mp4?token=abc") is AssetKind.VIDEO
+    assert guess_kind("https://x/stream.m3u8") is AssetKind.VIDEO
+    assert guess_kind("http://x/logo.png") is AssetKind.IMAGE
+    assert guess_kind("http://radio.example.com/tune.mp3") is AssetKind.AUDIO
+    # an extensionless URL is a video (the default)
+    assert guess_kind("udp://239.0.0.1:5004") is AssetKind.VIDEO
 
 
 def test_audio_replace_op():
@@ -168,3 +198,66 @@ def test_at_most_one_audio_replace():
     plan(operations=[AudioReplaceOp(asset_id="music")])  # one is fine
     with pytest.raises(ValidationError):
         plan(operations=[AudioReplaceOp(asset_id="a"), AudioReplaceOp(asset_id="b")])
+
+
+# ---------------------------------------------------------------- M3b streams
+
+
+def test_output_destination_accepts_stream_urls():
+    for url in (
+        "rtmp://host:1935/live",
+        "rtmps://host/live",
+        "rtsp://10.0.0.5:554/live",
+        "rtsps://host/live",
+        "srt://10.0.0.5:9000/live",
+        "udp://127.0.0.1:5004",
+        "rtp://239.0.0.1:5004",
+        "tcp://host:8554/live",
+    ):
+        assert plan(output_destination=url).output_destination == url
+
+
+def test_output_destination_rejects_non_stream_urls():
+    # plain filenames are the application's job, never the plan's
+    with pytest.raises(ValidationError):
+        plan(output_destination="out.mp4")
+    with pytest.raises(ValidationError):
+        plan(output_destination="http://cdn.example.com/out.mp4")
+    with pytest.raises(ValidationError):
+        plan(output_destination="ftp://example.com/out")
+    # a path that merely contains a colon is not a scheme
+    with pytest.raises(ValidationError):
+        plan(output_destination="C:\\videos\\out.mp4")
+    with pytest.raises(ValidationError):
+        plan(output_destination="12:30")
+    # control characters inside the URL are rejected (a stripped URL is fine)
+    with pytest.raises(ValidationError):
+        plan(output_destination="rtmp://host:1935\n/live")
+    # a trailing newline is stripped, not an error
+    assert plan(output_destination="rtmp://host:1935/live\n").output_destination \
+        == "rtmp://host:1935/live"
+
+
+def test_destination_defaults_to_none():
+    assert plan().output_destination is None
+
+
+def test_flv_rtsp_srt_matrix():
+    from fass.registry import matrix_error
+
+    assert matrix_error("flv", "h264") is None
+    assert matrix_error("flv", "h265") is not None   # RTMP endpoints carry H.264
+    assert matrix_error("flv", "vp9") is not None
+    assert matrix_error("rtsp", "h264") is None
+    assert matrix_error("rtsp", "h265") is None
+    assert matrix_error("rtsp", "vp9") is not None
+    assert matrix_error("srt", "h264") is None
+    assert matrix_error("srt", "h265") is None
+    # plan-level acceptance
+    plan(output=OutputSpec(container="flv", video_codec="h264"))
+    plan(output=OutputSpec(container="rtsp", video_codec="h264"),
+         output_destination="rtsp://10.0.0.5:554/live")
+    plan(output=OutputSpec(container="srt", video_codec="h265"),
+         output_destination="srt://10.0.0.5:9000/live")
+    # (the flv+h265 *combination* is rejected at the registry level above —
+    # OutputSpec alone only validates the literals)

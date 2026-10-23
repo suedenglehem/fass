@@ -315,3 +315,106 @@ def test_revision_swap_replacement_asset(gen):
     assert r.status == "ready"
     ar = ops_by_type(r.plan)["audio_replace"]
     assert len(ar) == 1 and ar[0]["asset_id"] == "jingle"
+
+
+# ------------------------------------------------------------- stream I/O (M3b)
+
+def test_stream_to_rtmp_is_ready_with_flv(gen):
+    # Naming a destination is itself an edit — it bypasses the no-edit gate.
+    r = gen("stream this to rtmp://host:1935/live", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output_destination"] == "rtmp://host:1935/live"
+    assert r.plan["output"]["container"] == "flv"
+    assert r.plan["output"]["video_codec"] == "h264"
+    assert r.plan["trim"] is None
+    assert r.plan["operations"] == []
+
+
+def test_publish_to_rtsp(gen):
+    r = gen("publish the video to rtsp://10.0.0.5:554/live", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output_destination"] == "rtsp://10.0.0.5:554/live"
+    assert r.plan["output"]["container"] == "rtsp"
+
+
+def test_stream_destination_with_trim(gen):
+    r = gen("cut the first 5 seconds and send it to udp://127.0.0.1:5004", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["trim"]["start_seconds"] == 0
+    assert r.plan["trim"]["duration_seconds"] == 5
+    assert r.plan["output_destination"] == "udp://127.0.0.1:5004"
+    assert r.plan["output"]["container"] == "mpegts"
+
+
+def test_h265_into_rtmp_is_unsupported(gen):
+    # FLV carries h264 + aac only — h265 is rejected by the matrix.
+    r = gen("stream this to rtmp://host:1935/live with h265", "clip.mp4")
+    assert r.status == "unsupported"
+    assert r.plan is None
+
+
+def test_container_conflict_with_destination_clarifies(gen):
+    r = gen("convert to webm and stream to rtmp://host:1935/live", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert r.plan is None
+    q = r.clarifications[0]["question"].lower()
+    assert "webm" in q and "flv" in q
+
+
+def test_two_destinations_clarify(gen):
+    r = gen("stream to rtmp://host:1935/live and also to srt://10.0.0.9:9000/show",
+            "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert len(r.clarifications) == 1
+    assert r.clarifications[0]["question"].count("//") >= 2
+
+
+def test_url_equal_to_bound_asset_is_not_a_destination(gen):
+    # The only URL in the instruction is the bound input stream — it is not
+    # an output destination.
+    r = gen("resize the stream to 720p", "rtmp://host:1935/live")
+    assert r.status == "ready"
+    assert r.plan["input_id"] == "main"
+    assert r.plan["output_destination"] is None
+
+
+def test_stream_input_is_not_reported_missing(gen):
+    # A stream URL never "exists" locally — that is its nature, not a problem.
+    r = gen("resize to 720p", "rtmp://host:1935/live")
+    assert r.status == "ready"
+    assert "rtmp://host:1935/live" in r.command
+    assert not any("not found on this machine" in w for w in r.warnings)
+
+
+def test_trailing_punctuation_stripped_from_destination(gen):
+    r = gen("cut the first 10 seconds and stream it to rtmp://host:1935/live.", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output_destination"] == "rtmp://host:1935/live"
+
+
+def test_remote_audio_replace_by_basename(gen):
+    radio = Asset(path="http://radio.example.com/tune.mp3",
+                  kind=guess_kind("http://radio.example.com/tune.mp3"))
+    r = gen("replace the audio with tune.mp3", "clip.mp4", extra={"radio": radio})
+    assert r.status == "ready"
+    ar = ops_by_type(r.plan)["audio_replace"]
+    assert len(ar) == 1 and ar[0]["asset_id"] == "radio"
+
+
+def test_revision_preserves_stream_destination(gen):
+    prev = EditPlan(output=OutputSpec(container="flv", video_codec="h264"),
+                    output_destination="rtmp://host:1935/live")
+    r = gen("make it black and white", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["output_destination"] == "rtmp://host:1935/live"
+    assert r.plan["output"]["container"] == "flv"
+    assert any(op["type"] == "grayscale" for op in r.plan["operations"])
+
+
+def test_revision_new_destination_updates_container(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    r = gen("stream to srt://10.0.0.9:9000/show instead", "clip.mp4",
+            previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["output_destination"] == "srt://10.0.0.9:9000/show"
+    assert r.plan["output"]["container"] == "srt"

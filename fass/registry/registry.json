@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.2.0",
+  "registry_version": "1.3.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -11,7 +11,10 @@
     "mov": { "extensions": ["mov", "qt"] },
     "mkv": { "extensions": ["mkv"] },
     "webm": { "extensions": ["webm"] },
-    "mpegts": { "extensions": ["ts", "mts", "m2ts"] }
+    "mpegts": { "extensions": ["ts", "mts", "m2ts"] },
+    "flv": { "extensions": ["flv"] },
+    "rtsp": { "extensions": ["rtsp"] },
+    "srt": { "extensions": ["srt"] }
   },
   "video_codecs": {
     "h264": {
@@ -45,7 +48,26 @@
     "mov":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
     "mkv":  { "video": ["h264", "h265", "vp9"], "audio": ["aac", "opus"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
     "webm": { "video": ["vp9"], "audio": ["opus"], "default_video": "vp9", "audio_codec": "opus", "flags": [] },
-    "mpegts": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [] }
+    "mpegts": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "flv": { "video": ["h264"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "stream_only_note": "H.264+AAC only — what RTMP/RTMPS endpoints carry" },
+    "rtsp": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an rtsp(s):// destination; never a file" },
+    "srt": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an srt:// destination; never a file" }
+  },
+  "streaming": {
+    "description": "Stream / remote I/O (M3b). Inputs may be URLs with an allowlisted scheme (they are read by the user's local ffmpeg — fass never fetches or executes); outputs may be stream destinations, whose scheme fixes the container. Everything stays an argv token; stream destinations are disclosed in the explanation.",
+    "input_schemes": ["http", "https", "rtmp", "rtmps", "rtsp", "rtsps", "rtp", "udp", "tcp", "srt", "tls"],
+    "output": {
+      "rtmp":  { "container": "flv", "muxer": "flv" },
+      "rtmps": { "container": "flv", "muxer": "flv" },
+      "rtsp":  { "container": "rtsp", "muxer": "rtsp" },
+      "rtsps": { "container": "rtsp", "muxer": "rtsp" },
+      "srt":   { "container": "srt", "muxer": "srt" },
+      "udp":   { "container": "mpegts", "muxer": "mpegts" },
+      "rtp":   { "container": "mpegts", "muxer": "mpegts" },
+      "tcp":   { "container": "mpegts", "muxer": "mpegts" }
+    },
+    "input_format": { "udp": "mpegts", "rtp": "mpegts", "tcp": "mpegts" },
+    "note": "HTTP output (e.g. HLS .m3u8) is not in the MVP stream set — it writes segment files locally and needs per-destination tuning. Scheme defaults come from https://ffmpeg.org/ffmpeg-formats.html (rtmp->flv, rtsp->rtsp, udp/rtp/tcp->mpegts); fass still emits an explicit -f for stream destinations."
   },
   "bitrate_policy": "An explicit target video bitrate (plan.output.video_bitrate_kbps) overrides the quality preset: -b:v and -maxrate at the target, plus -bufsize at 2x the target for H.264/H.265 (a CBR-style target; audio keeps its codec-preset bitrate).",
   "operations": {

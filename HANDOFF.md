@@ -96,6 +96,42 @@ smoke-tested live (healthz, /v1/commands, UI).
   grep -F "fass serve" | grep -v grep`, then `kill <pid>` (never
   `pkill -f "fass serve"` — self-match kills your own shell line).
 - README.md written; roadmap checkboxes updated.
+- **M3b COMPLETE (2026-10-23) — stream/remote sources + stream outputs**
+  (user green-light "build it"). Registry 1.3.0 `streaming` block is the
+  source of truth: input schemes http/https/rtmp/rtmps/rtsp/rtsps/rtp/udp/
+  tcp/srt/tls; output scheme→container rtmp/rtmps→flv, rtsp/rtsps→rtsp,
+  srt→srt, udp/rtp/tcp→mpegts (+ `-f` muxer prepended to output_opts);
+  raw udp/rtp/tcp inputs get `-f mpegts` pre-opt in `_main_input`.
+  `EditPlan.output_destination` (validated: allowlisted stream URL only,
+  no control chars); rtsp/srt have no file form (planner PlanError);
+  flv file output allowed. Rules: `_detect_destination` in instructions
+  (URLs not equal to bound asset paths, trailing punctuation stripped),
+  destination is itself an edit (no-edit gate bypassed), stream-into
+  conflicting codec (h265→rtmp) → unsupported, conflicting container →
+  clarification, two destinations → clarification; revisions preserve or
+  move the destination. Remote inputs: never reported missing, re-encode
+  + "can't be probed locally" default note. Stream outputs carry the
+  warning "data is sent to a remote endpoint; nothing is saved locally"
+  and skip file-collision checks.
+  **Pipeline reconciliation** (the `-o` gap): NLU adapters never see the
+  output field, so a stream URL passed as `output_filename` is applied to
+  the plan in `_reconcile_output_destination()` (pipeline.py): its scheme
+  is authoritative for the container only when the plan's container was
+  defaulted (detected via NLU default notes); explicit conflicting
+  container → planner's PlanError; inline stream dest + file output →
+  structured error "name one, not both".
+  **Empirical ffmpeg findings**: (a) the udp *muxer* sends variable-length
+  datagrams (up to ~1.5 KB, also 32 B) — validate by reassembly: total
+  % 188 == 0, 0x47 sync per 188-byte packet, PAT PID 0 present; (b) ffmpeg
+  `tcp://` input defaults to CONNECT, not listen — the E2E test uses
+  `tcp://127.0.0.1:PORT?listen=1` (URLs pass through verbatim;
+  `stream_scheme()` only parses the leading scheme, queries are safe);
+  (c) a `udp://` input has NO end-of-stream — a short feed hangs ffmpeg
+  forever, so the input E2E is TCP, not UDP; (d) UDP datagram max 65507 B
+  (65536 → Errno 90).
+  Deferred (standing decisions): HTTP/HLS *output*, "stop streaming"
+  negation; two destinations (inline + `-o` file, or two stream URLs) →
+  structured error, never silent.
 
 ## Key decisions
 - argv arrays are the source of truth; shell rendering is shlex.join only.
@@ -116,7 +152,7 @@ smoke-tested live (healthz, /v1/commands, UI).
   Byte-size targets ("5 MB") remain needs_clarification; bit-rate targets
   ("10 Mbps") are honored.
 
-## Changed files (milestone 1 + 2 + M3a)
+## Changed files (milestone 1 + 2 + M3a + M3b)
 fass/{__init__,__main__,cli,pipeline,explain,feedback,api}.py,
 fass/schema/plan.py, fass/registry/, fass/probe/ffprobe.py,
 fass/planner/, fass/builder/, fass/nlu/{rules,llm}.py,
@@ -127,10 +163,13 @@ tests/test_media.py, tests/test_titan.py,
 media/titan.mp4, pyproject.toml, .gitignore, README.md, HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **218 passed** in ~38 s, no failures.
-(M3a added 21: 8 rules · 6 planner/builder · 2 API · 1 media outcome · 2
-benchmark, plus 2 schema from earlier — now 83 benchmark entries, 11 media
-outcome tests, 20 API tests.)
+`./.venv/bin/python -m pytest -q` → **265 passed** in ~41 s, no failures.
+(M3b added 47: 12 rules · 10 planner/builder · 8 API · 4 CLI · 2 media E2E
+stream I/O · 6 benchmark · 5 schema — now 89 benchmark entries, 13 media
+outcome tests, 27 API tests.)
+Real-media sanity on media/titan.mp4: udp stream-out renders
+`-f mpegts … udp://127.0.0.1:9999` + trim warning; `-o rtmp://…` → flv +
+`-f flv` + reconciliation default note + disclosure in summary.
 Live server smoke-tested: `fass serve` + curl (healthz, command, UI).
 venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 (TestClient dep, added milestone 2); fass is NOT pip-installed (cwd import) —
@@ -143,26 +182,19 @@ infrastructure, which plan0 defers explicitly). Candidates if requested:
 **M3 (user-stated direction, 2026-10-23) — multi-input + stream I/O.**
 "In a perfect world the web interface should allow adding more inputs
 (video, audio, image, standard ffmpeg sources); outputs can be a file or a
-stream." **M3a DONE (2026-10-23): multi local typed inputs + AudioReplaceOp**
-(local files only — no security change). **M3b PENDING**: stream/remote
-sources + stream outputs — the one real decision is relaxing
-`Asset._local_only` to a typed source. Settled posture: keep never-executes
-as the hard line (the user runs the command), keep everything as argv tokens
-(URLs are just quoted tokens — no shell), disclose stream destinations
-prominently ("output: streams to rtmp://host/live").
-- Input model: `inputs: list[InputRef{id, kind, source:
-  path|url|ffmpeg-source-spec, label}]`; first is "main" (what
-  trim/resize/grayscale target). The watermark op already binds a 2nd `-i`
-  wired via filter_complex+overlay — N typed inputs → one filter graph is a
-  generalization, not new machinery.
-- Output model: `{kind: file|stream, target: path|url, format?}`; stream =
-  target as final argv token (+ explicit `-f` where the muxer needs it).
-  Stream outputs skip the filename de-collision logic.
+stream." **M3a DONE + M3b DONE (2026-10-23)** — the full M3 vision is
+implemented: N typed inputs (video/audio/image, local files or allowlisted
+stream URLs, kind pinned via API `kind` field / CLI `id=kind:path`), file
+or stream outputs. Security posture held: never-executes (PRD §10), argv
+tokens only, scheme allowlist, stream destinations disclosed.
 
-1. More ops (crop, speed — currently "unsupported"), LLM adapter evaluation
-   against the 78-request benchmark.
-2. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
-3. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
+1. Deferred M3b scope if requested: HTTP/HLS *output* destinations,
+   "stop streaming" negation handling, generic ffmpeg-source-spec inputs
+   (e.g. named lavfi sources) beyond files + allowlisted URLs.
+2. More ops (crop, speed — currently "unsupported"), LLM adapter evaluation
+   against the 89-request benchmark.
+3. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
+4. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
 No commits/pushes beyond milestone work unless asked (no remote exists).
 
 ## Environment notes

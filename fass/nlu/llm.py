@@ -64,6 +64,17 @@ Target bitrate: an explicit video bitrate ("cbr 10 Mbps", "5 mbps", "2000 kbps")
 "video_bitrate_kbps" on the output (integer kbps, e.g. 10000 for 10 Mbps) — a CBR-style
 target that overrides the quality preset. A *file size* target ("5 MB file") is NOT a
 bitrate: return "needs_clarification".
+Stream input/output (M3b):
+- An input asset may be a local file or a URL with an allowlisted scheme (http, https,
+  rtmp, rtmps, rtsp, rtsps, rtp, udp, tcp, srt, tls). If the instruction names a URL,
+  reference its bound asset id — never emit the URL as a path.
+- The output may be a stream destination: set "output_destination" on the plan to the
+  URL exactly as the user gave it. Only these schemes are allowed: rtmp, rtmps, rtsp,
+  rtsps, srt, udp, rtp, tcp. The destination's scheme fixes the output container:
+  rtmp/rtmps -> flv, rtsp/rtsps -> rtsp, srt -> srt, udp/rtp/tcp -> mpegts — and
+  "output.container" must match it. FLV carries h264 + aac only.
+- Naming a stream destination is itself an edit. If the user names a file output format
+  that conflicts with the destination's container, return "needs_clarification".
 {ops_doc}
 
 Available assets (reference by id ONLY — never emit file paths):
@@ -91,6 +102,9 @@ User: Make it smaller.
 
 User: Convert to WebM with H.264.
 {{"status": "unsupported", "plan": null, "clarifications": [], "unsupported": [{{"fragment": "H.264 in WebM", "reason": "the supported WebM preset uses VP9"}}], "defaults": []}}
+
+User: Cut the first 5 seconds and stream it to rtmp://live.example.com:1935/show.
+{{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"container": "flv", "video_codec": "h264", "audio_mode": "encode"}}, "trim": {{"start_seconds": 0, "duration_seconds": 5}}, "operations": [], "output_destination": "rtmp://live.example.com:1935/show"}}, "clarifications": [], "unsupported": [], "defaults": ["container set to flv by the stream destination"]}}
 
 User (revision, previous plan uses h265 in mp4): Use H.264 instead.
 {{"status": "ready", "plan": <the complete previous plan with output.video_codec = "h264", everything else unchanged>, "clarifications": [], "unsupported": [], "defaults": []}}

@@ -97,8 +97,23 @@ def test_non_posix_shell_is_422():
     assert r.status_code == 422
 
 
-def test_remote_asset_reference_is_422():
+def test_stream_input_url_is_accepted():
+    # M3b: assets may be local paths OR allowlisted stream URLs. http input is
+    # legal — the command references the URL exactly as given.
     r = post("resize to 720p", {"main": "http://example.com/x.mp4"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    assert "http://example.com/x.mp4" in d["arguments"]
+    assert "http://example.com/x.mp4" in d["command"]
+
+
+@pytest.mark.parametrize("url", ["ftp://example.com/x.mp4", "file:///tmp/x.mp4"])
+def test_non_allowlisted_scheme_is_422(url):
+    # Only the registry's input-scheme allowlist is accepted — anything else
+    # (including file://, which would reach the local filesystem) is rejected
+    # at validation, not planned.
+    r = post("resize to 720p", {"main": url})
     assert r.status_code == 422
 
 
@@ -216,3 +231,80 @@ def test_ui_validation_line_uses_check_fields():
     html = client.get("/").text
     assert "c.check + ': ' + c.status" not in html
     assert "c.detail" in html and "c.name" in html and "c.ok" in html
+
+
+# ------------------------------------------------------------- M3b streaming
+
+
+def test_asset_ref_with_explicit_kind_for_extensionless_stream():
+    # A stream URL with no extension gives guess_kind no signal; the client
+    # supplies the kind explicitly via the {path, kind} asset reference.
+    r = post("replace the audio with the radio stream",
+             {"main": "clip.mp4",
+              "radio": {"path": "http://radio.example.com/stream", "kind": "audio"}})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    ops = d["plan"]["operations"]
+    assert len(ops) == 1 and ops[0]["type"] == "audio_replace"
+    assert ops[0]["asset_id"] == "radio"
+    assert "http://radio.example.com/stream" in d["arguments"]
+
+
+def test_asset_ref_with_bad_kind_is_422():
+    r = post("resize to 720p",
+             {"main": {"path": "clip.mp4", "kind": "hologram"}})
+    assert r.status_code == 422
+
+
+def test_stream_output_destination_via_instruction():
+    r = post("cut the first 5 seconds and send it to udp://127.0.0.1:5004",
+             {"main": "clip.mp4"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    assert d["plan"]["output_destination"] == "udp://127.0.0.1:5004"
+    assert d["plan"]["output"]["container"] == "mpegts"
+    args = d["arguments"]
+    assert "-f" in args and args[args.index("-f") + 1] == "mpegts"
+    assert args[-1] == "udp://127.0.0.1:5004"
+    assert any("remote endpoint" in w for w in d["warnings"])
+
+
+def test_output_filename_stream_url_sets_container_by_scheme():
+    # The -o / output field is a stream URL: its scheme fixes the container
+    # (the user named no format, so the input-derived default yields to it).
+    r = post("resize to 720p", {"main": "clip.mp4"},
+             output_filename="rtmp://host:1935/live")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    assert d["plan"]["output_destination"] == "rtmp://host:1935/live"
+    assert d["plan"]["output"]["container"] == "flv"
+    assert any("by the output destination" in x for x in d["defaults"])
+    args = d["arguments"]
+    assert args[-1] == "rtmp://host:1935/live"
+    f = args.index("-f")
+    assert args[f + 1] == "flv"
+
+
+def test_explicit_container_conflicting_with_stream_output_is_error():
+    # The user named a format in the instruction AND a stream output whose
+    # scheme carries a different container: a contradiction, reported — not
+    # silently resolved in favor of one.
+    r = post("convert to webm", {"main": "clip.mp4"},
+             output_filename="rtmp://host:1935/live")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "error", d
+    assert d["errors"], d
+
+
+def test_ui_offers_kind_select_for_extra_inputs():
+    # The web UI's "+ add input" rows must let the client pin a kind for
+    # extensionless stream URLs (the {path, kind} asset reference).
+    html = client.get("/").text
+    assert 'class="extra-kind"' in html
+    for kind in ("video", "audio", "image"):
+        assert f"<option value=\"{kind}\">" in html
+    assert "assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };" in html

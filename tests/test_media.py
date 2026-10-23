@@ -11,7 +11,10 @@ builder's argv is executed exactly as emitted (no ``-y`` is added).
 from __future__ import annotations
 
 import array
+import socket
 import subprocess
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -263,3 +266,100 @@ def test_audio_replaced_with_other_file(gen, media, tmp_path):
     # and the argv really mapped the second input's audio
     maps = [r.arguments[i + 1] for i, v in enumerate(r.arguments) if v == "-map"]
     assert "1:a:0" in maps and "-shortest" in r.arguments
+
+
+# ------------------------------------------------------------- stream I/O (M3b)
+
+def test_stream_output_udp_mpegts(gen, media, tmp_path):
+    """Generated argv streams to a local UDP socket; the datagrams that
+    arrive must be valid MPEG-TS (0x47 sync, 188-byte packets)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(1.0)
+    port = sock.getsockname()[1]
+    received: list[bytes] = []
+
+    def recv():
+        while True:
+            try:
+                d, _ = sock.recvfrom(65536)
+            except socket.timeout:
+                return
+            received.append(d)
+
+    t = threading.Thread(target=recv, daemon=True)
+    t.start()
+
+    r = gen(f"cut the first 2 seconds and send it to udp://127.0.0.1:{port}",
+            input_path=str(media.silent))
+    assert r.status == "ready", r.status
+    assert r.arguments[-1] == f"udp://127.0.0.1:{port}"
+    proc = subprocess.run(
+        r.arguments, shell=False, cwd=str(tmp_path),
+        capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert proc.returncode == 0, f"argv={r.arguments}\nstderr={proc.stderr}"
+    t.join(timeout=10)
+    # The udp muxer chunks the TS byte stream into variable-length datagrams
+    # (up to ~1.5 KB), so datagram boundaries don't align with 188-byte TS
+    # packets — reassemble the stream, then validate it as MPEG-TS: 0x47 sync
+    # on every packet, and a PAT (PID 0) present.
+    buf = b"".join(received)
+    assert len(buf) > 50_000, len(buf)
+    assert len(buf) % 188 == 0, len(buf)
+    pids = set()
+    for i in range(0, len(buf), 188):
+        assert buf[i] == 0x47, (i, hex(buf[i]))
+        pids.add(((buf[i + 1] & 0x1F) << 8) | buf[i + 2])
+    assert 0 in pids
+
+
+def test_stream_input_tcp_mpegts(gen, media, tmp_path):
+    """A local TCP MPEG-TS source (streamed once by a background sender)
+    is read, trimmed, and saved to a file: remote inputs work end to end.
+    TCP, not UDP: a udp:// input has no end-of-stream, so a short feed
+    would leave ffmpeg waiting for data that never comes."""
+    src = tmp_path / "src.ts"
+    _ffmpeg(["-f", "lavfi", "-i", f"testsrc2=size=320x240:rate=15:duration=3",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             "-an", "-f", "mpegts", str(src)])
+    data = src.read_bytes()
+    # Reserve a free port, then release it: ffmpeg (the receiver) listens
+    # on the URL's port. ffmpeg's tcp:// default is to connect, so the URL
+    # carries ?listen=1 — fass passes the URL through exactly as given.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    url = f"tcp://127.0.0.1:{port}?listen=1"
+
+    out = tmp_path / "from_stream.mp4"
+    r = gen("cut the first 2 seconds", input_path=url, output_filename=str(out))
+    assert r.status == "ready", r.status
+    # raw tcp input needs an explicit demuxer (registry streaming.input_format)
+    f = r.arguments.index("-f")
+    assert r.arguments[f + 1] == "mpegts" and f < r.arguments.index("-i")
+
+    proc = subprocess.Popen(
+        r.arguments, shell=False, cwd=str(tmp_path),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    # ffmpeg opens its listening socket at startup; retry until it is up.
+    con = None
+    for _ in range(50):
+        try:
+            con = socket.create_connection(("127.0.0.1", port), timeout=1)
+            break
+        except OSError:
+            time.sleep(0.1)
+    if con is None:
+        proc.kill()
+        raise AssertionError("ffmpeg never opened its listening socket")
+    con.sendall(data)
+    con.close()
+    pout, perr = proc.communicate(timeout=60)
+    assert proc.returncode == 0, f"argv={r.arguments}\nstderr={perr.decode()}"
+    info = probe_media(str(out))
+    assert info is not None
+    assert info.duration is not None
+    assert abs(info.duration - 2.0) <= 0.5, info.duration

@@ -71,7 +71,7 @@ endpoints the UI uses:
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/commands` | `{instruction, assets: {id → local path}, output_filename?, target_shell, previous_plan?, media?, adapter?, preflight?}` → the full structured response (the CLI `--json` contract) |
+| `POST /v1/commands` | `{instruction, assets: {id → local path or allowlisted stream URL}, output_filename?, target_shell, previous_plan?, media?, adapter?, preflight?}` → the full structured response (the CLI `--json` contract) |
 | `GET /v1/support` | what the MVP understands + registry version |
 | `GET /v1/env` | local FFmpeg build capability report (same as `fass env`) |
 | `GET /healthz` | liveness |
@@ -79,9 +79,10 @@ endpoints the UI uses:
 Contract notes: every **domain** outcome (`ready` / `needs_clarification` /
 `unsupported` / `error`) is a structured **200**; **422** is reserved for
 malformed requests (missing `main` asset, non-POSIX `target_shell` — other
-shells are deferred, never rendered best-effort — unknown fields, remote
-asset URLs). The service never executes generated commands (PRD §10) and has
-no media upload endpoints: assets are local paths the client binds.
+shells are deferred, never rendered best-effort — unknown fields, asset
+URLs with a non-allowlisted scheme). The service never executes generated
+commands (PRD §10) and has no media upload endpoints: assets are local paths
+or allowlisted stream URLs the client binds.
 
 ## What the MVP understands
 
@@ -111,6 +112,16 @@ no media upload endpoints: assets are local paths the client binds.
   encoded to the container's audio codec — never stream-copied, so it forces
   a re-encode. No audio file bound → `needs_clarification` ("which file should
   provide the new audio?").
+- **Stream I/O** — an *input* may be a stream URL (rtmp/rtsp/srt/http/udp/
+  …, allowlisted in the registry; unprobeable, so a re-encode is assumed and
+  noted); raw `udp`/`rtp`/`tcp` inputs get an explicit `-f mpegts`. An
+  *output* may be a stream destination — `stream to rtmp://host:1935/live`,
+  or passed via `--output`/`output_filename`: the destination's scheme fixes
+  the container (rtmp→flv, rtsp→rtsp, srt→srt, udp/rtp/tcp→mpegts) and the
+  builder prepends the matching `-f` muxer. Stream outputs are disclosed in
+  the response ("data is sent to a remote endpoint; nothing is saved
+  locally"); a container named in the instruction that conflicts with the
+  destination's is a structured error, never a silent pick.
 - **Audio keep/remove** and **compositions** of any of the above, in the
   order the user stated them.
 
@@ -137,10 +148,15 @@ validated" never claims "tested against this build".
   validated by the same pydantic envelope as the rules adapter, and the
   builder only ever emits flags from its fixed vocabulary.
 - Asset paths are bound *outside* the model (the model sees ids only); the
-  `Asset` validator rejects URLs/remote schemes and control characters.
+  `Asset` validator rejects non-allowlisted schemes (`file://`, `ftp://`, …)
+  and control characters. Only the registry's streaming schemes are
+  accepted as URLs, and a URL is passed to FFmpeg as a single argv token —
+  never through a shell.
 - Output never overwrites the input: defaulted names de-collide (`_out`
   suffix), explicit `-o input.mp4` is a hard error, and `-y` is never
-  emitted. No media ever leaves the machine — probing is local `ffprobe` only.
+  emitted. Probing is local `ffprobe` only — media leaves the machine only
+  when the *user's own request* names a stream output destination, and that
+  destination is then disclosed in the response.
 - Feedback stores the instruction text **only** with a separate `--consent`
   flag.
 
@@ -176,7 +192,7 @@ round-trips of hostile filenames and instruction-injection payloads.
 
 ## Roadmap
 
-- [x] 50-request benchmark suite — 78 requests in `tests/benchmark/`
+- [x] 50-request benchmark suite — 89 requests in `tests/benchmark/`
 - [x] real media-fixture outcome tests — `tests/test_media.py` (synthetic
   lavfi) + `tests/test_titan.py` (committed real file), run the command,
   probe the result
@@ -185,7 +201,8 @@ round-trips of hostile filenames and instruction-injection payloads.
   `fass serve` subcommand
 - [x] multi local typed inputs + audio replacement — `AudioReplaceOp`,
   `--asset id=path` / UI "+ add input", `-map N:a:0` + `-shortest`
-- [ ] stream / remote sources and stream outputs (would relax
-  `Asset._local_only`; destinations stay disclosed in the rendered command)
+- [x] stream / remote sources and stream outputs — allowlisted stream
+  URLs as inputs and destinations (scheme → container), `-f` muxer
+  injection, destination disclosure; HTTP/HLS *output* deferred
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`

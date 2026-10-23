@@ -100,3 +100,10 @@ def test_benchmark(gen, entry):
             assert got == want, (
                 f"{eid}: output.{key} {got!r} != expected {want!r}"
             )
+
+    if "destination" in exp:
+        want = exp["destination"]
+        got = plan.get("output_destination")
+        assert got == want, (
+            f"{eid}: output_destination {got!r} != expected {want!r}"
+        )

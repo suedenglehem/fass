@@ -16,7 +16,12 @@ import os
 import re
 
 from fass.probe.ffprobe import MediaInfo
-from fass.registry import default_codec, matrix_error
+from fass.registry import (
+    default_codec,
+    matrix_error,
+    output_schemes,
+    stream_output_info,
+)
 from fass.schema import (
     Asset,
     AssetKind,
@@ -40,7 +45,11 @@ SUPPORTED_SUMMARY = (
     "video encoding (H.264, H.265, VP9) at quality presets or a target bitrate "
     "(e.g. 'cbr 10 Mbps'), grayscale ('black and white'), one image watermark "
     "(position, margin, scale), audio keep/remove, and replacing the audio with "
-    "another file ('replace the audio with music.mp3')."
+    "another file ('replace the audio with music.mp3'). Inputs may also be remote "
+    "streams (http(s)://, rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp:// "
+    "URLs), and the output may be a stream ('stream this to rtmp://host:1935/live', "
+    "'publish to rtsp://server:554/live', 'send it to udp://127.0.0.1:5004') — "
+    "the destination's scheme fixes the output format."
 )
 
 # ---------------------------------------------------------------- time
@@ -318,7 +327,8 @@ def _bind_asset(t: str, assets: dict, kinds: AssetKind):
         if asset.kind != kinds:
             continue
         base = os.path.basename(asset.path)
-        if base.lower() in t or (asset.label and asset.label.lower() in t) or aid.lower() in t:
+        if (base.lower() in t or asset.path.lower() in t
+                or (asset.label and asset.label.lower() in t) or aid.lower() in t):
             return aid, None
     wanted = [aid for aid, a in assets.items() if a.kind == kinds]
     if len(wanted) == 1:
@@ -377,7 +387,8 @@ UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\brotat(?:e|ed|ing)\b|\bflip(?:ping)?\b|\bmirror(?:ing)?\b", re.I), "rotation and flipping"),
     (re.compile(r"\bcrop(?:s|ping|ing)?\b", re.I), "cropping"),
     (re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsoften\w*\b|\bamplif\w*\b|\bloudness\b|\bnormali[sz]e\s+audio\b", re.I), "audio level changes"),
-    (re.compile(r"\bsubtitles?\b|\bcaptions?\b|\bsrt\b|\bburn\s+(?:in|the)\s+sub\w*", re.I), "subtitles"),
+    # \bsrt\b must not eat an srt:// stream URL (that is a destination, M3b)
+    (re.compile(r"\bsubtitles?\b|\bcaptions?\b|\bsrt\b(?!://)|\bburn\s+(?:in|the)\s+sub\w*", re.I), "subtitles"),
     (re.compile(r"\bconcat(?:enate)?\b|\bmerge\w*\b|\bstitch\w*\b|\bappend\w*\b", re.I), "concatenation of multiple files"),
     (re.compile(r"\bsplit(?:ting)?\b", re.I), "splitting into segments"),
     (re.compile(r"\bblur(?:ring)?\b|\bsepia\b|\bvintage\b|\bretro\b|\bfade(?:s|d|ing)?\b", re.I), "additional color effects"),
@@ -429,6 +440,33 @@ def _detect_bitrate(t: str) -> int | None:
     if not (100 <= kbps <= 200000):
         return None
     return kbps
+
+
+# ---------------------------------------------------------------- stream destination (M3b)
+
+_STREAM_DEST = re.compile(
+    r"\b((" + "|".join(output_schemes()) + r")://[^\s]+)"
+)
+_TRAILING_PUNCT = re.compile(r"[.,;:!?'\"()\]]+$")
+
+
+def _detect_destination(t: str, assets: dict) -> list[str]:
+    """Stream output destinations named in the instruction.
+
+    A URL that matches a bound asset's path is an *input* reference, not a
+    destination, so it is excluded here. Trailing sentence punctuation is
+    stripped; duplicates collapse to the first occurrence.
+    """
+    found: list[str] = []
+    for m in _STREAM_DEST.finditer(t):
+        url = _TRAILING_PUNCT.sub("", m.group(1))
+        if not url:
+            continue
+        if any(a.path.lower() == url.lower() for a in assets.values()):
+            continue
+        if url not in found:
+            found.append(url)
+    return found
 _VAGUE_SIZE = re.compile(
     r"\b(smaller|small|shrink|shrunk|bigger|enlarge|larger|compress(?:ion|ed)?|lighter)\b", re.I
 )
@@ -496,6 +534,29 @@ class RulesAdapter:
                                                 reason="not in the MVP support set"))
             return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
 
+        # 2b. stream output destination (M3b) — its scheme fixes the container
+        dests = _detect_destination(t, assets)
+        if len(dests) > 1:
+            return ParseResult(
+                status=ParseStatus.NEEDS_CLARIFICATION,
+                clarifications=[Clarification(
+                    question=(f"you named {len(dests)} stream destinations "
+                              f"({'; '.join(dests)}) — which one should the output go to?")),
+                ],
+            )
+        dest = dests[0] if dests else None
+        dest_container = stream_output_info(dest)[0] if dest else None
+        if dest is not None and container is not None and container != dest_container:
+            return ParseResult(
+                status=ParseStatus.NEEDS_CLARIFICATION,
+                clarifications=[Clarification(
+                    question=(f"you named a {container.upper()} output and the destination "
+                              f"{dest}, which carries {dest_container.upper()} — "
+                              "which is the intended output?")),
+                ],
+                defaults=[trim_note] if trim_note else [],
+            )
+
         ambiguous = _scan_ambiguous(t, resize)
 
         # 3. revision: keep the previous watermark's image when the follow-up
@@ -532,7 +593,7 @@ class RulesAdapter:
         if previous_plan is not None:
             plan, changed = _merge_revision(
                 previous_plan, t, trim, resize, audio, watermark, grayscale,
-                audio_replace,
+                audio_replace, dest=dest,
             )
             if not changed:
                 return ParseResult(
@@ -555,6 +616,8 @@ class RulesAdapter:
             plan.operations = ops
             if audio == "remove":
                 plan.output.audio_mode = AudioMode.REMOVE
+            if dest is not None:
+                plan.output_destination = dest
 
         notes: list[str] = []
         if trim_note:
@@ -569,6 +632,7 @@ class RulesAdapter:
             if trim is None and resize is None and watermark is None and not grayscale \
                     and codec is None and container is None and audio != "remove" \
                     and audio_replace is None and bitrate_kbps is None \
+                    and dest is None \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b", t):
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -579,7 +643,11 @@ class RulesAdapter:
             main_path = assets.get(plan.input_id, Asset(path="input.mp4")).path
             ext = os.path.splitext(main_path)[1].lstrip(".").lower()
             if container is None:
-                if ext in _EXT_TO_CONTAINER:
+                if dest is not None:
+                    # the stream destination's scheme fixes the container
+                    container = dest_container
+                    notes.append(f"container set to {container} by the stream destination {dest}")
+                elif ext in _EXT_TO_CONTAINER:
                     container = _EXT_TO_CONTAINER[ext]
                     notes.append(f"container defaulted to {container} (from the input filename)")
                 else:
@@ -615,7 +683,7 @@ class RulesAdapter:
 # ---------------------------------------------------------------- revision
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
-                    audio_replace=None):
+                    audio_replace=None, dest=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
@@ -633,6 +701,16 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if bitrate is not None and plan.output.video_bitrate_kbps != bitrate:
         plan.output.video_bitrate_kbps = bitrate
         changed.append(f"video bitrate -> {bitrate} kbps")
+
+    # A newly named destination always wins over the previous one; the scheme
+    # fixes the container, so switch it when they disagree.
+    if dest is not None and plan.output_destination != dest:
+        plan.output_destination = dest
+        changed.append(f"stream destination -> {dest}")
+        d_container = stream_output_info(dest)[0]
+        if plan.output.container != d_container:
+            plan.output.container = d_container
+            changed.append(f"container -> {d_container} (required by the {dest} destination)")
 
     if audio == "keep" and plan.output.audio_mode != AudioMode.ENCODE:
         plan.output.audio_mode = AudioMode.ENCODE

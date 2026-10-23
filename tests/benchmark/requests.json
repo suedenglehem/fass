@@ -484,5 +484,37 @@
     "instruction": "Use this file as the soundtrack",
     "assets": {"input": "clip.mp4", "bgm": "bgm.wav"},
     "expected": {"status": "ready", "ops": ["audio_replace"], "audio_mode": "encode"}
+  },
+  {
+    "id": "bench-084",
+    "instruction": "Resize to 720p and stream to rtmp://host:1935/live",
+    "expected": {"status": "ready", "ops": ["resize"], "container": "flv", "video_codec": "h264", "destination": "rtmp://host:1935/live"}
+  },
+  {
+    "id": "bench-085",
+    "instruction": "Publish the video to rtsp://10.0.0.5:554/live",
+    "expected": {"status": "ready", "ops": [], "container": "rtsp", "video_codec": "h264", "destination": "rtsp://10.0.0.5:554/live"}
+  },
+  {
+    "id": "bench-086",
+    "instruction": "Cut the first 5 seconds and send it to udp://127.0.0.1:5004",
+    "expected": {"status": "ready", "ops": [], "trim": {"start_seconds": 0, "duration_seconds": 5}, "container": "mpegts", "video_codec": "h264", "destination": "udp://127.0.0.1:5004"}
+  },
+  {
+    "id": "bench-087",
+    "instruction": "Stream this to rtmp://host:1935/live with H.265",
+    "expected": {"status": "unsupported"}
+  },
+  {
+    "id": "bench-088",
+    "instruction": "Resize to 720p",
+    "assets": {"input": "rtmp://host:1935/live"},
+    "expected": {"status": "ready", "ops": ["resize"], "container": "mp4", "video_codec": "h264"}
+  },
+  {
+    "id": "bench-089",
+    "instruction": "Replace the audio with tune.mp3",
+    "assets": {"input": "clip.mp4", "radio": "http://radio.example.com/tune.mp3"},
+    "expected": {"status": "ready", "ops": ["audio_replace"], "audio_mode": "encode"}
   }
 ]

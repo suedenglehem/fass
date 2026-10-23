@@ -29,8 +29,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from fass.pipeline import generate
 from fass.probe.ffprobe import ffmpeg_available, parse_ffprobe_json, probe_ffmpeg
 from fass.registry import REGISTRY
-from fass.schema import Asset, EditPlan, guess_kind
+from fass.schema import Asset, AssetKind, EditPlan, guess_kind
 from fass.nlu.rules import SUPPORTED_SUMMARY
+
+
+class AssetRef(BaseModel):
+    """An asset with an explicit kind (M3b): needed for URL inputs whose
+    extension does not reveal the type (e.g. an extensionless stream)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=1024)
+    kind: AssetKind | None = None
 
 
 class CommandRequest(BaseModel):
@@ -39,10 +49,17 @@ class CommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     instruction: str = Field(min_length=1, max_length=4000)
-    assets: dict[str, str] = Field(
-        description="asset id -> local file path; must include 'main' (input video)"
+    assets: dict[str, str | AssetRef] = Field(
+        description="asset id -> local path or stream URL "
+                    "(http(s)://, rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp://); "
+                    "a value may be a plain string or {path, kind}; "
+                    "must include 'main' (the input video)"
     )
-    output_filename: str | None = Field(default=None, max_length=1024)
+    output_filename: str | None = Field(
+        default=None, max_length=1024,
+        description="output filename, or a stream URL to send the output to "
+                    "(rtmp://, rtmps://, rtsp://, rtsps://, srt://, udp://, rtp://, tcp://)"
+    )
     target_shell: Literal["posix"] = "posix"
     previous_plan: EditPlan | None = None
     media: dict | None = Field(
@@ -69,8 +86,11 @@ def create_app() -> FastAPI:
         if "main" not in body.assets:
             raise HTTPException(422, "assets must include 'main' (the input video)")
         try:
-            assets = {aid: Asset(path=p, kind=guess_kind(p))
-                      for aid, p in body.assets.items()}
+            assets = {}
+            for aid, ref in body.assets.items():
+                path = ref.path if isinstance(ref, AssetRef) else ref
+                kind = (ref.kind if isinstance(ref, AssetRef) else None) or guess_kind(path)
+                assets[aid] = Asset(path=path, kind=kind)
         except ValueError as e:  # pydantic ValidationError is a ValueError
             raise HTTPException(422, f"invalid asset reference: {e}")
 
@@ -198,10 +218,10 @@ li { margin: 2px 0; }
     <label for="instr">Instruction</label>
     <textarea id="instr" required placeholder="cut from 00:10 to 00:30, resize to 720p, and add my logo to the bottom-right corner"></textarea>
     <div class="row">
-      <div><label for="inp">Input video (local path)</label>
-        <input id="inp" required placeholder="clip.mp4"></div>
-      <div><label for="out">Output filename (optional)</label>
-        <input id="out" placeholder="default: clip_out.mp4"></div>
+      <div><label for="inp">Input video (local path or stream URL)</label>
+        <input id="inp" required placeholder="clip.mp4 or rtmp://host:1935/live"></div>
+      <div><label for="out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)</label>
+        <input id="out" placeholder="out.mp4, or rtmp://host:1935/live"></div>
     </div>
     <div class="row">
       <div><label for="wm">Watermark image (optional)</label>
@@ -209,7 +229,7 @@ li { margin: 2px 0; }
       <div><label for="ad">Adapter</label>
         <select id="ad"><option>auto</option><option>rules</option><option>llm</option></select></div>
     </div>
-    <label for="extra-h">Additional inputs (optional — audio/video/image files, e.g. "replace the audio with song.mp3")</label>
+    <label for="extra-h">Additional inputs (optional — audio/video/image files or streams, e.g. "replace the audio with song.mp3")</label>
     <div id="extra"></div>
     <button type="button" class="copy" onclick="addExtra()">+ add input</button>
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
@@ -227,6 +247,10 @@ function addExtra() {
   const row = document.createElement('div');
   row.className = 'row';
   row.innerHTML = `<div><input class="extra-inp" data-id="${id}" placeholder="e.g. song.mp3 (id: ${id})"></div>
+    <div style="flex: 0 0 auto"><select class="extra-kind" style="width:auto">
+      <option value="auto">auto</option><option value="video">video</option>
+      <option value="audio">audio</option><option value="image">image</option>
+    </select></div>
     <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
   $('extra').appendChild(row);
 }
@@ -236,7 +260,9 @@ async function submit(e) {
   if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
   document.querySelectorAll('.extra-inp').forEach(i => {
     const v = i.value.trim();
-    if (v) assets[i.dataset.id] = v;
+    if (!v) return;
+    const kind = i.parentElement.querySelector('.extra-kind').value;
+    assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };
   });
   const body = {
     instruction: $('instr').value.trim(),

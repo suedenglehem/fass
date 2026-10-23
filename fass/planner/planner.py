@@ -12,7 +12,16 @@ import os
 from dataclasses import dataclass, field
 
 from fass.probe.ffprobe import MediaInfo
-from fass.registry import REGISTRY, capability_check, audio_for, extension_for
+from fass.registry import (
+    REGISTRY,
+    audio_for,
+    capability_check,
+    extension_for,
+    input_format_for,
+    output_schemes,
+    stream_output_info,
+    stream_scheme,
+)
 from fass.schema import AssetKind, AudioMode, EditPlan, ResizeOp, WatermarkOp
 
 MAX_OPERATIONS = 8
@@ -43,6 +52,13 @@ class ExecutionPlan:
     output_path: str
     defaults: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+def _main_input(path: str) -> InputSpec:
+    """Main input spec. Raw udp/rtp/tcp demuxes need an explicit -f
+    (registry streaming.input_format); other schemes let ffmpeg probe."""
+    fmt = input_format_for(path)
+    return InputSpec(path, pre_opts=["-f", fmt] if fmt else [])
 
 
 def even(n: int) -> int:
@@ -192,27 +208,59 @@ def plan_execution(
     defaults: list[str] = []
     warnings: list[str] = []
 
-    # -- output path -------------------------------------------------------
-    explicit_output = bool(output_filename)
-    if explicit_output:
-        out_path = output_filename
+    # -- output destination: file path or stream URL (M3b) -----------------
+    dest = output_filename or edit.output_destination
+    muxer: str | None = None
+    if dest and stream_scheme(dest) is not None:
+        # A stream destination: its scheme fixes the container and muxer.
+        info = stream_output_info(dest)
+        if info is None:
+            raise PlanError([
+                f"output destination '{dest}' is not a supported stream URL "
+                f"(allowed: {', '.join(s + '://' for s in output_schemes())})"
+            ])
+        dest_container, muxer = info
+        if edit.output.container != dest_container:
+            raise PlanError([
+                f"stream destination '{dest}' carries {dest_container.upper()} "
+                f"(muxer '{muxer}'); the plan requests {edit.output.container.upper()} — "
+                f"name one or the other, not both"
+            ])
+        out_path = dest
+        warnings.append(
+            f"output streams to {dest} — data is sent to a remote endpoint; "
+            "nothing is saved locally"
+        )
     else:
-        stem = os.path.splitext(os.path.basename(in_path))[0] or "output"
-        ext = extension_for(edit.output.container)
-        out_path = f"{stem}.{ext}"
-        # A defaulted name must never resolve to the source file.
-        if os.path.realpath(out_path) == os.path.realpath(in_path):
-            out_path = f"{stem}_out.{ext}"
-        defaults.append(f"output filename defaulted to '{out_path}'")
+        if edit.output.container == "rtsp" or edit.output.container == "srt":
+            raise PlanError([
+                f"{edit.output.container.upper()} output can only go to a "
+                f"{edit.output.container}:// stream destination — it has no file form"
+            ])
+        if dest and "://" in dest:
+            raise PlanError([
+                f"output destination '{dest}' is a URL but not a supported "
+                f"stream scheme (allowed: {', '.join(s + '://' for s in output_schemes())}); "
+                "use a plain filename for file output"
+            ])
+        out_path = dest
+        if not out_path:
+            stem = os.path.splitext(os.path.basename(in_path))[0] or "output"
+            ext = extension_for(edit.output.container)
+            out_path = f"{stem}.{ext}"
+            # A defaulted name must never resolve to the source file.
+            if os.path.realpath(out_path) == os.path.realpath(in_path):
+                out_path = f"{stem}_out.{ext}"
+            defaults.append(f"output filename defaulted to '{out_path}'")
 
-    real_out = os.path.realpath(out_path)
-    if real_out == os.path.realpath(in_path):
-        # Only reachable for an explicit -o (the default was de-collided above).
-        raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
-    if wm_path and real_out == os.path.realpath(wm_path):
-        raise PlanError(["output path resolves to the watermark file — refusing to overwrite it"])
-    if ar_path and real_out == os.path.realpath(ar_path):
-        raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
+        real_out = os.path.realpath(out_path)
+        if real_out == os.path.realpath(in_path):
+            # Only reachable for an explicit -o (the default was de-collided above).
+            raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
+        if wm_path and real_out == os.path.realpath(wm_path):
+            raise PlanError(["output path resolves to the watermark file — refusing to overwrite it"])
+        if ar_path and real_out == os.path.realpath(ar_path):
+            raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
 
     # -- remux vs re-encode (plan0.md section 3) ---------------------------
     has_trim = edit.trim is not None
@@ -232,6 +280,11 @@ def plan_execution(
                     f"input video is {metadata.video_codec}; re-encoding to "
                     f"{edit.output.video_codec} to match the requested output"
                 )
+            elif stream_scheme(in_path) is not None:
+                defaults.append(
+                    "input is a remote stream — it can't be probed locally, so the output is "
+                    "re-encoded to guarantee the requested codec/container"
+                )
             else:
                 defaults.append(
                     "no media metadata provided — re-encoding to guarantee the requested "
@@ -245,6 +298,10 @@ def plan_execution(
     )
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
+    if muxer:
+        # explicit muxer for the stream destination (registry streaming.output);
+        # the destination token is already last in the argv (builder contract)
+        ep.output_opts = ["-f", muxer] + ep.output_opts
     _metadata_warnings(ep, edit, metadata)
     return ep
 
@@ -260,7 +317,7 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str) -> ExecutionPl
     opts += ["-c", "copy"]
     return ExecutionPlan(
         mode="copy",
-        inputs=[InputSpec(in_path)],
+        inputs=[_main_input(in_path)],
         vf=None,
         filter_complex=None,
         maps=maps,
@@ -272,7 +329,7 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str) -> ExecutionPl
 def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
                          audio_path: str | None,
                          out_path: str, defaults: list[str], warnings: list[str]) -> ExecutionPlan:
-    inputs = [InputSpec(in_path)]
+    inputs = [_main_input(in_path)]
     if edit.trim is not None:
         # -ss as an input option: frame-accurate when followed by decoding.
         inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]

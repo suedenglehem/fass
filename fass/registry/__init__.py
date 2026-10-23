@@ -5,6 +5,11 @@ from fass.registry.loader import (  # noqa: F401
     capability_check,
     default_codec,
     extension_for,
+    input_format_for,
+    input_schemes,
     load_registry,
     matrix_error,
+    output_schemes,
+    stream_output_info,
+    stream_scheme,
 )

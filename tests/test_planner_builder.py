@@ -272,3 +272,105 @@ def test_audio_replace_output_collision_rejected():
     with pytest.raises(PlanError, match="replacement-audio"):
         ep_for(operations=[AudioReplaceOp(asset_id="aud")],
                audio_path="song.mp3", out="song.mp3")
+
+
+# ------------------------------------------------------------- stream I/O (M3b)
+
+def _stream_edit(dest, container="flv"):
+    return EditPlan(output=OutputSpec(container=container, video_codec="h264"),
+                    output_destination=dest)
+
+
+def _assets(input_path="clip.mp4"):
+    return {"main": Asset(path=input_path, kind=AssetKind.VIDEO)}
+
+
+def test_rtmp_destination_flv_argv():
+    ep = plan_execution(_stream_edit("rtmp://host:1935/live", "flv"),
+                        _assets(), None, None)
+    argv = build_argv(ep)
+    assert argv[-1] == "rtmp://host:1935/live"
+    f = argv.index("-f")
+    assert argv[f + 1] == "flv"
+    assert "-movflags" not in argv  # no mp4 file flags on a flv stream
+    assert any("remote endpoint" in w for w in ep.warnings)
+
+
+def test_udp_destination_mpegts_muxer():
+    ep = plan_execution(_stream_edit("udp://127.0.0.1:5004", "mpegts"),
+                        _assets(), None, None)
+    argv = build_argv(ep)
+    assert argv[-1] == "udp://127.0.0.1:5004"
+    f = argv.index("-f")
+    assert argv[f + 1] == "mpegts"
+
+
+def test_stream_destination_skips_file_collision_checks():
+    # A destination is not a path: same URL as the input must not trip the
+    # overwrite refusal.
+    url = "rtmp://host:1935/live"
+    ep = plan_execution(_stream_edit(url, "flv"),
+                        {"main": Asset(path=url, kind=AssetKind.VIDEO)}, None, None)
+    assert build_argv(ep)
+
+
+def test_rtsp_srt_containers_require_stream_destination():
+    # rtsp/srt have no file form: the planner uses the literal container
+    # value, and a file output is refused.
+    for c in ("rtsp", "srt"):
+        edit = EditPlan(output=OutputSpec(container=c, video_codec="h264"))
+        with pytest.raises(PlanError, match="no file form"):
+            plan_execution(edit, _assets(), None, None)
+
+
+def test_flv_file_output_is_allowed():
+    # flv *files* exist — the stream-only restriction is on rtsp/srt only.
+    ep = plan_execution(EditPlan(output=OutputSpec(container="flv", video_codec="h264")),
+                        _assets(), None, "out.flv")
+    argv = build_argv(ep)
+    assert argv[-1] == "out.flv"
+    assert "-f" not in argv
+
+
+def test_plan_container_conflicts_with_destination():
+    # A plan whose container disagrees with its destination's scheme is a
+    # contradiction the planner reports (safety net for adapter output).
+    with pytest.raises(PlanError, match="carries FLV"):
+        plan_execution(_stream_edit("rtmp://host:1935/live", "mp4"),
+                       _assets(), None, None)
+
+
+def test_output_filename_stream_url_needs_matching_plan_container():
+    # The pipeline (not the planner) aligns a defaulted container with the
+    # -o destination; the planner alone reports the conflict.
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    with pytest.raises(PlanError, match="carries FLV"):
+        plan_execution(edit, _assets(), None, "rtmp://host:1935/live")
+
+
+def test_non_stream_url_output_is_rejected():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    with pytest.raises(PlanError, match="not a supported stream"):
+        plan_execution(edit, _assets(), None, "http://cdn.example.com/out.ts")
+
+
+def test_udp_stream_input_gets_mpegts_pre_opt():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    trim=TrimSpec(start_seconds=0, duration_seconds=5))
+    assets = {"main": Asset(path="udp://239.0.0.1:5004", kind=AssetKind.VIDEO)}
+    ep = plan_execution(edit, assets, None, None)
+    argv = build_argv(ep)
+    i = argv.index("-i")
+    assert argv[i + 1] == "udp://239.0.0.1:5004"
+    f = argv.index("-f")
+    assert argv[f + 1] == "mpegts" and f < i  # explicit muxer before -i
+
+
+def test_remote_stream_input_notes_reencode_default():
+    # Remote sources can't be probed: always re-encode, and say so.
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    assets = {"main": Asset(path="https://cdn.example.com/clip.mp4",
+                            kind=AssetKind.VIDEO)}
+    ep = plan_execution(edit, assets, None, None)
+    assert ep.mode == "reencode"
+    assert any("remote stream" in d for d in ep.defaults)

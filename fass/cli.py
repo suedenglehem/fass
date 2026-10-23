@@ -23,9 +23,30 @@ EXAMPLES = [
     'fass "add my logo to the bottom-right corner" clip.mp4 --watermark logo.png',
     'fass "trim the first 20 seconds, resize to 720p, and remove audio" clip.mp4 --json',
     'fass "use H.264 instead" clip.mp4 --previous plan.json   # revision',
+    'fass "cut the first 5 seconds and send it to udp://127.0.0.1:5004" clip.mp4   # stream out',
+    'fass "resize to 720p" rtmp://host:1935/live              # stream in',
+    'fass "replace the audio" clip.mp4 --asset music=audio:song.mp3',
     "fass probe clip.mp4          # local media metadata",
     "fass env                     # local FFmpeg build capabilities",
 ]
+
+
+_KIND_PREFIXES = {
+    "video:": AssetKind.VIDEO,
+    "audio:": AssetKind.AUDIO,
+    "image:": AssetKind.IMAGE,
+}
+
+
+def _parse_asset_spec(spec: str) -> tuple[str, str, AssetKind | None]:
+    """id=path or id=kind:path (kind: video | audio | image)."""
+    aid, _, rest = spec.partition("=")
+    if not aid or not rest:
+        raise SystemExit(f"--asset expects id=path or id=kind:path, got {spec!r}")
+    for prefix, kind in _KIND_PREFIXES.items():
+        if rest.startswith(prefix):
+            return aid, rest[len(prefix):], kind
+    return aid, rest, None
 
 
 def _build_assets(args) -> dict:
@@ -35,10 +56,8 @@ def _build_assets(args) -> dict:
     if args.watermark:
         assets["watermark"] = Asset(path=args.watermark, kind=AssetKind.IMAGE)
     for spec in args.asset or []:
-        aid, _, path = spec.partition("=")
-        if not aid or not path:
-            raise SystemExit(f"--asset expects id=path, got {spec!r}")
-        assets[aid] = Asset(path=path, kind=guess_kind(path))
+        aid, path, kind = _parse_asset_spec(spec)
+        assets[aid] = Asset(path=path, kind=kind or guess_kind(path))
     return assets
 
 
@@ -83,10 +102,13 @@ def _print_response(r: GenerationResponse) -> None:
 def _generate_cli(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="fass", description="Natural language -> validated ffmpeg commands")
     p.add_argument("instruction", nargs="?", help="what you want done to the video")
-    p.add_argument("input", nargs="?", help="input video file (name only is fine)")
-    p.add_argument("-o", "--output", help="output filename")
+    p.add_argument("input", nargs="?", help="input video: local file or stream URL")
+    p.add_argument("-o", "--output",
+                   help="output filename, or stream URL to send to "
+                        "(rtmp://, rtmps://, rtsp://, rtsps://, srt://, udp://, rtp://, tcp://)")
     p.add_argument("--watermark", help="watermark image file")
-    p.add_argument("--asset", action="append", help="extra asset: id=path")
+    p.add_argument("--asset", action="append",
+                   help="extra asset: id=path or id=kind:path (kind: video | audio | image)")
     p.add_argument("--adapter", choices=["auto", "rules", "llm"], default="auto")
     p.add_argument("--previous", help="previous plan JSON file (revision)")
     p.add_argument("--metadata", help="pre-collected ffprobe JSON for the input")

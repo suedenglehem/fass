@@ -24,7 +24,7 @@ from fass.probe.ffprobe import (
     probe_media,
     preflight,
 )
-from fass.registry import REGISTRY
+from fass.registry import REGISTRY, stream_output_info, stream_scheme
 from fass.schema import AssetMap, EditPlan, ParseResult, ParseStatus
 
 
@@ -55,6 +55,49 @@ def _used_filters(ep) -> list[str]:
         if name in chain:
             used.append(name)
     return used
+
+
+def _reconcile_output_destination(
+    edit: EditPlan,
+    output_filename: str | None,
+    nlu_defaults: list[str],
+    resp: GenerationResponse,
+) -> None:
+    """Apply an output that is a stream URL to the plan (M3b).
+
+    The NLU adapters never see the -o / output field, so a stream URL
+    passed there is a destination exactly like one named in the
+    instruction. The destination's scheme is authoritative for the
+    container when the plan's container was only defaulted; an explicitly
+    requested, conflicting container stays a contradiction the planner
+    reports.
+    """
+    if not output_filename:
+        return
+    if edit.output_destination is not None:
+        if output_filename != edit.output_destination \
+                and stream_output_info(output_filename) is None:
+            # an inline stream destination plus a file output: a
+            # contradiction, not a silent choice of one
+            raise PlanError([
+                f"the instruction names the stream destination "
+                f"'{edit.output_destination}' but the output is a file "
+                f"('{output_filename}') — name one, not both"
+            ])
+        return
+    info = stream_output_info(output_filename)
+    if info is None:
+        return  # a filename, or a URL the planner will reject with a message
+    dest_container, _ = info
+    edit.output_destination = output_filename
+    if edit.output.container != dest_container:
+        defaulted = any("container" in d and "default" in d for d in nlu_defaults)
+        if not defaulted:
+            return  # explicit, conflicting container -> the planner's PlanError
+        edit.output.container = dest_container
+        resp.defaults.append(
+            f"output container set to {dest_container} by the output destination {output_filename}"
+        )
 
 
 def generate(
@@ -99,6 +142,7 @@ def generate(
             media = probe_media(str(candidate))
 
     try:
+        _reconcile_output_destination(edit, output_filename, result.defaults, resp)
         ep = plan_execution(edit, assets, media, output_filename)
     except PlanError as e:
         resp.status = "error"
@@ -114,7 +158,9 @@ def generate(
     resp.defaults.extend(ep.defaults)
     resp.warnings.extend(ep.warnings)
 
-    if not Path(assets[edit.input_id].path).exists():
+    main_path = assets[edit.input_id].path
+    # A stream URL never "exists" locally — that is its nature, not a problem.
+    if stream_scheme(main_path) is None and not Path(main_path).exists():
         resp.warnings.append(
             "input file was not found on this machine — the command references it exactly as given"
         )
