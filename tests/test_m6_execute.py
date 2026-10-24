@@ -100,6 +100,85 @@ def test_non_ffmpeg_binary_rejected():
     assert execute.validate_argv(["rm", "-rf", "/"])
 
 
+# ------------------------------------------- M7 format options (per registry kind)
+
+def test_format_option_valid_flagset():
+    # movflags is a flagset: '+'-joined members, optional +/- prefix
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-movflags", "+faststart", "o.mp4"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-movflags", "+faststart+empty_moov",
+         "o.mp4"]) == []
+
+
+def test_format_option_unknown_flagset_member_rejected():
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-movflags", "+not_a_flag", "o.mp4"])
+    assert any("not_a_flag" in x for x in p)
+
+
+def test_format_option_number_out_of_range_rejected():
+    # hls_time range is [0.1, 3600] seconds
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-hls_time", "6", "o.m3u8"]) == []
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-hls_time", "99999", "o.m3u8"])
+    assert any("above the maximum" in x for x in p)
+
+
+def test_format_option_unknown_for_container_rejected():
+    # hls_time is a known format-option key (builder vocabulary) but not a
+    # valid option for the plan's mp4 output — the container context decides
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-hls_time", "6", "o.mp4"])
+    assert any("not a valid option for mp4" in x for x in p)
+
+
+def test_format_option_choice_value_checked():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-hls_segment_type", "fmp4", "o.m3u8"]) == []
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-hls_segment_type", "bogus", "o.m3u8"])
+    assert any("hls_segment_type" in x for x in p)
+
+
+def test_format_option_stream_destination_container():
+    # http output derives its container from the URL path (.m3u8 -> hls),
+    # so hls_* options validate against the hls group
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-hls_time", "6",
+         "http://example.com/live.m3u8"]) == []
+
+
+# ------------------------------------------------- M7 filtergraph validation
+
+def test_vf_valid_graph_accepted_bad_name_rejected():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-vf", "scale=-2:480,hue=s=0", "o.mp4"]) == []
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-vf", "movie=x,scale=-2:480", "o.mp4"])
+    assert any("not in the supported filter set" in x for x in p)
+
+
+def test_af_valid_graph_accepted_empty_rejected():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-af", "volume=2", "o.mp4"]) == []
+    # an empty filter value never reaches _check_value as a value token
+    # (validate_argv rejects the bare "" positional), so check the value
+    # validator directly — the builder must never be able to emit it
+    assert execute._check_value("-af", "", 4)
+    assert execute._check_value("-af", "volume=2", 4) == []
+
+
+def test_filter_complex_validated():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-filter_complex",
+         "[0:v]scale=-2:480[v]", "-map", "[v]", "o.mp4"]) == []
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-filter_complex", "[0:v]bogus[v]", "o.mp4"])
+    assert any("bogus" in x for x in p)
+
+
 # ------------------------------------------------------------ paths
 
 def test_resolve_paths_uses_volume_mounts():

@@ -20,6 +20,7 @@ from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
 from fass.planner import PlanError, plan_execution
 from fass.probe.ffprobe import (
+    Check,
     MediaInfo,
     ffmpeg_available,
     ffprobe_available,
@@ -29,11 +30,14 @@ from fass.probe.ffprobe import (
 )
 from fass.registry import (
     REGISTRY,
+    all_filter_names,
+    container_from_extension,
     is_source_spec,
     soft_subtitle_codec,
     stream_output_info,
     stream_scheme,
 )
+from fass.registry.loader import _split_top_level
 from fass.schema import AssetMap, EditPlan, ParseResult, ParseStatus
 
 
@@ -57,15 +61,54 @@ class GenerationResponse:
         return dataclasses.asdict(self)
 
 
+def _graph_names(graph: str) -> list[str]:
+    """Filter instance names in a graph — chains split on ';', instances
+    on ',' (quotes/escapes honored, the same split the registry validator
+    uses); pad labels are stripped, only the filter name is kept."""
+    names: list[str] = []
+    for chain in _split_top_level(graph, ";"):
+        for inst in _split_top_level(chain.strip(), ","):
+            s = inst.strip()
+            if s.startswith("["):
+                end = s.find("]")
+                if end >= 0:
+                    s = s[end + 1:]
+            name = s.split("=", 1)[0].split("[", 1)[0].strip()
+            if name:
+                names.append(name)
+    return names
+
+
 def _used_filters(ep) -> list[str]:
-    chain = f"{ep.vf or ''}{ep.filter_complex or ''}"
-    used = []
-    for name in ("scale", "pad", "hue", "overlay", "format",
-                 "crop", "transpose", "hflip", "vflip", "setpts",
-                 "subtitles", "ass"):
-        if name in chain:
-            used.append(name)
+    """Filter names the plan's graphs use — parsed from -vf, -af and
+    filter_complex, restricted to the registry's filter vocabulary, so the
+    preflight checks exactly the filters the command will run."""
+    allowed = all_filter_names()
+    used: list[str] = []
+    for graph in (ep.vf, ep.af, ep.filter_complex):
+        if not graph:
+            continue
+        for name in _graph_names(graph):
+            if name in allowed and name not in used:
+                used.append(name)
     return used
+
+
+def _output_muxer(ep) -> str | None:
+    """Muxer the plan's output destination will be written with: the
+    stream scheme's muxer for URLs, the container's muxer for files
+    (registry-driven). None for destinations with no muxer (audio devices)."""
+    dest = ep.output_path
+    info = stream_output_info(dest)
+    if info is not None:
+        return info[1]
+    name = dest.rsplit("/", 1)[-1]
+    if "." not in name:
+        return None
+    container = container_from_extension(name.rsplit(".", 1)[-1])
+    if container is not None:
+        return REGISTRY["containers"][container]["muxer"]
+    return None
 
 
 def _reconcile_output_destination(
@@ -243,26 +286,46 @@ def generate(
         )
 
     # Validation levels (PRD FR-5): static by default; preflight when the
-    # local build can be inspected.
+    # local build can be inspected. Per output mode: a video plan checks
+    # its encoders, an audio plan its audio encoder, a subtitle dump needs
+    # a subtitle stream in the input — and every plan checks its output
+    # muxer against the build's probed '-muxers' set (availability is
+    # build-specific, so it is probed, never assumed).
     resp.validation_level = "static"
     if (preflight_check or media is not None) and ffmpeg_available():
         ff = probe_ffmpeg()
         if ff is not None:
-            if edit.output.gpu:
-                # GPU plan (M6): the nvenc coder (the planner already
-                # rejected codecs without a GPU form)
-                enc = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
-            else:
-                enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
-            encoders = [enc]
-            if edit.output.audio_mode.value == "encode":
-                encoders.append(REGISTRY["audio_codecs"][REGISTRY["matrix"][edit.output.container]["audio_codec"]]["encoder"])
-            for op in edit.operations:
-                if op.type == "subtitles" and op.mode == "soft":
-                    enc = soft_subtitle_codec(edit.output.container)
-                    if enc:
-                        encoders.append(enc)
-            checks = preflight(media, ff, encoders, _used_filters(ep))
+            encoders: list[str] = []
+            muxers: list[str] = []
+            mux = _output_muxer(ep)
+            if mux is not None:
+                muxers.append(mux)
+            if edit.output.mode == "video":
+                if edit.output.gpu:
+                    # GPU plan (M6): the nvenc coder (the planner already
+                    # rejected codecs without a GPU form)
+                    enc = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
+                else:
+                    enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
+                encoders.append(enc)
+                if edit.output.audio_mode.value == "encode":
+                    encoders.append(REGISTRY["audio_codecs"][REGISTRY["matrix"][edit.output.container]["audio_codec"]]["encoder"])
+                for op in edit.operations:
+                    if op.type == "subtitles" and op.mode == "soft":
+                        enc = soft_subtitle_codec(edit.output.container)
+                        if enc:
+                            encoders.append(enc)
+            elif edit.output.mode == "audio":
+                encoders.append(REGISTRY["audio_codecs"][edit.output.audio_codec]["encoder"])
+            checks = preflight(media, ff, encoders, _used_filters(ep), muxers)
+            if edit.output.mode == "subtitles" and media is not None:
+                has_subs = media.subtitle_streams > 0
+                checks.append(Check(
+                    "input subtitle streams", has_subs,
+                    f"{media.subtitle_streams} subtitle stream(s) in the input"
+                    if has_subs else
+                    "the input has no subtitle stream to dump",
+                ))
             resp.checks = [dataclasses.asdict(c) for c in checks]
             if all(c.ok for c in checks):
                 resp.validation_level = "preflight"

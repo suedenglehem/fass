@@ -6,8 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from fass.builder import build_argv
+from fass.explain import summarize
+from fass.pipeline import _output_muxer
 from fass.planner import PlanError, plan_execution
 from fass.planner.planner import _scale_expr
+from fass.probe.ffprobe import FfmpegInfo, preflight
 from fass.schema import (
     Asset,
     AssetKind,
@@ -683,3 +686,84 @@ def test_device_output_rejects_removed_audio():
 def test_device_output_rejects_device_options():
     with pytest.raises(PlanError, match="must not carry options"):
         ep_for(out="alsa:hw:0;freq=44100")
+
+
+# ------------------------------------------------------- M7 modes: explain
+#
+# The old explain crash: audio/subtitle plans carry video_codec=None and
+# the video branch used to index REGISTRY["video_codecs"][None]. These
+# plans must summarize sensibly (mode-aware) and never crash.
+
+def _assets_main():
+    return {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO)}
+
+
+def _audio_plan(container: str, codec: str) -> EditPlan:
+    return EditPlan(output=OutputSpec(mode="audio", container=container,
+                                      audio_codec=codec))
+
+
+def test_explain_audio_mp3_names_encoder_and_bitrate():
+    edit = _audio_plan("mp3", "mp3")
+    ep = plan_execution(edit, _assets_main(), make_media())
+    assert ep.mode == "reencode"  # source audio is aac -> mp3 needs encoding
+    text = " ".join(summarize(edit, ep, make_media()))
+    assert "libmp3lame" in text and "128k" in text and "MP3" in text
+
+
+def test_explain_audio_mp2_names_encoder_and_bitrate():
+    edit = _audio_plan("mp2", "mp2")
+    ep = plan_execution(edit, _assets_main(), make_media())
+    text = " ".join(summarize(edit, ep, make_media()))
+    assert "mp2" in text and "192k" in text and "MP2" in text
+
+
+def test_explain_audio_pcm_says_no_bitrate_is_applied():
+    edit = _audio_plan("wav", "pcm_s16le")
+    ep = plan_execution(edit, _assets_main(), make_media())
+    lines = summarize(edit, ep, make_media())
+    text = " ".join(lines)
+    assert "pcm_s16le" in text and "no bitrate" in text
+    assert "-b:a" not in ep.output_opts  # PCM carries no bitrate flag
+
+
+def test_explain_audio_copy_mode_says_remux():
+    # source audio aac -> m4a (aac codec): the planner copies the stream
+    edit = _audio_plan("m4a", "aac")
+    ep = plan_execution(edit, _assets_main(), make_media())
+    assert ep.mode == "copy"
+    text = " ".join(summarize(edit, ep, make_media()))
+    assert "stream copy" in text.lower()
+
+
+def test_explain_subtitle_dump_plan():
+    edit = EditPlan(output=OutputSpec(mode="subtitles", container="srt_file"))
+    media = make_media(subtitle_streams=1)
+    ep = plan_execution(edit, _assets_main(), media)
+    assert ep.mode == "copy"  # the text muxer encodes the stream itself
+    lines = summarize(edit, ep, media)
+    text = " ".join(lines)
+    assert "Subtitle dump" in text and "srt" in text
+    assert any("No re-encoding" in l for l in lines)
+
+
+# ------------------------------------------------- M7 preflight: muxer probe
+
+def test_output_muxer_for_aac_plan_is_aac():
+    # the .aac ADTS case: the plan's output muxer is probed against the
+    # build, so _output_muxer must report "aac" for a .aac audio plan
+    edit = _audio_plan("aac", "aac")
+    ep = plan_execution(edit, _assets_main(), make_media())
+    assert _output_muxer(ep) == "aac"
+
+
+def test_preflight_flags_missing_aac_muxer():
+    # registry note: the Ubuntu 6.1.1 build lacks the standalone AAC/ADTS
+    # muxer — preflight reports it instead of assuming availability
+    ff = FfmpegInfo(version="ffmpeg version 6.1.1",
+                    encoders={"aac"}, filters=set(),
+                    muxers={"mp4", "matroska", "webm"})  # no "aac" muxer
+    checks = preflight(make_media(), ff, ["aac"], [], ["aac"])
+    mux = [c for c in checks if c.name == "muxer aac"]
+    assert mux and mux[0].ok is False
+    assert "NOT available" in mux[0].detail
