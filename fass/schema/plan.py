@@ -16,11 +16,18 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fass.registry import (
+    capability_errors,
+    filter_expr_problems,
+    filtergraph_problems,
+    format_option_errors,
     input_schemes,
     is_source_spec,
     output_schemes,
+    pixel_format_error,
     stream_output_info,
     stream_scheme,
+    subtitle_dump_codec,
+    video_profiles_for,
 )
 
 SCHEMA_VERSION = "1.0"
@@ -69,8 +76,27 @@ class TrimSpec(BaseModel):
 class OutputSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    container: Literal["mp4", "mov", "mkv", "webm", "mpegts", "flv", "rtsp", "srt"]
-    video_codec: Literal["h264", "h265", "vp9"]
+    mode: Literal["video", "audio", "subtitles"] = Field(
+        default="video",
+        description="Output mode: 'video' (video + audio), 'audio' (audio "
+                    "track only, e.g. extracting audio to mp3/wav/m4a) or "
+                    "'subtitles' (dump the input's subtitle track to a "
+                    ".srt/.vtt/.ass file).",
+    )
+    container: Literal[
+        "mp4", "mov", "mkv", "webm", "mpegts", "flv", "rtsp", "srt", "hls",
+        "avi", "mxf", "vob", "asf", "3gp", "dv", "gif", "webp",
+        "mp3", "mp2", "m4a", "aac", "ogg", "flac", "wav", "aiff", "mka",
+        "opus", "srt_file", "vtt_file", "ass_file",
+    ]
+    video_codec: Literal[
+        "h264", "h265", "vp9", "prores", "mpeg2", "mpeg4", "mjpeg",
+        "dv", "gif", "webp",
+    ] | None = None
+    audio_codec: Literal[
+        "aac", "opus", "mp2", "mp3", "ac3", "eac3", "alac", "flac",
+        "vorbis", "pcm_s16le", "pcm_s24le", "pcm_f32le",
+    ] | None = None
     audio_mode: AudioMode = AudioMode.ENCODE
     video_bitrate_kbps: int | None = Field(
         default=None, ge=100, le=200000,
@@ -78,30 +104,115 @@ class OutputSpec(BaseModel):
                     "Overrides the quality preset with CBR-style flags "
                     "(-b:v/-maxrate at target, -bufsize 2x).",
     )
-    pixel_format: Literal["yuv420p", "yuv420p10le", "yuv444p"] | None = Field(
+    audio_bitrate_kbps: int | None = Field(
+        default=None, ge=32, le=3840,
+        description="Target audio bitrate in kbps (e.g. 128 for 'mp2 128k'). "
+                    "Overrides the codec preset's -b:a; lossless/PCM codecs "
+                    "take no bitrate and a requested one is noted.",
+    )
+    pixel_format: Literal[
+        "yuv420p", "yuv420p10le", "yuv444p", "yuvj420p",
+        "yuv422p10le", "yuv444p10le", "rgb24", "yuva420p",
+    ] | None = Field(
         default=None,
         description="Output pixel format (the scaling/conversion component). "
-                    "None keeps the codec's default (yuv420p). Allowed values "
-                    "depend on the codec — see the registry matrix.",
+                    "None keeps the codec's default. Allowed values depend "
+                    "on the codec — see the registry matrix.",
     )
-    video_profile: Literal["baseline", "main", "high"] | None = Field(
+    video_profile: Literal[
+        "baseline", "main", "high",
+        "proxy", "lt", "standard", "hq", "4444", "4444xq",
+    ] | None = Field(
         default=None,
-        description="Encoder profile (H.264 in the MVP): 'baseline' for "
-                    "maximum compatibility.",
+        description="Encoder profile: H.264 'baseline' for maximum "
+                    "compatibility; ProRes family (proxy..4444xq).",
     )
     video_preset: Literal[
         "ultrafast", "superfast", "veryfast", "faster", "fast",
         "medium", "slow", "slower", "veryslow",
     ] | None = Field(
         default=None,
-        description="x264 speed/size preset (H.264 in the MVP).",
+        description="x264 speed/size preset (H.264 only).",
     )
     gpu: bool = Field(
         default=False,
         description="Encode on an NVIDIA GPU (M6): h264 -> h264_nvenc, "
-                    "h265 -> hevc_nvenc. VP9 is CPU-only; x264 speed "
-                    "presets and the 'baseline' profile do not apply.",
+                    "h265 -> hevc_nvenc. All other codecs are CPU-only; "
+                    "x264 speed presets and the 'baseline' profile do not "
+                    "apply.",
     )
+    format_options: dict[str, str] = Field(
+        default_factory=dict,
+        description="Output container/format options from the registry "
+                    "'format_options' table, e.g. {'hls_time': '6', "
+                    "'movflags': 'faststart', 'mpegts_flags': "
+                    "'resend_headers'} — emitted as -<key> <value> before "
+                    "the output path. Keys and values are validated against "
+                    "the table.",
+    )
+
+    @model_validator(mode="after")
+    def _mode_consistency(self) -> "OutputSpec":
+        out = self
+        video_only_fields = (
+            ("video_bitrate_kbps", out.video_bitrate_kbps),
+            ("pixel_format", out.pixel_format),
+            ("video_profile", out.video_profile),
+            ("video_preset", out.video_preset),
+            ("gpu", out.gpu),
+        )
+        if out.mode == "video":
+            if out.video_codec is None:
+                raise ValueError("a video output needs a video_codec")
+        elif out.mode == "audio":
+            if out.video_codec is not None:
+                raise ValueError("an audio-only output has no video_codec")
+            if out.audio_mode is not AudioMode.ENCODE:
+                raise ValueError(
+                    "an audio-only output must keep (encode) its audio; "
+                    "'remove' would produce an empty file"
+                )
+            for name, val in video_only_fields:
+                if val not in (None, False):
+                    raise ValueError(
+                        f"{name} does not apply to an audio-only output"
+                    )
+        else:  # subtitles
+            if subtitle_dump_codec(out.container) is None:
+                raise ValueError(
+                    "a subtitle dump output needs a subtitle file container "
+                    "(srt_file, vtt_file or ass_file)"
+                )
+            if out.video_codec is not None or out.audio_codec is not None:
+                raise ValueError(
+                    "a subtitle dump output has no video or audio codec"
+                )
+            for name, val in video_only_fields:
+                if val not in (None, False):
+                    raise ValueError(
+                        f"{name} does not apply to a subtitle dump output"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _capability(self) -> "OutputSpec":
+        for err in capability_errors(self):
+            raise ValueError(err)
+        if self.mode == "video" and self.video_profile is not None:
+            allowed = video_profiles_for(self.video_codec)
+            if self.video_profile not in allowed:
+                raise ValueError(
+                    f"video_profile '{self.video_profile}' does not apply to "
+                    f"{self.video_codec.upper()} "
+                    f"(allowed: {', '.join(allowed) or 'none'})"
+                )
+        if self.mode == "video" and self.pixel_format is not None:
+            pf_err = pixel_format_error(self.video_codec, self.pixel_format)
+            if pf_err:
+                raise ValueError(pf_err)
+        for err in format_option_errors(self.container, self.format_options):
+            raise ValueError(err)
+        return self
 
 # ---------------------------------------------------------------- operations
 
@@ -218,10 +329,34 @@ class WatermarkOp(BaseModel):
     scale_percent: int = Field(default=100, ge=10, le=100)
 
 
+class FilterOp(BaseModel):
+    """Apply FFmpeg filter(s) by expression, from the registry 'filters'
+    allowlist: one filter instance ('loudnorm') or a comma-joined chain of
+    same-domain filters ('eq=contrast=1.2, fade=t=out:st=9:d=1.5').
+
+    domain 'video' appends to the -vf chain (video outputs only);
+    domain 'audio' appends to the -af chain. A full labeled graph (multiple
+    outputs, mixed domains) goes to EditPlan.filtergraph instead — it
+    cannot be combined with a watermark or burned subtitles, which own the
+    filter graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["filter"] = "filter"
+    domain: Literal["video", "audio"] = "video"
+    expr: str = Field(min_length=1, max_length=512)
+
+    @model_validator(mode="after")
+    def _valid_expr(self) -> "FilterOp":
+        for err in filter_expr_problems(self.expr):
+            raise ValueError(f"filter expression rejected: {err}")
+        return self
+
+
 Operation = Annotated[
     Union[
         ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, SubtitleOp,
-        CropOp, SpeedOp, RotateOp, AudioResampleOp,
+        CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp,
     ],
     Field(discriminator="type"),
 ]
@@ -240,8 +375,18 @@ class EditPlan(BaseModel):
         default=None, max_length=1024,
         description="Stream destination for the output (M3b). Only stream "
                     "schemes are allowed (rtmp://, rtmps://, rtsp://, rtsps://"
-                    ", srt://, udp://, rtp://, tcp://); the scheme fixes the "
-                    "output container (see the registry).",
+                    ", srt://, udp://, rtp://, tcp://, http://, https://); "
+                    "the scheme fixes the output container (see the "
+                    "registry — http/https derive it from the URL path "
+                    "extension, defaulting to mpegts).",
+    )
+    filtergraph: str | None = Field(
+        default=None, max_length=4096,
+        description="A full FFmpeg filter graph (filter_complex body): "
+                    "labeled chains, e.g. '[0:v]split=2[main][wm];[wm]"
+                    "boxblur=2:2[wm2]'. Every filter must be in the "
+                    "registry allowlist. Cannot be combined with a watermark "
+                    "or burned subtitles.",
     )
 
     @model_validator(mode="after")
@@ -267,6 +412,26 @@ class EditPlan(BaseModel):
                         "speed", "rotate", "audio_resample"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:
                 raise ValueError(f"the MVP supports at most one {op_type} operation")
+        return self
+
+    @model_validator(mode="after")
+    def _filtergraph_consistent(self) -> "EditPlan":
+        g = self.filtergraph
+        if g is None:
+            return self
+        g = g.strip()
+        if not g or any(c in g for c in "\x00\n\r\t"):
+            raise ValueError("filtergraph must be a nonempty single-line graph")
+        for err in filtergraph_problems(g):
+            raise ValueError(f"filtergraph rejected: {err}")
+        if any(o.type == "watermark" for o in self.operations) or any(
+                o.type == "subtitles" and o.mode == "burn"
+                for o in self.operations):
+            raise ValueError(
+                "a custom filtergraph cannot be combined with a watermark or "
+                "burned subtitles — they own the filter graph; use one or the other"
+            )
+        self.filtergraph = g
         return self
 
     def ops_of(self, op_type: str) -> list:

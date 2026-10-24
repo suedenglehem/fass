@@ -443,7 +443,7 @@
       "output": {"container": "mp4", "video_codec": "h265", "audio_mode": "encode"},
       "operations": []
     },
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "video_codec": "vp9"}
   },
   {
     "id": "bench-078",

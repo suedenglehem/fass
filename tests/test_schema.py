@@ -125,7 +125,7 @@ def test_mpegts_container_accepted():
     plan(output=OutputSpec(container="mpegts", video_codec="h264"))
     plan(output=OutputSpec(container="mpegts", video_codec="h265"))
     with pytest.raises(ValidationError):
-        OutputSpec(container="avi", video_codec="h264")
+        OutputSpec(container="avi", video_codec="vp9")
 
 
 def test_asset_accepts_allowlisted_stream_urls():
@@ -218,6 +218,8 @@ def test_output_destination_accepts_stream_urls():
         "udp://127.0.0.1:5004",
         "rtp://239.0.0.1:5004",
         "tcp://host:8554/live",
+        "http://cdn.example.com/out.mp4",
+        "https://cdn.example.com/live.ts",
     ):
         assert plan(output_destination=url).output_destination == url
 
@@ -226,8 +228,6 @@ def test_output_destination_rejects_non_stream_urls():
     # plain filenames are the application's job, never the plan's
     with pytest.raises(ValidationError):
         plan(output_destination="out.mp4")
-    with pytest.raises(ValidationError):
-        plan(output_destination="http://cdn.example.com/out.mp4")
     with pytest.raises(ValidationError):
         plan(output_destination="ftp://example.com/out")
     # a path that merely contains a colon is not a scheme

@@ -25,14 +25,47 @@ def matrix_error(container: str, video_codec: str) -> str | None:
     combination, else None."""
     row = REGISTRY["matrix"].get(container)
     if row is None:
-        return f"container '{container}' is not in the MVP container set"
+        return f"container '{container}' is not in the supported container set"
     if video_codec not in row["video"]:
-        allowed = ", ".join(row["video"])
+        allowed = ", ".join(row["video"]) or "audio/subtitles only"
         return (
             f"video codec '{video_codec}' is not supported in {container.upper()} "
             f"(supported: {allowed})"
         )
     return None
+
+
+def matrix_row(container: str) -> dict | None:
+    return REGISTRY["matrix"].get(container)
+
+
+def video_codecs_for(container: str) -> list[str]:
+    row = REGISTRY["matrix"].get(container)
+    return list(row["video"]) if row else []
+
+
+def audio_codecs_for(container: str) -> list[str]:
+    row = REGISTRY["matrix"].get(container)
+    return list(row["audio"]) if row else []
+
+
+def audio_codec_for(container: str, audio_codec: str | None) -> str | None:
+    """The output audio codec for a container: the explicit choice when the
+    matrix allows it, else the container's default (None for video-only /
+    subtitle containers)."""
+    row = REGISTRY["matrix"].get(container)
+    if row is None:
+        return audio_codec
+    allowed = row["audio"]
+    if audio_codec is not None:
+        return audio_codec if audio_codec in allowed else None
+    return row["audio_codec"]
+
+
+def audio_container_for_codec(audio_codec: str) -> str | None:
+    """Natural file container for an audio codec with no explicit container
+    (mp3 → mp3, aac → m4a, flac → flac, pcm → wav, …)."""
+    return REGISTRY["audio_container_for_codec"].get(audio_codec)
 
 
 def default_codec(container: str) -> str:
@@ -48,16 +81,71 @@ def extension_for(container: str) -> str:
 
 
 def capability_check(container: str, video_codec: str) -> list[str]:
-    """Capability-level validation (PRD FR-5). Returns a list of errors."""
-    errors = []
-    row = REGISTRY["matrix"].get(container)
+    """Capability-level validation (PRD FR-5), video mode. Returns a list
+    of errors."""
+    return capability_errors(_SimpleSpec("video", container, video_codec))
+
+
+class _SimpleSpec:
+    """Duck-typed OutputSpec stand-in for capability_errors."""
+    __slots__ = ("mode", "container", "video_codec", "audio_codec")
+
+    def __init__(self, mode, container, video_codec, audio_codec=None):
+        self.mode = mode
+        self.container = container
+        self.video_codec = video_codec
+        self.audio_codec = audio_codec
+
+
+def capability_errors(spec) -> list[str]:
+    """Mode-aware capability validation (PRD FR-5) for an OutputSpec-shaped
+    object (mode / container / video_codec / audio_codec). Returns a list of
+    errors — empty when the combination is inside the supported matrix."""
+    errors: list[str] = []
+    row = REGISTRY["matrix"].get(spec.container)
     if row is None:
-        errors.append(f"container '{container}' is not supported")
+        errors.append(f"container '{spec.container}' is not supported")
         return errors
-    if video_codec not in row["video"]:
+    if spec.mode == "subtitles":
+        if spec.container not in REGISTRY["subtitles"]["dump_codecs"]:
+            errors.append(
+                f"subtitle dumping needs a subtitle file container "
+                f"(srt, vtt or ass — '{spec.container}' is not one)"
+            )
+        if spec.video_codec is not None:
+            errors.append("a subtitle dump output has no video codec")
+        if spec.audio_codec is not None:
+            errors.append("a subtitle dump output has no audio codec")
+        return errors
+    if spec.mode == "audio":
+        if spec.video_codec is not None:
+            errors.append("an audio-only output has no video codec")
+        if spec.audio_codec is None:
+            errors.append(
+                f"audio-only output to {spec.container.upper()} needs an "
+                f"audio codec (supported: {', '.join(row['audio']) or 'none'})"
+            )
+        elif spec.audio_codec not in row["audio"]:
+            errors.append(
+                f"audio codec '{spec.audio_codec}' is not supported in "
+                f"{spec.container.upper()} (supported: {', '.join(row['audio'])})"
+            )
+        return errors
+    # video mode
+    if spec.video_codec is None:
         errors.append(
-            f"video codec '{video_codec}' is not supported in {container.upper()} "
-            f"(supported: {', '.join(row['video'])})"
+            f"video output to {spec.container.upper()} needs a video codec "
+            f"(supported: {', '.join(row['video']) or 'none'})"
+        )
+    elif spec.video_codec not in row["video"]:
+        errors.append(
+            f"video codec '{spec.video_codec}' is not supported in "
+            f"{spec.container.upper()} (supported: {', '.join(row['video'])})"
+        )
+    if spec.audio_codec is not None and spec.audio_codec not in row["audio"]:
+        errors.append(
+            f"audio codec '{spec.audio_codec}' is not supported in "
+            f"{spec.container.upper()} (supported: {', '.join(row['audio']) or 'none'})"
         )
     return errors
 
@@ -87,15 +175,43 @@ def stream_scheme(url: str) -> str | None:
     return scheme.lower()
 
 
+def container_from_extension(ext: str) -> str | None:
+    """Container whose extension list contains ``ext`` (lowercase, no dot).
+    Stream-only containers (rtsp, srt) never match — they are protocol
+    endpoints, not files."""
+    ext = ext.lower().lstrip(".")
+    for name, c in REGISTRY["containers"].items():
+        if c.get("file") is False:
+            continue
+        if ext in c["extensions"]:
+            return name
+    return None
+
+
 def stream_output_info(url: str) -> tuple[str, str] | None:
-    """(container, muxer) for a stream *output* destination, else None."""
+    """(container, muxer) for a stream *output* destination, else None.
+
+    Schemes with a fixed container (rtmp, srt, udp, …) return it directly;
+    http/https derive the container from the URL path extension
+    (.mp4 → mp4, .ts → mpegts, .m3u8 → hls, .mp3 → mp3, …) falling back to
+    the scheme's default (mpegts) when the path has no recognized
+    extension — HTTP live pushing conventionally carries MPEG-TS."""
     scheme = stream_scheme(url)
     if scheme is None:
         return None
     info = _streaming()["output"].get(scheme)
     if info is None:
         return None
-    return info["container"], info["muxer"]
+    if "muxer" in info:
+        return info["container"], info["muxer"]
+    # container_from: "extension" (http/https)
+    from urllib.parse import urlsplit
+    path = urlsplit(url).path
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    container = container_from_extension(ext) if ext else None
+    if container is None:
+        container = info["default_container"]
+    return container, REGISTRY["containers"][container]["muxer"]
 
 
 def input_format_for(url: str) -> str | None:
@@ -110,6 +226,23 @@ def input_format_for(url: str) -> str | None:
 def output_schemes() -> list[str]:
     """URL schemes allowed on stream *output* destinations."""
     return list(_streaming()["output"])
+
+
+def all_muxers() -> set[str]:
+    """Every muxer name fass may emit: the containers' muxers plus the
+    fixed-container stream muxers. Used by the executor's argv
+    allowlist (validated before a process is spawned)."""
+    muxers = {c["muxer"] for c in REGISTRY["containers"].values()}
+    for info in _streaming()["output"].values():
+        if "muxer" in info:
+            muxers.add(info["muxer"])
+    return muxers
+
+
+def stream_output_schemes() -> list[str]:
+    """Schemes whose output container is FIXED (a bare filename of that
+    container's kind is a contradiction, not a stream)."""
+    return [s for s, i in _streaming()["output"].items() if "muxer" in i]
 
 
 # ---------------------------------------------------------------- M4 helpers
@@ -287,3 +420,377 @@ def subtitle_burn_expr(path: str) -> str:
     """
     escaped = _SUB_FILTER_ESCAPES.sub(r"\\\1", _SUB_FILTER_ESCAPES.sub(r"\\\1", path))
     return f"{subtitle_burn_filter(path)}={escaped}"
+
+
+def subtitle_dump_codec(container: str) -> str | None:
+    """Encoder a subtitle dump (mode \"subtitles\") writes for the container
+    (srt_file → srt, vtt_file → webvtt, ass_file → ass), or None."""
+    return REGISTRY["subtitles"]["dump_codecs"].get(container)
+
+
+# ------------------------------------------------------- format options (M7)
+
+# Which registry option-group a container uses (the "mp4" group carries the
+# movflags/brand/fragmentation options of the whole MPEG-4 family).
+_FORMAT_OPTION_GROUPS = {
+    "mp4": "mp4", "mov": "mp4", "m4a": "mp4", "3gp": "mp4",
+    "mpegts": "mpegts", "hls": "hls", "avi": "avi", "flv": "flv",
+    "mp3": "mp3", "wav": "wav",
+}
+
+_RATE = re.compile(r"^\d+(\.\d+)?[kKmM]?$")
+_NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
+_INT = re.compile(r"^-?\d+$")
+_BRAND = re.compile(r"^[a-z0-9]{4}$")
+_META_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_]*$")
+
+
+def format_option_specs(container: str) -> dict[str, dict]:
+    """{key: spec} of every '-<key> value' option the container accepts: the
+    generic set plus the container's own group (mp4/mpegts/hls/avi/flv/mp3/wav)."""
+    specs = dict(REGISTRY["format_options"]["generic"])
+    group = _FORMAT_OPTION_GROUPS.get(container)
+    if group:
+        specs.update(REGISTRY["format_options"].get(group, {}))
+    return specs
+
+
+def _validate_option_value(key: str, spec: dict, value: str) -> str | None:
+    kind = spec["kind"]
+    lo, hi = spec.get("range", (None, None))
+    if kind == "rate":
+        if not _RATE.match(value):
+            return f"{key}: '{value}' is not a bitrate (e.g. 1000k)"
+    elif kind == "number":
+        if not _NUMBER.match(value):
+            return f"{key}: '{value}' is not a number (seconds)"
+        v = float(value)
+    elif kind == "int":
+        if not _INT.match(value):
+            return f"{key}: '{value}' is not an integer"
+        v = int(value)
+    else:
+        v = None
+    if kind in ("number", "int") and v is not None:
+        if lo is not None and v < lo:
+            return f"{key}: {v} is below the minimum {lo}"
+        if hi is not None and v > hi:
+            return f"{key}: {v} is above the maximum {hi}"
+    if kind == "bool":
+        if value not in ("0", "1"):
+            return f"{key}: expected 0 or 1, got '{value}'"
+    elif kind == "choice":
+        if value not in spec["values"]:
+            return (
+                f"{key}: '{value}' is not one of "
+                f"{', '.join(spec['values'])}"
+            )
+    elif kind == "flagset":
+        # FFmpeg flag syntax: flags joined with '+', each optionally prefixed
+        # with '+' (set) or '-' (clear) — e.g. '+faststart-use_mmf'.
+        parts = [p for p in value.split("+") if p]
+        if not parts:
+            return f"{key}: empty flag list"
+        bad = [p for p in parts if p.lstrip("+-") not in spec["values"]]
+        if bad:
+            return (
+                f"{key}: unknown flag(s) {', '.join(bad)} "
+                f"(valid: {', '.join(spec['values'])})"
+            )
+    elif kind == "metadata":
+        # comma-joined key=value pairs (one -metadata flag per pair at the
+        # command line); a value may contain spaces but not commas
+        for pair in value.split(","):
+            pair = pair.strip()
+            if not pair or "=" not in pair:
+                return f"{key}: '{pair}' is not a key=value tag"
+            k, _, val = pair.partition("=")
+            if not _META_KEY.match(k):
+                return f"{key}: invalid metadata tag name '{k}'"
+            if not val.strip():
+                return f"{key}: tag '{k}' has an empty value"
+    elif kind == "brand":
+        if not _BRAND.match(value):
+            return f"{key}: '{value}' is not a 4-character brand"
+    elif kind == "url":
+        if " " in value or not value:
+            return f"{key}: '{value}' is not a URL"
+    return None
+
+
+def format_option_errors(container: str, options: dict[str, str]) -> list[str]:
+    """Validate output.format_options against the registry table. Every key
+    must exist for the container and every value must match its kind."""
+    if not options:
+        return []
+    specs = format_option_specs(container)
+    errors = []
+    for key in sorted(options):
+        spec = specs.get(key)
+        if spec is None:
+            allowed = ", ".join(sorted(specs))
+            errors.append(
+                f"format option '{key}' is not a valid option for "
+                f"{container} (valid: {allowed})"
+            )
+            continue
+        err = _validate_option_value(key, spec, str(options[key]))
+        if err:
+            errors.append(err)
+    return errors
+
+
+# ------------------------------------------------------- filters (M7)
+
+def filter_names(domain: str) -> set[str]:
+    """Allowlisted filter names for 'video' or 'audio'."""
+    return set(REGISTRY["filters"].get(domain, {}))
+
+
+def all_filter_names() -> set[str]:
+    return filter_names("video") | filter_names("audio")
+
+
+# Filters that take no argument at all — anything after '=' is a mistake.
+_NO_ARG_FILTERS = {"hflip", "vflip", "anull"}
+
+_ARG_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _balanced_quotes(s: str) -> bool:
+    """Single quotes must pair up, honoring backslash escapes (FFmpeg
+    filter-arg quoting)."""
+    in_quote = False
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if c == "'":
+            in_quote = not in_quote
+        i += 1
+    return not in_quote
+
+
+def filtergraph_problems(graph: str) -> list[str]:
+    """Public name (schema validators and the executor call this)."""
+    return _filtergraph_problems(graph)
+
+
+def _filtergraph_problems(graph: str) -> list[str]:
+    """Validate one filter instance or a full filter graph (filter_complex
+    body). Splits top-level ';' (chains) and ',' (instances) honoring
+    backslash escapes and '…' quoting; checks every filter name against the
+    allowlist and the argument character set. Returns a list of problems —
+    empty when the graph is buildable."""
+    problems: list[str] = []
+    if not graph or not graph.strip():
+        return ["filtergraph is empty"]
+    if ";" in graph or "," in graph or "[" in graph:
+        chains = _split_top_level(graph, ";")
+    else:
+        chains = [graph]
+    for chain in chains:
+        _validate_chain(chain, problems)
+    if not problems:
+        names = {part.split("=", 1)[0].split("[", 1)[0].strip()
+                 for part in _split_top_level(graph, ",")}
+        if not names:
+            problems.append("filtergraph contains no filter")
+    return problems
+
+
+def filtergraph_output_labels(graph: str) -> list[str]:
+    """The graph's output pad labels — defined but never consumed as an
+    input — in definition order. Empty for an unlabeled graph: FFmpeg
+    auto-maps such pads to the output streams, so no -map is needed."""
+    if not graph:
+        return []
+    refs: set[str] = set()
+    defs: list[str] = []
+    for chain in _split_top_level(graph, ";"):
+        body = chain.strip()
+        if not body:
+            continue
+        if body.startswith("["):
+            end = body.find("]")
+            if end < 0:
+                continue
+            if _LABEL.match(body[1:end]):
+                refs.add(body[1:end])
+            body = body[end + 1:]
+        for inst in _split_top_level(body, ","):
+            s = inst.strip()
+            if not s:
+                continue
+            if s.startswith("["):
+                end = s.find("]")
+                if end < 0:
+                    continue
+                if _LABEL.match(s[1:end]):
+                    refs.add(s[1:end])
+                s = s[end + 1:]
+            # trailing labels are quote-safe: a real '[label]' is the last
+            # thing in the instance, a quoted "…[x]" ends with "'"
+            while s.endswith("]"):
+                start = s.rfind("[")
+                if start < 0:
+                    break
+                label = s[start + 1:-1]
+                if label and _LABEL.match(label):
+                    defs.append(label)
+                    s = s[:start]
+                elif not label:
+                    s = s[:start]
+                else:
+                    break
+    out: list[str] = []
+    for d in defs:
+        if d not in refs and d not in out:
+            out.append(d)
+    return out
+
+
+def _unquoted(s: str) -> str:
+    """The string with its quoted spans ('…' and "…") removed, honoring
+    backslash escapes — what a filter-arg parser sees as structure."""
+    out: list[str] = []
+    quote: str | None = None
+    esc = False
+    for ch in s:
+        if quote:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def filter_expr_problems(expr: str) -> list[str]:
+    """Validate a FilterOp expression: a filter instance or same-domain
+    chain that gets SPLICED into a larger chain, so it must not carry pad
+    labels ('[x]' / '[0:v]') — labels are only meaningful in a full
+    filtergraph (EditPlan.filtergraph). Brackets inside quoted arguments
+    (drawtext=text='[x]') are fine."""
+    problems = _filtergraph_problems(expr)
+    if problems:
+        return problems
+    if "[" in _unquoted(expr) or "]" in _unquoted(expr):
+        problems.append(
+            "pad labels ('[x]') are not allowed in a filter operation — "
+            "they belong to a full filtergraph (EditPlan.filtergraph)"
+        )
+    return problems
+
+
+def _split_top_level(s: str, sep: str) -> list[str]:
+    """Split on an unescaped, unquoted ``sep`` (also honoring the OTHER
+    separator so 'a=1;b' inside a quoted value never splits)."""
+    parts: list[str] = []
+    buf: list[str] = []
+    in_quote = False
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\" and i + 1 < n:
+            buf.append(s[i:i + 2])
+            i += 2
+            continue
+        if c == "'":
+            in_quote = not in_quote
+        if c == sep and not in_quote:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(c)
+        i += 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _validate_chain(chain: str, problems: list[str]) -> None:
+    chain = chain.strip()
+    if not chain:
+        problems.append("filtergraph has an empty chain (stray ';')")
+        return
+    # optional input label
+    body = chain
+    if body.startswith("["):
+        end = body.find("]")
+        if end < 0:
+            problems.append(f"unterminated label in '{chain[:40]}'")
+            return
+        label = body[1:end]
+        if not _LABEL.match(label):
+            problems.append(f"invalid stream label '[{label}]'")
+        body = body[end + 1:]
+    instances = _split_top_level(body, ",")
+    for inst in instances:
+        inst = inst.strip()
+        if not inst:
+            problems.append("filtergraph has an empty filter (stray ',')")
+            continue
+        _validate_instance(inst, problems)
+
+
+_LABEL = re.compile(r"^[0-9]+(:[a-zA-Z0-9]+)?$|^[a-zA-Z][a-zA-Z0-9_]*$")
+
+
+def _strip_trailing_labels(s: str) -> str:
+    """Drop '[label]' (or '[]') suffixes — chain output labels."""
+    while s.endswith("]"):
+        start = s.rfind("[")
+        if start < 0:
+            break
+        label = s[start + 1:-1]
+        if not label or _LABEL.match(label):
+            s = s[:start]
+        else:
+            break
+    return s
+
+
+def _validate_instance(inst: str, problems: list[str]) -> None:
+    """One filter instance: 'name', 'name=args', plus optional input/output
+    '[label]'s — stripped before the name/argument split."""
+    s = inst
+    if s.startswith("["):
+        end = s.find("]")
+        if end < 0:
+            problems.append(f"unterminated label in '{s[:40]}'")
+            return
+        if not _LABEL.match(s[1:end]):
+            problems.append(f"invalid stream label '[{s[1:end]}]'")
+        s = s[end + 1:]
+    s = _strip_trailing_labels(s)
+    if "=" in s:
+        name, _, args = s.partition("=")
+    else:
+        name, args = s, ""
+    name = name.strip()
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]*", name):
+        problems.append(f"'{name}' is not a filter name (in '{inst[:60]}')")
+        return
+    if name in _NO_ARG_FILTERS and args:
+        problems.append(f"filter '{name}' takes no arguments")
+        return
+    if name not in all_filter_names():
+        problems.append(
+            f"filter '{name}' is not in the supported filter set"
+        )
+        return
+    if args and _ARG_FORBIDDEN.search(args):
+        problems.append(f"filter '{name}' arguments contain control characters")
+        return
+    if args and not _balanced_quotes(args):
+        problems.append(f"filter '{name}' has unbalanced quotes in its arguments")
+    if ";" in args:
+        problems.append(f"filter '{name}' arguments contain ';' (chain separator)")
+

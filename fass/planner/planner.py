@@ -18,23 +18,21 @@ from fass.registry import (
     audio_for,
     atempo_limits,
     bsf_for_copy,
-    capability_check,
+    capability_errors,
     extension_for,
+    filtergraph_output_labels,
     gpu_coder,
     input_format_for,
     output_device_for,
     output_device_parts,
     output_schemes,
-    pixel_format_error,
-    sample_rates,
     soft_subtitle_codec,
     source_spec_parts,
     stream_output_info,
     stream_scheme,
     subtitle_burn_expr,
+    subtitle_dump_codec,
     subtitle_input_format,
-    video_presets_for,
-    video_profiles_for,
 )
 from fass.schema import (
     AssetKind,
@@ -178,6 +176,18 @@ def _atempo_chain(op: SpeedOp) -> str:
     return ",".join("atempo=" + fmt_num(p) for p in parts)
 
 
+def _audio_filter_chain(edit: EditPlan) -> str | None:
+    """The -af chain: speed changes (atempo) plus audio filter operations,
+    in user-specified order. None when the output audio is untouched."""
+    parts: list[str] = []
+    for o in edit.operations:
+        if o.type == "speed":
+            parts.append(_atempo_chain(o))
+        elif o.type == "filter" and o.domain == "audio":
+            parts.append(o.expr)
+    return ",".join(parts) if parts else None
+
+
 def _crop_too_big(edit: EditPlan, metadata: MediaInfo) -> str | None:
     """A crop must fit the video as it exists at that point in the chain —
     earlier rotate/resize ops change the working dimensions."""
@@ -246,6 +256,10 @@ def build_video_chain(operations: list, defaults: list[str],
                 parts.append(_rotate_expr(o))
             elif o.type == "speed":
                 parts.append(_setpts_expr(o))
+            elif o.type == "filter" and o.domain == "video":
+                # FilterOp.expr is label-free (schema-validated) — it splices
+                # straight into the -vf chain in user-specified order.
+                parts.append(o.expr)
             elif o.type == "subtitles" and sub_exprs:
                 parts.append(sub_exprs[o.asset_id])
             # a soft subtitle is muxed as a track, not filtered — no segment
@@ -267,6 +281,8 @@ def build_video_chain(operations: list, defaults: list[str],
             segs.append(f"{src}{_rotate_expr(o)}[{out}]")
         elif o.type == "speed":
             segs.append(f"{src}{_setpts_expr(o)}[{out}]")
+        elif o.type == "filter" and o.domain == "video":
+            segs.append(f"{src}{o.expr}[{out}]")
         elif o.type == "subtitles":
             if not sub_exprs:
                 # soft subtitle: muxed as a track, not a filter — skip the
@@ -297,6 +313,25 @@ def _audio_compatible(metadata: MediaInfo, container: str,
     return metadata.audio_codec in allowed
 
 
+def _matrix_flags(container: str, format_options: dict[str, str]) -> list[str]:
+    """The container's matrix flags (-movflags +faststart & co.), minus any
+    flag the plan sets explicitly through format_options — the explicit
+    value wins instead of emitting two of the same option."""
+    flags = list(REGISTRY["matrix"].get(container, {}).get("flags", []))
+    if not format_options:
+        return flags
+    skip = {f"-{k}" for k in format_options}
+    out: list[str] = []
+    i = 0
+    while i < len(flags):
+        if flags[i] in skip:
+            i += 2  # drop the whole -flag value pair
+        else:
+            out.append(flags[i])
+            i += 1
+    return out
+
+
 def plan_execution(
     edit: EditPlan,
     assets: dict,
@@ -308,20 +343,19 @@ def plan_execution(
     Raises PlanError with all semantic/capability problems found.
     """
     errors: list[str] = []
-    errors.extend(capability_check(edit.output.container, edit.output.video_codec))
+    errors.extend(capability_errors(edit.output))
     if len(edit.operations) > MAX_OPERATIONS:
         errors.append(f"at most {MAX_OPERATIONS} operations are supported per request")
 
     out = edit.output
-    if out.pixel_format is not None:
-        pf_err = pixel_format_error(out.video_codec, out.pixel_format)
-        if pf_err:
-            errors.append(pf_err)
-    if out.video_profile is not None and not video_profiles_for(out.video_codec):
-        errors.append(
-            f"encoder profiles are only supported for H.264 in the MVP "
-            f"('{out.video_profile}' does not apply to {out.video_codec.upper()})"
-        )
+    ar_ops = edit.ops_of("audio_replace")
+    # A remove followed by a replace still produces audio — the replacement
+    # track stands in for the removed one.
+    audio_survives = out.audio_mode != AudioMode.REMOVE or bool(ar_ops)
+    # The per-codec checks (video_profile, pixel_format) are the schema's
+    # job (OutputSpec._capability); pixel_format/video_profile/video_preset/
+    # gpu are schema-forbidden outside video mode, so the remaining checks
+    # are safe for every mode.
     if out.video_preset is not None and out.video_codec != "h264":
         errors.append(
             f"encoder presets are only supported for H.264 (x264) in the MVP "
@@ -348,14 +382,26 @@ def plan_execution(
                     f"'{out.video_profile}' has no GPU form"
                 )
     resample = edit.ops_of("audio_resample")
-    if resample and out.audio_mode == AudioMode.REMOVE:
+    if resample and not audio_survives:
         errors.append("the audio is removed, so it cannot be resampled")
+    if not audio_survives and any(
+            o.type == "filter" and o.domain == "audio" for o in edit.operations):
+        errors.append("the audio is removed, so it cannot be filtered")
 
     input_asset = assets.get(edit.input_id)
     if input_asset is None:
         errors.append(f"asset id '{edit.input_id}' is not in the asset map")
-    elif input_asset.kind not in (AssetKind.VIDEO, AssetKind.SOURCE):
-        errors.append(f"asset '{edit.input_id}' is not a video or a source")
+    elif input_asset.kind not in {
+            "video": (AssetKind.VIDEO, AssetKind.SOURCE),
+            "audio": (AssetKind.VIDEO, AssetKind.SOURCE, AssetKind.AUDIO),
+            "subtitles": (AssetKind.VIDEO, AssetKind.SOURCE),
+        }[out.mode]:
+        errors.append(f"asset '{edit.input_id}' " + {
+            "video": "is not a video or a source",
+            "audio": "is not a video, source or audio file",
+            "subtitles": ("is not a video or a source (subtitles are dumped "
+                          "from a video's subtitle stream)"),
+        }[out.mode])
 
     wm_assets: list = []
     for o in edit.ops_of("watermark"):
@@ -409,6 +455,60 @@ def plan_execution(
                     "or write MP4 / MOV / MKV"
                 )
 
+    # -- mode-specific operation restrictions --------------------------------
+    if out.mode == "audio":
+        for o in edit.operations:
+            if o.type in ("resize", "grayscale", "watermark", "subtitles",
+                          "crop", "rotate"):
+                errors.append(
+                    f"operation '{o.type}' is a video edit — an audio-only output "
+                    "has no video (supported: speed change, audio resample, "
+                    "audio replace, audio filter)"
+                )
+            elif o.type == "filter" and o.domain == "video":
+                errors.append("a video filter does not apply to an audio-only output")
+    elif out.mode == "subtitles":
+        for o in edit.operations:
+            errors.append(
+                f"subtitle dumping takes no operations — it writes the input's "
+                f"subtitle stream as-is (drop the '{o.type}' operation)"
+            )
+    if edit.filtergraph:
+        if out.mode == "audio":
+            errors.append(
+                "a filtergraph is a video filter graph — it cannot target an "
+                "audio-only output (use an audio filter operation instead)"
+            )
+        elif out.mode == "subtitles":
+            errors.append(
+                "a subtitle dump output has no video to filter — drop the filtergraph"
+            )
+        else:
+            # The graph replaces the built video chain, so operations the
+            # chain would have built are dead weight and get rejected.
+            chain_ops = sorted({
+                o.type for o in edit.operations
+                if o.type in ("resize", "grayscale", "crop", "rotate", "speed",
+                              "watermark", "subtitles")
+                or (o.type == "filter" and o.domain == "video")
+            })
+            for t in chain_ops:
+                errors.append(
+                    f"operation '{t}' is part of the video filter chain — the "
+                    "filtergraph replaces that chain (drop the operation or "
+                    "the filtergraph)"
+                )
+            # A labeled graph gets explicit -map entries; an unlabeled one
+            # falls back to FFmpeg's auto-map, which cannot run alongside the
+            # explicit audio/subtitle maps those streams need.
+            if not filtergraph_output_labels(edit.filtergraph) and (
+                    ar_ops or any(o.mode == "soft" for o in sub_ops)):
+                errors.append(
+                    "this filtergraph has no output label — add one (e.g. end "
+                    "it with '[v]') so its output can be mapped alongside the "
+                    "replacement audio / subtitles"
+                )
+
     if errors:
         raise PlanError(errors)
 
@@ -458,10 +558,15 @@ def plan_execution(
                 "(write e.g. 'alsa:hw:0' without ';key=value')"
             ])
         device, out_path = parts[0], parts[1]
+        if out.mode == "subtitles":
+            raise PlanError([
+                "a subtitle dump writes a .srt/.vtt/.ass file — it cannot "
+                "target an audio device"
+            ])
         video_ops = sorted({
             o.type for o in edit.operations
             if o.type in ("resize", "crop", "rotate", "speed", "grayscale",
-                          "watermark", "subtitles")
+                          "watermark", "subtitles", "filter")
         })
         if video_ops:
             raise PlanError([
@@ -497,6 +602,18 @@ def plan_execution(
                 out_path = f"{stem}_out.{ext}"
             defaults.append(f"output filename defaulted to '{out_path}'")
 
+        if out.container == "hls" and out_path:
+            # HLS on disk is the .m3u8 playlist; the muxer writes the media
+            # segments next to it. Force the extension and the explicit muxer.
+            muxer = "hls"
+            if os.path.splitext(out_path)[1].lower() != ".m3u8":
+                base, _ = os.path.splitext(out_path)
+                out_path = f"{base}.m3u8"
+                defaults.append(
+                    "HLS output uses a .m3u8 playlist file (the muxer writes "
+                    "the media segments next to it)"
+                )
+
         real_out = os.path.realpath(out_path)
         if real_out == os.path.realpath(in_path):
             # Only reachable for an explicit -o (the default was de-collided above).
@@ -511,37 +628,77 @@ def plan_execution(
     # -- remux vs re-encode ------------------------------------------------
     has_trim = edit.trim is not None
     # Soft subtitles only mux a track — they touch no frame, so they do not
-    # force a re-encode (M5). Burning is a filter chain and does.
+    # force a re-encode (M5). Burning is a filter chain and does. Any other
+    # operation (filters, resample, replace, ...) touches a stream and does.
     forced_ops = [o for o in edit.operations
                   if not (o.type == "subtitles" and o.mode == "soft")]
-    # PRD FR-4: trimming re-encodes. An explicit target bitrate also forces
-    # a re-encode: stream copy cannot honor a bitrate the input does not have.
-    needs_reencode = (has_trim or bool(forced_ops)
-                      or edit.output.video_bitrate_kbps is not None)
 
-    if not needs_reencode:
-        if metadata and metadata.video_codec == edit.output.video_codec and \
-                _audio_compatible(metadata, edit.output.container, edit.output.audio_mode):
-            mode = "copy"
+    if out.mode == "subtitles":
+        # A dump is always a stream copy of the subtitle track.
+        if metadata is not None and metadata.subtitle_streams == 0:
+            raise PlanError(["the input has no subtitle stream to dump"])
+        mode = "copy"
+    elif out.mode == "audio":
+        if metadata is not None and not metadata.has_audio and not ar_assets:
+            raise PlanError(["the input has no audio stream to extract"])
+        # PRD FR-4: trimming re-encodes; an explicit target bitrate forces a
+        # re-encode (stream copy cannot honor a bitrate the input lacks);
+        # any operation (atempo/resample/filter/replace) needs decoding.
+        needs_reencode = (has_trim or bool(forced_ops)
+                          or out.audio_bitrate_kbps is not None)
+        if not needs_reencode:
+            if metadata and metadata.audio_codec == out.audio_codec:
+                mode = "copy"
+            else:
+                mode = "reencode"
+                if metadata:
+                    warnings.append(
+                        f"input audio is {metadata.audio_codec}; encoding to "
+                        f"{out.audio_codec} to match the requested output"
+                    )
+                elif stream_scheme(in_path) is not None:
+                    defaults.append(
+                        "input is a remote stream — it can't be probed locally, so the "
+                        "audio is re-encoded to guarantee the requested codec/container"
+                    )
+                else:
+                    defaults.append(
+                        "no media metadata provided — the audio is re-encoded to "
+                        "guarantee the requested codec/container (supply probe "
+                        "metadata to allow a lossless remux when compatible)"
+                    )
         else:
             mode = "reencode"
-            if metadata:
-                warnings.append(
-                    f"input video is {metadata.video_codec}; re-encoding to "
-                    f"{edit.output.video_codec} to match the requested output"
-                )
-            elif stream_scheme(in_path) is not None:
-                defaults.append(
-                    "input is a remote stream — it can't be probed locally, so the output is "
-                    "re-encoded to guarantee the requested codec/container"
-                )
-            else:
-                defaults.append(
-                    "no media metadata provided — re-encoding to guarantee the requested "
-                    "codec/container (supply probe metadata to allow a lossless remux when compatible)"
-                )
     else:
-        mode = "reencode"
+        # PRD FR-4: trimming re-encodes. An explicit target bitrate also
+        # forces a re-encode: stream copy cannot honor a bitrate the input
+        # does not have. A filtergraph decodes the video, so it re-encodes too.
+        needs_reencode = (has_trim or bool(forced_ops)
+                          or bool(edit.filtergraph)
+                          or edit.output.video_bitrate_kbps is not None)
+        if not needs_reencode:
+            if metadata and metadata.video_codec == edit.output.video_codec and \
+                    _audio_compatible(metadata, edit.output.container, edit.output.audio_mode):
+                mode = "copy"
+            else:
+                mode = "reencode"
+                if metadata:
+                    warnings.append(
+                        f"input video is {metadata.video_codec}; re-encoding to "
+                        f"{edit.output.video_codec} to match the requested output"
+                    )
+                elif stream_scheme(in_path) is not None:
+                    defaults.append(
+                        "input is a remote stream — it can't be probed locally, so the output is "
+                        "re-encoded to guarantee the requested codec/container"
+                    )
+                else:
+                    defaults.append(
+                        "no media metadata provided — re-encoding to guarantee the requested "
+                        "codec/container (supply probe metadata to allow a lossless remux when compatible)"
+                    )
+        else:
+            mode = "reencode"
 
     if edit.output.gpu and mode == "copy":
         warnings.append(
@@ -550,6 +707,11 @@ def plan_execution(
         )
     if device is not None:
         ep = _build_device_plan(edit, in_path, out_path, device, ar_path, defaults)
+    elif out.mode == "subtitles":
+        ep = _build_subtitle_plan(edit, in_path, out_path, defaults)
+    elif out.mode == "audio":
+        ep = _build_audio_plan(edit, in_path, out_path, metadata, mode,
+                               ar_path, defaults)
     elif mode == "copy":
         sub_enc = soft_subtitle_codec(edit.output.container) if sub_path else None
         ep = _build_copy_plan(edit, in_path, out_path, metadata,
@@ -574,6 +736,11 @@ def plan_execution(
         # explicit muxer for the stream destination (registry streaming.output);
         # the destination token is already last in the argv (builder contract)
         ep.output_opts = ["-f", muxer] + ep.output_opts
+    if out.format_options and device is None:
+        # Registry-validated container/format options (hls_time, movflags,
+        # mpegts_flags, ...) — emitted as -<key> <value> before the output path.
+        ep.output_opts += [tok for k, v in sorted(out.format_options.items())
+                           for tok in (f"-{k}", v)]
     _metadata_warnings(ep, edit, metadata)
     return ep
 
@@ -677,14 +844,25 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         inputs.append(InputSpec(audio_path))
     audio_idx = len(inputs) - 1 if audio_path else None
 
-    chain_mode, chain, vlabel = build_video_chain(
-        edit.operations, defaults, sub_exprs=sub_exprs)
-    if chain_mode == "complex":
-        vf, fcomplex = None, chain
-        maps = [f"[{vlabel}]"]
+    fg_labels: list[str] = []
+    if edit.filtergraph:
+        # A full filtergraph replaces the built chain: its labeled output
+        # pads are mapped explicitly. An unlabeled graph emits no -map at
+        # all — FFmpeg auto-maps the graph output plus audio/subtitles
+        # (plan_execution rejects that mix when explicit audio/subtitle
+        # maps are required).
+        vf, fcomplex = None, edit.filtergraph
+        fg_labels = filtergraph_output_labels(edit.filtergraph)
+        maps = [f"[{l}]" for l in fg_labels]
     else:
-        vf, fcomplex = (chain or None), None
-        maps = ["0:v:0"]
+        chain_mode, chain, vlabel = build_video_chain(
+            edit.operations, defaults, sub_exprs=sub_exprs)
+        if chain_mode == "complex":
+            vf, fcomplex = None, chain
+            maps = [f"[{vlabel}]"]
+        else:
+            vf, fcomplex = (chain or None), None
+            maps = ["0:v:0"]
 
     ar_op = edit.ops_of("audio_replace")
     audio_remove = edit.output.audio_mode == AudioMode.REMOVE and not ar_op
@@ -692,7 +870,9 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         # replacement audio: first audio stream of the extra input, never the
         # input's own track (and never an optional map)
         maps.append(f"{audio_idx}:a:0")
-    elif not audio_remove:
+    elif not audio_remove and not (edit.filtergraph and not fg_labels):
+        # explicit maps: keep the optional audio map; auto-map (unlabeled
+        # graph) already picks the audio stream on its own
         maps.append("0:a?")
 
     if sub_idx is not None:
@@ -700,13 +880,12 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         # No -shortest — subtitles may legitimately be shorter than the video.
         maps.append(f"{sub_idx}:s:0")
 
-    # Speed change: video timestamps are scaled in the filter chain
-    # (setpts, built above); the audio side is an atempo chain on -af.
-    # -af is inert when the output has no audio stream, so it is only
-    # emitted when audio survives.
+    # Audio side of speed changes (atempo) plus audio filter operations:
+    # one -af chain, in user-specified order. -af is inert when the output
+    # has no audio stream, so it is only emitted when audio survives.
     speed_ops = edit.ops_of("speed")
     speed_op = speed_ops[0] if speed_ops else None
-    af = _atempo_chain(speed_op) if speed_op is not None and not audio_remove else None
+    af = _audio_filter_chain(edit) if not audio_remove else None
 
     opts: list[str] = []
     if edit.trim is not None and edit.trim.is_bounded:
@@ -779,7 +958,10 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         # stream copy); -shortest ends the output when the shorter of the
         # video and the replacement audio ends.
         ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]
-        opts += ["-c:a", ac["encoder"], "-b:a", f"{ac['bitrate_kbps']}k", "-shortest"]
+        opts += ["-c:a", ac["encoder"]]
+        if ac.get("bitrate_kbps") is not None:
+            opts += ["-b:a", f"{ac['bitrate_kbps']}k"]
+        opts.append("-shortest")
         defaults.append(
             f"audio replaced with the first audio stream of '{audio_path}'; "
             "-shortest: output ends when the shorter of video and replacement audio ends"
@@ -788,7 +970,9 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         opts.append("-an")
     else:
         ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]
-        opts += ["-c:a", ac["encoder"], "-b:a", f"{ac['bitrate_kbps']}k"]
+        opts += ["-c:a", ac["encoder"]]
+        if ac.get("bitrate_kbps") is not None:
+            opts += ["-b:a", f"{ac['bitrate_kbps']}k"]
         # Audio resampler targets (-ar / -ac); inert when the output has no
         # audio stream.
         for ro in edit.ops_of("audio_resample"):
@@ -815,7 +999,7 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
             "(soft — no re-encode)"
         )
 
-    opts += REGISTRY["matrix"][edit.output.container].get("flags", [])
+    opts += _matrix_flags(edit.output.container, edit.output.format_options)
 
     return ExecutionPlan(
         mode="reencode",
@@ -826,6 +1010,117 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         output_opts=opts,
         output_path=out_path,
         af=af,
+    )
+
+
+def _build_audio_plan(edit: EditPlan, in_path: str, out_path: str,
+                      metadata: MediaInfo | None, mode: str,
+                      ar_path: str | None, defaults: list[str]) -> ExecutionPlan:
+    """Audio-only output: extract the audio track (and re-encode it when the
+    codec/container requires — the decision was made in plan_execution)."""
+    inputs = [_main_input(in_path)]
+    if edit.trim is not None:
+        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    if ar_path:
+        inputs.append(InputSpec(ar_path))
+    audio_idx = len(inputs) - 1 if ar_path else None
+    maps = [f"{audio_idx}:a:0" if ar_path else "0:a:0"]
+
+    opts: list[str] = []
+    speed_op = edit.ops_of("speed")[0] if edit.ops_of("speed") else None
+    if edit.trim is not None and edit.trim.is_bounded:
+        dur = edit.trim.duration_seconds
+        if speed_op is not None:
+            dur = dur / speed_op.factor
+            defaults.append(
+                f"output duration {fmt_num(dur)}s: the trimmed "
+                f"{fmt_num(edit.trim.duration_seconds)}s of source at "
+                f"{fmt_num(speed_op.factor)}x speed"
+            )
+        opts += ["-t", fmt_num(dur)]
+
+    if mode == "copy":
+        opts += ["-c", "copy"]
+        codec = metadata.audio_codec if metadata is not None \
+            else edit.output.audio_codec
+        absf = audio_bsf_for_copy(
+            _container_from_path(in_path) or "",
+            edit.output.container,
+            codec,
+        )
+        if absf:
+            opts += ["-bsf:a", absf]
+            defaults.append(
+                f"remuxing {codec} to {edit.output.container} needs bitstream "
+                f"filter '{absf}' — the compressed stream is re-stamped without "
+                "re-encoding"
+            )
+    else:
+        ac = REGISTRY["audio_codecs"][edit.output.audio_codec]
+        opts += ["-c:a", ac["encoder"]]
+        kbps = edit.output.audio_bitrate_kbps or ac.get("bitrate_kbps")
+        if kbps is not None:
+            opts += ["-b:a", f"{kbps}k"]
+            if edit.output.audio_bitrate_kbps is None:
+                defaults.append(
+                    f"audio bitrate {kbps} kbps (codec default for "
+                    f"{edit.output.audio_codec})"
+                )
+        else:
+            defaults.append(
+                f"{edit.output.audio_codec} carries no bitrate "
+                "(lossless/PCM) — none applied"
+            )
+        for ro in edit.ops_of("audio_resample"):
+            if ro.sample_rate is not None:
+                opts += ["-ar", str(ro.sample_rate)]
+                defaults.append(f"audio sample rate {ro.sample_rate} Hz")
+            if ro.channels is not None:
+                opts += ["-ac", str(ro.channels)]
+                defaults.append(f"audio channels {ro.channels}")
+    if ar_path:
+        defaults.append(f"audio replaced with the first audio stream of '{ar_path}'")
+
+    af = _audio_filter_chain(edit)
+    opts += _matrix_flags(edit.output.container, edit.output.format_options)
+
+    return ExecutionPlan(
+        mode=mode,
+        inputs=inputs,
+        vf=None,
+        filter_complex=None,
+        maps=maps,
+        output_opts=opts,
+        output_path=out_path,
+        af=af,
+    )
+
+
+def _build_subtitle_plan(edit: EditPlan, in_path: str, out_path: str,
+                         defaults: list[str]) -> ExecutionPlan:
+    """Subtitle dump: write the input's first subtitle stream to a file.
+
+    No -c:s: the srt/vtt/ass muxer decodes the AVSubtitle stream itself —
+    text formats are written by the muxer, not an encoder."""
+    inputs = [_main_input(in_path)]
+    if edit.trim is not None:
+        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    opts: list[str] = []
+    if edit.trim is not None and edit.trim.is_bounded:
+        opts += ["-t", fmt_num(edit.trim.duration_seconds)]
+    codec = subtitle_dump_codec(edit.output.container)
+    defaults.append(
+        f"the first subtitle stream is written as {codec} "
+        "(the muxer decodes the subtitle stream itself — no codec flag)"
+    )
+    return ExecutionPlan(
+        mode="copy",
+        inputs=inputs,
+        vf=None,
+        filter_complex=None,
+        maps=["0:s:0"],
+        output_opts=opts,
+        output_path=out_path,
     )
 
 
@@ -870,25 +1165,31 @@ def _build_device_plan(edit: EditPlan, in_path: str, out_path: str,
 def _metadata_warnings(ep: ExecutionPlan, edit: EditPlan, metadata: MediaInfo | None) -> None:
     if metadata is None:
         return
-    if metadata.hdr:
-        ep.warnings.append(
-            "input looks like HDR; the SDR presets will convert it — check the output before distributing"
-        )
-    if metadata.rotation:
-        ep.warnings.append(
-            f"input carries rotation metadata ({metadata.rotation}°); the decoded geometry may differ "
-            "from the stored dimensions"
-        )
-    if metadata.video_streams > 1 or metadata.audio_streams > 1:
-        ep.warnings.append(
-            "additional streams are excluded (only the first video and first audio stream are used)"
-        )
-    if metadata.subtitle_streams > 0 and not any(
-            o.type == "subtitles" for o in edit.operations):
-        ep.warnings.append(
-            f"the input has {metadata.subtitle_streams} subtitle stream(s); they are "
-            "not carried over (ask to keep or re-add subtitles to include them)"
-        )
+    if edit.output.mode == "video":
+        if metadata.hdr:
+            ep.warnings.append(
+                "input looks like HDR; the SDR presets will convert it — check the output before distributing"
+            )
+        if metadata.rotation:
+            ep.warnings.append(
+                f"input carries rotation metadata ({metadata.rotation}°); the decoded geometry may differ "
+                "from the stored dimensions"
+            )
+        if metadata.video_streams > 1 or metadata.audio_streams > 1:
+            ep.warnings.append(
+                "additional streams are excluded (only the first video and first audio stream are used)"
+            )
+        if metadata.subtitle_streams > 0 and not any(
+                o.type == "subtitles" for o in edit.operations):
+            ep.warnings.append(
+                f"the input has {metadata.subtitle_streams} subtitle stream(s); they are "
+                "not carried over (ask to keep or re-add subtitles to include them)"
+            )
+    elif edit.output.mode == "audio":
+        if metadata.audio_streams > 1:
+            ep.warnings.append(
+                "additional audio streams are excluded (only the first audio stream is used)"
+            )
     trim = edit.trim
     if trim is not None and metadata.duration is not None:
         if trim.start_seconds > metadata.duration:

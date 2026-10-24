@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from fass.builder import build_argv
 from fass.planner import PlanError, plan_execution
@@ -128,8 +129,9 @@ def test_explicit_output_equal_input_rejected():
 
 
 def test_matrix_violation_rejected():
-    with pytest.raises(PlanError):
-        ep_for(output=OutputSpec(container="webm", video_codec="h264"))
+    # codec/container pairs are validated at the schema level (registry matrix)
+    with pytest.raises(ValidationError):
+        OutputSpec(container="webm", video_codec="h264")
 
 
 def test_missing_watermark_asset_rejected():
@@ -352,10 +354,18 @@ def test_output_filename_stream_url_needs_matching_plan_container():
         plan_execution(edit, _assets(), None, "rtmp://host:1935/live")
 
 
+def test_http_stream_output_container_conflict():
+    # http output is supported; a .ts destination carries MPEG-TS, so an MP4
+    # plan conflicts with it
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    with pytest.raises(PlanError, match="carries MPEGTS"):
+        plan_execution(edit, _assets(), None, "http://cdn.example.com/out.ts")
+
+
 def test_non_stream_url_output_is_rejected():
     edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
     with pytest.raises(PlanError, match="not a supported stream"):
-        plan_execution(edit, _assets(), None, "http://cdn.example.com/out.ts")
+        plan_execution(edit, _assets(), None, "ftp://cdn.example.com/out.ts")
 
 
 def test_udp_stream_input_gets_mpegts_pre_opt():
@@ -516,8 +526,9 @@ def test_default_pix_fmt_is_codec_default():
 
 
 def test_profile_rejected_for_h265():
-    with pytest.raises(PlanError, match="only supported for H.264 in the MVP"):
-        ep_for(output=OutputSpec(container="mkv", video_codec="h265", video_profile="baseline"))
+    # per-codec profiles are validated at the schema level (OutputSpec._capability)
+    with pytest.raises(ValidationError):
+        OutputSpec(container="mkv", video_codec="h265", video_profile="baseline")
 
 
 def test_preset_rejected_for_non_h264():
@@ -528,8 +539,9 @@ def test_preset_rejected_for_non_h264():
 
 
 def test_pixel_format_outside_matrix_rejected():
-    with pytest.raises(PlanError, match="not supported by H264"):
-        ep_for(output=OutputSpec(container="mp4", video_codec="h264", pixel_format="yuv444p"))
+    # per-codec pixel formats are validated at the schema level (registry matrix)
+    with pytest.raises(ValidationError, match="not supported by H264"):
+        OutputSpec(container="mp4", video_codec="h264", pixel_format="yuv444p")
 
 
 # ------------------------------------------------------------- M4: trim+speed

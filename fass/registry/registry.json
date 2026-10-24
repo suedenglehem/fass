@@ -1,20 +1,42 @@
 {
-  "registry_version": "1.7.0",
-  "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
+  "registry_version": "2.0.0",
+  "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
-    "version": "6.1.1",
-    "build": "Ubuntu 24.04 package (ffmpeg 6.1.1-3ubuntu5)",
-    "notes": "libx264, libhevc, libvpx-vp9, aac, libopus verified present on the development machine"
+    "version": "6.1.1 / 9.0.1",
+    "builds": "Ubuntu 24.04 package (6.1.1-3ubuntu5) and jrottenberg/ffmpeg:9.0-nvidia2404 (9.0.1) — both carry every encoder and muxer in this registry (the 6.1.1 build lacks the standalone AAC/ADTS muxer; preflight reports it)",
+    "notes": "libx264, libhevc, libvpx-vp9, libmp3lame, libvorbis, libopus, prores_ks, mpeg2video, mpeg4, mjpeg, gif, libwebp, mp2, ac3, eac3, alac, flac, pcm_*, dvvideo verified present on both"
   },
   "containers": {
-    "mp4": { "extensions": ["mp4", "m4v"] },
-    "mov": { "extensions": ["mov", "qt"] },
-    "mkv": { "extensions": ["mkv"] },
-    "webm": { "extensions": ["webm"] },
-    "mpegts": { "extensions": ["ts", "mts", "m2ts"] },
-    "flv": { "extensions": ["flv"] },
-    "rtsp": { "extensions": ["rtsp"] },
-    "srt": { "extensions": ["srt"] }
+    "mp4": { "extensions": ["mp4", "m4v"], "muxer": "mp4" },
+    "mov": { "extensions": ["mov", "qt"], "muxer": "mov" },
+    "mkv": { "extensions": ["mkv"], "muxer": "matroska" },
+    "webm": { "extensions": ["webm"], "muxer": "webm" },
+    "mpegts": { "extensions": ["ts", "mts", "m2ts"], "muxer": "mpegts" },
+    "flv": { "extensions": ["flv"], "muxer": "flv" },
+    "rtsp": { "extensions": ["rtsp"], "muxer": "rtsp", "file": false },
+    "srt": { "extensions": ["srt"], "muxer": "srt", "file": false },
+    "hls": { "extensions": ["m3u8"], "muxer": "hls", "note": "playlist + segment files, written into the output directory; -f hls is always emitted explicitly" },
+    "avi": { "extensions": ["avi"], "muxer": "avi" },
+    "mxf": { "extensions": ["mxf"], "muxer": "mxf", "note": "broadcast master wrapper (OP-Atom)" },
+    "vob": { "extensions": ["vob", "mpg"], "muxer": "vob", "note": "MPEG program stream (DVD/VOB)" },
+    "asf": { "extensions": ["asf", "wmv"], "muxer": "asf", "note": "Windows Media / ASF" },
+    "3gp": { "extensions": ["3gp"], "muxer": "3gp" },
+    "dv": { "extensions": ["dv"], "muxer": "dv", "note": "DV camcorder format" },
+    "gif": { "extensions": ["gif"], "muxer": "gif", "note": "animated GIF, no audio" },
+    "webp": { "extensions": ["webp"], "muxer": "webp", "note": "animated WebP, no audio" },
+    "mp3": { "extensions": ["mp3"], "muxer": "mp3", "note": "audio only" },
+    "mp2": { "extensions": ["mp2"], "muxer": "mp2", "note": "audio only, MPEG-1/2 audio stream" },
+    "m4a": { "extensions": ["m4a"], "muxer": "mp4", "note": "audio only (MPEG-4 audio file)" },
+    "aac": { "extensions": ["aac"], "muxer": "aac", "note": "audio only, ADTS framing" },
+    "ogg": { "extensions": ["ogg", "oga"], "muxer": "ogg", "note": "audio only" },
+    "flac": { "extensions": ["flac"], "muxer": "flac", "note": "audio only, lossless" },
+    "wav": { "extensions": ["wav"], "muxer": "wav", "note": "audio only, PCM" },
+    "aiff": { "extensions": ["aiff", "aif"], "muxer": "aiff", "note": "audio only, PCM" },
+    "mka": { "extensions": ["mka"], "muxer": "matroska", "note": "audio only (Matroska audio file)" },
+    "opus": { "extensions": ["opus"], "muxer": "opus", "note": "audio only (Ogg Opus)" },
+    "srt_file": { "extensions": ["srt"], "muxer": "srt", "note": "subtitle dump file (distinct from the srt:// streaming protocol)" },
+    "vtt_file": { "extensions": ["vtt"], "muxer": "webvtt", "note": "WebVTT subtitle dump file" },
+    "ass_file": { "extensions": ["ass", "ssa"], "muxer": "ass", "note": "ASS subtitle dump file" }
   },
   "video_codecs": {
     "h264": {
@@ -37,16 +59,66 @@
       "preset": { "crf": 32, "bitrate": "0" },
       "requires": "libvpx — built into FFmpeg",
       "note": "The standard WebM video codec."
+    },
+    "prores": {
+      "encoder": "prores_ks",
+      "pix_fmt": "yuv422p10le",
+      "preset": {},
+      "requires": "prores_ks — native encoder, built in",
+      "note": "Apple ProRes — 10-bit mastering/archive codec. Quality is set by the encoder profile (proxy/lt/standard/hq/4444/4444xq), not a quality preset; files are large."
+    },
+    "mpeg2": {
+      "encoder": "mpeg2video",
+      "pix_fmt": "yuv420p",
+      "preset": { "bitrate": "4000k" },
+      "requires": "mpeg2video — native encoder, built in",
+      "note": "MPEG-2 — broadcast / DVD / VOB material. Bitrate-targeted (no CRF)."
+    },
+    "mpeg4": {
+      "encoder": "mpeg4",
+      "pix_fmt": "yuv420p",
+      "preset": { "bitrate": "1500k" },
+      "requires": "mpeg4 (MPEG-4 Part 2) — native encoder, built in",
+      "note": "Legacy MPEG-4 Part 2 — classic AVI/WMV material."
+    },
+    "mjpeg": {
+      "encoder": "mjpeg",
+      "pix_fmt": "yuvj420p",
+      "preset": {},
+      "requires": "mjpeg — native encoder, built in",
+      "note": "MJPEG — independent JPEG frames (full-range yuvj420p)."
+    },
+    "dv": {
+      "encoder": "dvvideo",
+      "pix_fmt": "yuv420p",
+      "preset": {},
+      "requires": "dvvideo — native encoder, built in",
+      "note": "DV (PAL/NTSC DV camcorder standard), SD only."
+    },
+    "gif": {
+      "encoder": "gif",
+      "pix_fmt": "rgb24",
+      "preset": {},
+      "requires": "gif — native encoder, built in",
+      "note": "Animated GIF: 256 colors, no audio. Keep durations short."
+    },
+    "webp": {
+      "encoder": "libwebp",
+      "pix_fmt": "yuva420p",
+      "preset": {},
+      "requires": "libwebp — present in standard builds",
+      "note": "Animated WebP, no audio."
     }
   },
   "gpu": {
-    "description": "NVIDIA GPU encoding (M6). When plan.output.gpu is true the video encoder switches to the nvenc coder for the requested codec: h264 -> h264_nvenc, h265 -> hevc_nvenc. VP9 has no nvenc coder and is rejected. Audio is always CPU-encoded (aac/opus) — nvenc carries video only. The deployment must expose a GPU (docker --gpus / compose device reservation; see the gpu block of the deployment config).",
+    "description": "NVIDIA GPU encoding (M6). When plan.output.gpu is true the video encoder switches to the nvenc coder for the requested codec: h264 -> h264_nvenc, h265 -> hevc_nvenc. Every other codec (VP9, ProRes, MPEG-2, …) is CPU-only and rejected. Audio is always CPU-encoded — nvenc carries video only. The deployment must expose a GPU (docker --gpus / compose device reservation; see the gpu block of the deployment config).",
     "coders": {
       "h264": { "encoder": "h264_nvenc", "profiles": ["main", "high"] },
       "h265": { "encoder": "hevc_nvenc", "profiles": ["main", "high"] }
     },
     "constraints": {
       "vp9": "VP9 encoding is CPU-only (libvpx-vp9) — GPU is not available for it",
+      "other_codecs": "ProRes, MPEG-2, MPEG-4, MJPEG, DV, GIF and WebP are CPU-only (no nvenc coder)",
       "video_preset": "x264 speed presets (ultrafast..veryslow) are x264-specific and do not apply to nvenc",
       "video_profile": "nvenc supports the 'main' and 'high' profiles only; 'baseline' has no nvenc form",
       "bitrate": "a target video bitrate works unchanged: -b:v/-maxrate (nvenc's CBR-style target)",
@@ -55,20 +127,58 @@
   },
   "audio_codecs": {
     "aac": { "encoder": "aac", "bitrate_kbps": 160, "requires": "native aac encoder — built in" },
-    "opus": { "encoder": "libopus", "bitrate_kbps": 128, "requires": "libopus — built in" }
+    "opus": { "encoder": "libopus", "bitrate_kbps": 128, "requires": "libopus — built in" },
+    "mp2": { "encoder": "mp2", "bitrate_kbps": 192, "requires": "native mp2 encoder — built in", "note": "MPEG-1/2 Layer II — the classic broadcast MPEG-TS audio" },
+    "mp3": { "encoder": "libmp3lame", "bitrate_kbps": 128, "requires": "libmp3lame — present in standard builds" },
+    "ac3": { "encoder": "ac3", "bitrate_kbps": 448, "requires": "native ac3 encoder — built in", "note": "Dolby Digital; 448k is the 5.1 default" },
+    "eac3": { "encoder": "eac3", "bitrate_kbps": 448, "requires": "native eac3 encoder — built in", "note": "Dolby Digital Plus" },
+    "alac": { "encoder": "alac", "bitrate_kbps": null, "requires": "native alac encoder — built in", "note": "Apple Lossless — lossless, no bitrate flag" },
+    "flac": { "encoder": "flac", "bitrate_kbps": null, "requires": "native flac encoder — built in", "note": "lossless, no bitrate flag" },
+    "vorbis": { "encoder": "libvorbis", "bitrate_kbps": 128, "requires": "libvorbis — built in" },
+    "pcm_s16le": { "encoder": "pcm_s16le", "bitrate_kbps": null, "requires": "native PCM — built in", "note": "uncompressed 16-bit, no bitrate flag" },
+    "pcm_s24le": { "encoder": "pcm_s24le", "bitrate_kbps": null, "requires": "native PCM — built in", "note": "uncompressed 24-bit, no bitrate flag" },
+    "pcm_f32le": { "encoder": "pcm_f32le", "bitrate_kbps": null, "requires": "native PCM — built in", "note": "uncompressed 32-bit float, no bitrate flag" }
+  },
+  "audio_container_for_codec": {
+    "description": "When an audio-only output names a codec but no container, this is the natural file format for it.",
+    "mp2": "mp2", "mp3": "mp3", "aac": "m4a", "alac": "m4a", "opus": "opus",
+    "vorbis": "ogg", "flac": "flac", "pcm_s16le": "wav", "pcm_s24le": "wav",
+    "pcm_f32le": "wav", "ac3": "mp4", "eac3": "mp4"
   },
   "matrix": {
-    "mp4":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
-    "mov":  { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
-    "mkv":  { "video": ["h264", "h265", "vp9"], "audio": ["aac", "opus"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
-    "webm": { "video": ["vp9"], "audio": ["opus"], "default_video": "vp9", "audio_codec": "opus", "flags": [] },
-    "mpegts": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
-    "flv": { "video": ["h264"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "stream_only_note": "H.264+AAC only — what RTMP/RTMPS endpoints carry" },
+    "mp4":  { "video": ["h264", "h265", "vp9", "prores", "mjpeg"], "audio": ["aac", "opus", "ac3", "eac3", "alac", "mp3"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
+    "mov":  { "video": ["h264", "h265", "prores", "mjpeg"], "audio": ["aac", "alac", "ac3", "eac3", "mp3", "pcm_s16le"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
+    "mkv":  { "video": ["h264", "h265", "vp9", "prores", "mpeg4", "mjpeg"], "audio": ["aac", "opus", "vorbis", "mp3", "ac3", "eac3", "flac", "alac", "pcm_s16le"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "webm": { "video": ["vp9"], "audio": ["opus", "vorbis"], "default_video": "vp9", "audio_codec": "opus", "flags": [] },
+    "mpegts": { "video": ["h264", "h265", "mpeg2", "mpeg4"], "audio": ["aac", "mp2", "ac3", "eac3"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "flv": { "video": ["h264", "mpeg4"], "audio": ["aac", "mp3"], "default_video": "h264", "audio_codec": "aac", "flags": [], "stream_only_note": "RTMP/RTMPS endpoints carry h264/mpeg4 + aac/mp3" },
     "rtsp": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an rtsp(s):// destination; never a file" },
-    "srt": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an srt:// destination; never a file" }
+    "srt": { "video": ["h264", "h265"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an srt:// destination; never a file" },
+    "hls": { "video": ["h264", "h265", "mpeg2"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "HLS: .m3u8 playlist + transport segments in the output directory; tune with hls_* format options" },
+    "avi": { "video": ["mpeg4", "mjpeg", "h264", "mpeg2"], "audio": ["pcm_s16le", "mp3", "mp2", "ac3"], "default_video": "mpeg4", "audio_codec": "pcm_s16le", "flags": [] },
+    "mxf": { "video": ["h264", "mpeg2", "prores"], "audio": ["pcm_s16le", "aac", "ac3", "eac3"], "default_video": "h264", "audio_codec": "pcm_s16le", "flags": [] },
+    "vob": { "video": ["mpeg2"], "audio": ["mp2", "ac3"], "default_video": "mpeg2", "audio_codec": "mp2", "flags": [] },
+    "asf": { "video": ["mpeg4", "h264"], "audio": ["aac", "mp3", "pcm_s16le"], "default_video": "mpeg4", "audio_codec": "aac", "flags": [] },
+    "3gp": { "video": ["h264", "mpeg4"], "audio": ["aac"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "dv": { "video": ["dv"], "audio": ["pcm_s16le"], "default_video": "dv", "audio_codec": "pcm_s16le", "flags": [] },
+    "gif": { "video": ["gif"], "audio": [], "default_video": "gif", "audio_codec": null, "flags": [] },
+    "webp": { "video": ["webp"], "audio": ["opus", "vorbis"], "default_video": "webp", "audio_codec": null, "flags": [], "note": "the muxer has no audio path in the MVP — audio is dropped" },
+    "mp3": { "video": [], "audio": ["mp3"], "default_video": null, "audio_codec": "mp3", "flags": [] },
+    "mp2": { "video": [], "audio": ["mp2"], "default_video": null, "audio_codec": "mp2", "flags": [] },
+    "m4a": { "video": [], "audio": ["aac", "alac", "opus"], "default_video": null, "audio_codec": "aac", "flags": [] },
+    "aac": { "video": [], "audio": ["aac"], "default_video": null, "audio_codec": "aac", "flags": [] },
+    "ogg": { "video": [], "audio": ["vorbis", "opus", "flac", "pcm_s16le"], "default_video": null, "audio_codec": "vorbis", "flags": [] },
+    "flac": { "video": [], "audio": ["flac", "pcm_s16le"], "default_video": null, "audio_codec": "flac", "flags": [] },
+    "wav": { "video": [], "audio": ["pcm_s16le", "pcm_s24le", "pcm_f32le"], "default_video": null, "audio_codec": "pcm_s16le", "flags": [] },
+    "aiff": { "video": [], "audio": ["pcm_s16le", "pcm_f32le"], "default_video": null, "audio_codec": "pcm_s16le", "flags": [] },
+    "mka": { "video": [], "audio": ["vorbis", "opus", "flac", "aac", "mp3", "pcm_s16le", "alac"], "default_video": null, "audio_codec": "opus", "flags": [] },
+    "opus": { "video": [], "audio": ["opus"], "default_video": null, "audio_codec": "opus", "flags": [] },
+    "srt_file": { "video": [], "audio": [], "default_video": null, "audio_codec": null, "flags": [], "note": "subtitle dump: -map 0:s:0 -c:s srt" },
+    "vtt_file": { "video": [], "audio": [], "default_video": null, "audio_codec": null, "flags": [], "note": "subtitle dump: -map 0:s:0 -c:s webvtt" },
+    "ass_file": { "video": [], "audio": [], "default_video": null, "audio_codec": null, "flags": [], "note": "subtitle dump: -map 0:s:0 -c:s ass" }
   },
   "streaming": {
-    "description": "Stream / remote I/O (M3b). Inputs may be URLs with an allowlisted scheme (they are read by the user's local ffmpeg — fass never fetches or executes); outputs may be stream destinations, whose scheme fixes the container. Everything stays an argv token; stream destinations are disclosed in the explanation.",
+    "description": "Stream / remote I/O (M3b + protocol expansion). Inputs may be URLs with an allowlisted scheme (they are read by the user's local ffmpeg — fass never fetches or executes); outputs may be stream destinations. rtmp/rtmps/rtsp/rtsps/srt/udp/rtp/tcp have a fixed container; http/https derive the container from the URL path extension (.mp4 → mp4, .ts → mpegts, .m3u8 → hls, .mp3 → mp3, …) defaulting to mpegts, which is what HTTP live pushing conventionally carries. Everything stays an argv token; stream destinations are disclosed in the explanation.",
     "input_schemes": ["http", "https", "rtmp", "rtmps", "rtsp", "rtsps", "rtp", "udp", "tcp", "srt", "tls"],
     "output": {
       "rtmp":  { "container": "flv", "muxer": "flv" },
@@ -78,24 +188,147 @@
       "srt":   { "container": "srt", "muxer": "srt" },
       "udp":   { "container": "mpegts", "muxer": "mpegts" },
       "rtp":   { "container": "mpegts", "muxer": "mpegts" },
-      "tcp":   { "container": "mpegts", "muxer": "mpegts" }
+      "tcp":   { "container": "mpegts", "muxer": "mpegts" },
+      "http":  { "container_from": "extension", "default_container": "mpegts" },
+      "https": { "container_from": "extension", "default_container": "mpegts" }
     },
-    "input_format": { "udp": "mpegts", "rtp": "mpegts", "tcp": "mpegts" },
-    "note": "HTTP output (e.g. HLS .m3u8) is not in the MVP stream set — it writes segment files locally and needs per-destination tuning. Scheme defaults come from https://ffmpeg.org/ffmpeg-formats.html (rtmp->flv, rtsp->rtsp, udp/rtp/tcp->mpegts); fass still emits an explicit -f for stream destinations."
+    "input_format": { "udp": "mpegts", "rtp": "mpegts", "tcp": "mpegts", "srt": "srt" },
+    "note": "Scheme defaults come from https://ffmpeg.org/ffmpeg-formats.html (rtmp->flv, rtsp->rtsp, udp/rtp/tcp->mpegts); fass still emits an explicit -f for stream destinations. HTTP output uploads the encoded stream to the endpoint (the server must accept the PUT/POST upload)."
   },
-  "bitrate_policy": "An explicit target video bitrate (plan.output.video_bitrate_kbps) overrides the quality preset: -b:v and -maxrate at the target, plus -bufsize at 2x the target for H.264/H.265 (a CBR-style target; audio keeps its codec-preset bitrate).",
+  "format_options": {
+    "description": "Output-side container/format options (https://ffmpeg.org/ffmpeg-formats.html#Format-Options). Each key is a valid '-<key> value' pair on the output command; the plan carries them as output.format_options {key: value} and the executor validates every key/value against this table before spawning a process. 'kind' drives validation: rate (e.g. 1000k / 1000000), number (seconds, may be negative), int, bool (0/1), choice (one of values), flagset ('+'-joined flags, each optionally prefixed with +/-), metadata (key=value pairs), brand (4 lowercase alphanumerics), url.",
+    "generic": {
+      "bit_rate": { "kind": "rate", "description": "container-level bitrate (e.g. '1000k' or '1000000')" },
+      "max_bit_rate": { "kind": "rate", "description": "maximum container-level bitrate" },
+      "bufsize": { "kind": "rate", "description": "bitrate buffer size" },
+      "limit_rate": { "kind": "rate", "description": "maximum rate ffmpeg may use to read the input (streaming)" },
+      "metadata": { "kind": "metadata", "description": "write metadata tags, e.g. 'title=My Clip, comment=made with fass'" },
+      "map_metadata": { "kind": "choice", "values": ["-1", "0", "1"], "description": "map metadata from global/input 0/1 to global/input 0/1; -1 disables" },
+      "start_time": { "kind": "number", "description": "set the start timestamp of the output (seconds)" },
+      "output_ts_offset": { "kind": "number", "description": "offset the output timestamps (seconds, may be negative)" },
+      "pkt_timebase": { "kind": "choice", "values": ["auto", "-1", "0", "1"], "description": "packet timebase to write into the container" },
+      "avoid_negative_ts": { "kind": "choice", "values": ["auto", "make_non_negative", "make_zero", "leave"], "description": "how the muxer deals with negative timestamps" },
+      "muxdelay": { "kind": "number", "description": "max demux→mux delay in seconds (streaming)" },
+      "muxer_queue_size": { "kind": "int", "description": "max number of packets queued for muxing" },
+      "max_muxing_queue_size": { "kind": "int", "description": "max packets buffered per stream before dropping input frames" },
+      "max_interleave_delta": { "kind": "int", "description": "max interleaving duration in microseconds" },
+      "packetsize": { "kind": "int", "description": "force a fixed packet size (bytes)" },
+      "flush_packets": { "kind": "choice", "values": ["0", "1"], "description": "flush the stream at each muxing step (streaming)" },
+      "reserve": { "kind": "bool", "description": "reserve space for the index (MP4/ASF, e.g. old QuickTime compatibility)" }
+    },
+    "mp4": {
+      "movflags": { "kind": "flagset", "values": ["faststart", "omtf", "frag_keyframe", "empty_moov", "use_metadata_tags", "reflink", "omit_tfhd_default"], "description": "MP4/MOV/M4A file flags, '+'-joined with optional +/- prefix (faststart = move the index up front for web playback)" },
+      "brand": { "kind": "brand", "description": "override the MP4/MOV/3GP major brand, e.g. 'isom'" },
+      "max_bpf": { "kind": "int", "description": "max bytes per packet (MP4 fragment interleaving)" },
+      "write_btrt": { "kind": "bool", "description": "write the btrt MP4 atom even when values are 0" },
+      "write_tmcd": { "kind": "bool", "description": "write a tmcd atom with the specified timecode start" },
+      "ctts_delta": { "kind": "bool", "description": "force creation or suppression of the ctts atom" },
+      "use_metadata_tags": { "kind": "bool", "description": "use new-style metadata tags instead of XMP" },
+      "frag_duration": { "kind": "number", "description": "target duration (seconds) of fragmented-MP4 fragments (live streaming)" },
+      "frag_interval": { "kind": "number", "description": "force a new fragment at least every N seconds" },
+      "frag_every_key": { "kind": "bool", "description": "start a new fragment at every keyframe" },
+      "empty_moov": { "kind": "bool", "description": "write an empty moov atom up front (fragmented MP4 live)" },
+      "separate_moof": { "kind": "bool", "description": "write each moof into its own file (DASH segmenting)" }
+    },
+    "mpegts": {
+      "mpegts_flags": { "kind": "flagset", "values": ["resend_headers", "mpeg2", "non_idtr_cuts", "no_pcr", "skip_pmr", "set_pmt_program", "discard_duplicate_pid", "passthrough_stuff"], "description": "MPEG-TS muxer flags, '+'-joined with optional +/- prefix (resend_headers re-writes program headers periodically; mpeg2 uses MPEG-2 framing)" },
+      "mpegts_original_network_id": { "kind": "int", "range": [1, 65535], "description": "original network id" },
+      "mpegts_transport_stream_id": { "kind": "int", "range": [1, 65535], "description": "transport stream id" },
+      "mpegts_service_id": { "kind": "int", "range": [1, 65535], "description": "service id" },
+      "mpegts_service_type": { "kind": "choice", "values": ["digital_tv", "digital_radio", "teletext", "news", "movie", "weather", "sports", "music", "children"], "description": "service type (MPEG service info)" },
+      "mpegts_pmt_start_pid": { "kind": "int", "range": [0, 8191], "description": "first PID used in the PMT" },
+      "mpegts_start_pid": { "kind": "int", "range": [0, 8191], "description": "first PID assigned to the streams" },
+      "mpegts_initial_pcr_offset": { "kind": "number", "description": "initial PCR offset in seconds" },
+      "mpegts_m2ts_mode": { "kind": "bool", "description": "use the M2TS variant of the framing" }
+    },
+    "hls": {
+      "hls_time": { "kind": "number", "range": [0.1, 3600], "description": "target segment length in seconds (default 2)" },
+      "hls_list_size": { "kind": "int", "range": [0, 1000], "description": "max playlist entries; 0 = unbounded (default 5)" },
+      "hls_flags": { "kind": "flagset", "values": ["split_by_time", "append_list", "single_file", "independent_segments", "round_timestamps", "omit_list_end", "allow_cache", "delete_segments", "program_date_time", "rotation"], "description": "HLS behavior flags, comma-joined (split_by_time cuts on the wall clock, not keyframes)" },
+      "hls_segment_type": { "kind": "choice", "values": ["mp2t", "fmp4", "m4a", "passthrough"], "description": "segment container (default mp2t)" },
+      "hls_playlist_type": { "kind": "choice", "values": ["event", "vod"], "description": "playlist type: event (live) or vod (finished, full list)" },
+      "hls_start_number": { "kind": "int", "range": [0, 1000000], "description": "number of the first segment" },
+      "hls_allow_cache": { "kind": "bool", "description": "allow clients to cache segments (1) or not (0)" },
+      "hls_base_url": { "kind": "url", "description": "URL prefix prepended to playlist entries" },
+      "hls_segment_size": { "kind": "int", "range": [0, 1000000000], "description": "max segment size in bytes (0 = unlimited)" }
+    },
+    "avi": {
+      "use_auto_bvf": { "kind": "choice", "values": ["auto", "0", "1"], "description": "automatic B-VFLP (B-frame) writing for AVI" },
+      "use_odml": { "kind": "bool", "description": "write the ODML (Open DML) chunk for large AVI files" }
+    },
+    "flv": {
+      "flvflags": { "kind": "flagset", "values": ["no_duration", "no_filesize"], "description": "FLV file flags, comma-joined (no_duration omits the duration in the header — live)" }
+    },
+    "mp3": {
+      "id3v2_version": { "kind": "choice", "values": ["2.2", "2.3", "2.4"], "description": "ID3v2 tag version" },
+      "write_id3v1": { "kind": "bool", "description": "also write an ID3v1 tag (old players)" }
+    },
+    "wav": {
+      "write_xing": { "kind": "bool", "description": "write a Xing/Info header (duration) into the WAV file" }
+    }
+  },
+  "filters": {
+    "description": "Allowlisted FFmpeg filters (https://ffmpeg.org/ffmpeg-filters.html). The NLU may name these (FilterOp expr / plan.filtergraph); every filter instance in a graph is validated against this table — name, domain and argument characters — before a process is spawned. Filters that open files or devices beyond the plan's own inputs (movie=, avfilter sources, …) are deliberately absent from the allowlist.",
+    "video": {
+      "scale": { "description": "resize: 'scale=-2:480', 'scale=1280:-2', 'scale=1280:720'" },
+      "crop": { "description": "crop: 'crop=w:h', 'crop=w:h:x:y' (centered by default)" },
+      "pad": { "description": "pad/letterbox: 'pad=1280:720:(ow-iw)/2:(oh-ih)/2'" },
+      "transpose": { "description": "rotate 90°: 'transpose=1' (CW), 'transpose=2' (CCW), 'transpose=3'" },
+      "hflip": { "description": "flip horizontally (no arguments)" },
+      "vflip": { "description": "flip vertically (no arguments)" },
+      "setpts": { "description": "rescale video timestamps: 'setpts=PTS/2' (2x faster), 'setpts=2*PTS'" },
+      "hue": { "description": "hue/saturation: 'hue=s=0' (grayscale), 'hue=h=90', 'hue=r=0.5'" },
+      "format": { "description": "pixel format: 'format=yuv420p'" },
+      "eq": { "description": "brightness/contrast/saturation/gamma: 'eq=brightness=0.1:contrast=1.2:saturation=1.1'" },
+      "fade": { "description": "fade in/out: 'fade=t=in:st=0:d=1', 'fade=t=out:st=9:d=1.5'" },
+      "drawtext": { "description": "burn in text: 'drawtext=text=hi:x=10:y=10:fontsize=24:fontcolor=white'; 'drawtext=timestamp=localtime:x=10:y=10' for a timecode" },
+      "boxblur": { "description": "Gaussian blur: 'boxblur=2:2'" },
+      "unsharp": { "description": "sharpen: 'unsharp=5:5:1.0'" },
+      "split": { "description": "split the stream into N copies (graph filter): 'split=2'" },
+      "overlay": { "description": "overlay a second input: 'overlay=x:y' (graph filter)" },
+      "subtitles": { "description": "burn in a subtitle file: 'subtitles=file.srt' (path needs filter escaping)" },
+      "ass": { "description": "burn in an ass/ssa file: 'ass=file.ass'" }
+    },
+    "audio": {
+      "volume": { "description": "gain: 'volume=2' (x2), 'volume=-6dB', 'volume=0.5'" },
+      "afade": { "description": "audio fade: 'afade=t=in:st=0:d=1'" },
+      "atempo": { "description": "playback speed 0.5-2.0 per instance (chain for more)" },
+      "aresample": { "description": "resample: 'aresample=44100', 'aresample=44100:ocl=mono'" },
+      "aformat": { "description": "sample format/rate/channels: 'aformat=sample_rates=44100:sample_fmts=s16'" },
+      "anull": { "description": "pass audio through unchanged (no arguments)" },
+      "loudnorm": { "description": "EBU R128 loudness normalization: 'loudnorm' or 'loudnorm=I=-16:LRA=11:TP=-1.5'" },
+      "lowpass": { "description": "cut high frequencies: 'lowpass=f=3000'" },
+      "highpass": { "description": "cut low frequencies: 'highpass=f=200'" },
+      "bass": { "description": "bass boost/cut: 'bass=g=4:f=100:w=0.5'" },
+      "treble": { "description": "treble boost/cut: 'treble=g=-3:f=4000'" },
+      "aecho": { "description": "echo: 'aecho=0.8:0.88:60:0.4'" },
+      "alimiter": { "description": "limit peak loudness: 'alimiter=limit=0.95'" },
+      "adelay": { "description": "delay in ms: 'adelay=500', 'adelay=delays=500|0'" },
+      "apad": { "description": "pad with silence: 'apad=pad_dur=2'" },
+      "atrim": { "description": "trim audio: 'atrim=start=5:end=20'" }
+    }
+  },
+  "bitrate_policy": "An explicit target video bitrate (plan.output.video_bitrate_kbps) overrides the quality preset: -b:v and -maxrate at the target, plus -bufsize at 2x the target for H.264/H.265 (a CBR-style target; audio keeps its codec-preset bitrate). An explicit audio bitrate (plan.output.audio_bitrate_kbps) overrides the codec preset's -b:a; lossless/PCM codecs (flac, alac, pcm_*) take no bitrate flag and a requested one is reported as a note.",
   "pixel_formats": {
-    "description": "Output pixel formats per video codec (the scaling/pixel-format-conversion component). The codec's video_codecs[*].pix_fmt is the default; yuv420p10le is the 10-bit form, yuv444p full chroma (VP9 only in the MVP).",
+    "description": "Output pixel formats per video codec (the scaling/pixel-format-conversion component). The codec's video_codecs[*].pix_fmt is the default; yuv420p10le is the 10-bit form, yuv444p full chroma (VP9), yuvj420p full-range 8-bit (MJPEG), yuv422p10le/yuv444p10le are the ProRes forms, rgb24/yuva420p for GIF/WebP.",
     "h264": ["yuv420p", "yuv420p10le"],
     "h265": ["yuv420p", "yuv420p10le"],
-    "vp9": ["yuv420p", "yuv420p10le", "yuv444p"]
+    "vp9": ["yuv420p", "yuv420p10le", "yuv444p"],
+    "prores": ["yuv422p10le", "yuv444p10le"],
+    "mpeg2": ["yuv420p"],
+    "mpeg4": ["yuv420p"],
+    "mjpeg": ["yuvj420p", "yuv420p"],
+    "dv": ["yuv420p"],
+    "gif": ["rgb24"],
+    "webp": ["yuva420p", "yuv420p"]
   },
   "video_profiles": {
-    "description": "Encoder profiles (H.264 in the MVP): 'baseline' maximizes compatibility with old players.",
-    "h264": ["baseline", "main", "high"]
+    "description": "Encoder profiles: H.264 'baseline' maximizes compatibility with old players; ProRes profiles select the ProRes family (proxy..4444xq).",
+    "h264": ["baseline", "main", "high"],
+    "prores": ["proxy", "lt", "standard", "hq", "4444", "4444xq"]
   },
   "video_presets": {
-    "description": "x264 speed/quality trade-off presets (H.264 in the MVP; libhevc/libvpx-vp9 presets differ and are not exposed).",
+    "description": "x264 speed/quality trade-off presets (H.264 only; libhevc/libvpx-vp9 and the other codecs do not use x264 presets and are not exposed).",
     "h264": ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
   },
   "audio_resample": {
@@ -104,7 +337,7 @@
     "channel_layouts": [1, 2, 6]
   },
   "speed": {
-    "description": "Playback-speed change: setpts=PTS/factor on video, an atempo chain on audio (atempo accepts 0.5-2.0 per instance, so larger factors chain instances).",
+    "description": "Playback-speed change: setpts=PTS/factor on video, an atempo chain on audio (atempo accepts 0.5-2.0 per instance, so larger factors chain instances). For audio-only output the atempo chain is the only speed mechanism (no setpts).",
     "min": 0.25, "max": 8.0,
     "atempo_min": 0.5, "atempo_max": 2.0
   },
@@ -113,7 +346,7 @@
     "min": 16, "max": 8192
   },
   "bitstream_filters": {
-    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; when remuxing AAC audio out of MPEG-TS into MP4/MOV, the ADTS header must be stripped. Filters run on the compressed stream only, without re-encoding.",
+    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; when remuxing AAC audio out of MPEG-TS into MP4/MOV, the ADTS header must be stripped. Filters run on the compressed stream only, without re-encoding. For audio-only copy (extracting an audio track), the same AAC rule applies: AAC in MPEG-TS is ADTS-framed, MP4/MOV/M4A need the header stripped.",
     "mp4_mov_to_mpegts": { "h264": "h264_mp4toannexb", "h265": "hevc_mp4toannexb" },
     "mpegts_to_mp4_mov": { "aac": "aac_adtstoasc" }
   },
@@ -125,7 +358,7 @@
       "alsa":         { "options": true, "note": "Linux audio capture, e.g. 'alsa:hw:0'" },
       "dshow":        { "options": true, "note": "Windows devices" },
       "avfoundation": { "options": true, "note": "macOS devices" },
-      "x11grab":      { "options": true, "note": "X11 screen capture, e.g. 'x11grab::1.0+10,20;framerate=10'" }
+      "x11grab":      { "options": true, "note": "X11 screen capture, e.g. 'x11grab::1.0+1.0+10,20;framerate=10'" }
     },
     "output": ["alsa", "pulse"]
   },
@@ -158,7 +391,7 @@
       "description": "Change playback speed (factor 0.25-8).",
       "filter": "setpts=PTS/factor (video)",
       "audio": "-af atempo chain (0.5-2.0 per instance, chained for larger factors)",
-      "note": "A trim's source duration is divided by the factor; the output is shorter than the cut interval."
+      "note": "A trim's source duration is divided by the factor; the output is shorter than the cut interval. Audio-only output uses the atempo chain alone."
     },
     "rotate": {
       "description": "Rotate by a quarter turn (90/180/270; clockwise by default).",
@@ -168,16 +401,20 @@
     "audio_resample": {
       "description": "Resample the audio to a target sample rate and/or channel count.",
       "options": "-ar (Hz) / -ac (channels)",
-      "note": "Targets come from the audio_resample matrix; an audio-removed plan cannot resample."
+      "note": "Targets come from the audio_resample matrix."
     },
     "subtitles": {
       "description": "Add subtitles from a bound subtitle file (srt/ass/ssa/vtt), burned in (default) or as a selectable track.",
       "filter": "subtitles= (srt/vtt) / ass= (ass/ssa) for burn; -map N:s:0 + -c:s for soft",
       "note": "See the top-level 'subtitles' block: burn forces a re-encode, soft muxes mov_text (mp4/mov) or srt (mkv) and is copy-compatible. At most one subtitle operation per plan; the subtitle asset is bound outside the model."
+    },
+    "filter": {
+      "description": "Apply an FFmpeg filter by expression (a single filter instance or a comma-joined chain of same-domain filters), from the registry 'filters' allowlist: video filters (eq=, fade=, drawtext=, boxblur=, unsharp=, volume-like audio filters go to domain audio …), e.g. {\"type\": \"filter\", \"domain\": \"video\", \"expr\": \"eq=contrast=1.2\"} or {\"type\": \"filter\", \"domain\": \"audio\", \"expr\": \"loudnorm\"}. The whole expression is validated against the allowlist; anything else is rejected.",
+      "note": "Raw FFmpeg filter syntax, allowlist-validated. A full labeled graph (multiple outputs, audio+video in one graph) goes to plan.filtergraph instead — it cannot be combined with a watermark or burned subtitles, which own the filter graph."
     }
   },
   "subtitles": {
-    "description": "Subtitle support (the subtitles/demuxer-encoder component). Subtitles arrive as a typed asset (srt/ass/ssa/vtt) and are either burned into the video (hard-coded, libass) or muxed as a selectable track (soft).",
+    "description": "Subtitle support (the subtitles/demuxer-encoder component). Subtitles arrive as a typed asset (srt/ass/ssa/vtt) and are either burned into the video (hard-coded, libass) or muxed as a selectable track (soft). The input's own subtitle tracks can also be DUMPED to a file: output mode \"subtitles\" with a srt_file/vtt_file/ass_file container emits -map 0:s:0 -c:s <codec>.",
     "input_formats": ["srt", "ass", "ssa", "vtt"],
     "burn_filters": {
       "srt": "subtitles",
@@ -190,16 +427,21 @@
       "mov": "mov_text",
       "mkv": "srt"
     },
+    "dump_codecs": {
+      "srt_file": "srt",
+      "vtt_file": "webvtt",
+      "ass_file": "ass"
+    },
     "default_mode": "burn",
-    "note": "burn uses the libass filters 'subtitles=' (srt/vtt) or 'ass=' (ass/ssa) in the video filter chain and forces a video re-encode; the filename needs two layers of FFmpeg filter escaping (graph parser, then filter-option parser). soft muxes a selectable track: mp4/mov → mov_text, mkv → srt (encoded from the source format); other containers (webm, mpegts, flv, rtsp, srt) have no soft-subtitle codec and soft mode is rejected there. soft mode never forces a video re-encode — it is compatible with -c copy. Filenames containing ':' cannot be handled by FFmpeg at all (its URL layer parses them as a protocol); the planner rejects them with a clear error. No -shortest: subtitles may legitimately be shorter or longer than the video."
+    "note": "burn uses the libass filters 'subtitles=' (srt/vtt) or 'ass=' (ass/ssa) in the video filter chain and forces a video re-encode; the filename needs two layers of FFmpeg filter escaping (graph parser, then filter-option parser). soft muxes a selectable track: mp4/mov → mov_text, mkv → srt (encoded from the source format); other containers (webm, mpegts, flv, rtsp, srt) have no soft-subtitle codec and soft mode is rejected there. soft mode never forces a video re-encode — it is compatible with -c copy. dump (mode \"subtitles\") writes the input's first subtitle stream to a .srt/.vtt/.ass file: -map 0:s:0 -c:s srt|webvtt|ass. Filenames containing ':' cannot be handled by FFmpeg at all (its URL layer parses them as a protocol); the planner rejects them with a clear error. No -shortest: subtitles may legitimately be shorter or longer than the video."
   },
   "stream_selection": {
     "video": "0:v:0",
     "audio": "0:a:0 (first audio stream only; additional streams are excluded). With audio_replace, the mapped audio stream is the first audio stream of the replacement input instead.",
-    "note": "Additional streams beyond the first video and first audio are not carried over (visible notice in the explanation). Subtitle streams are the exception only when a soft-subtitle operation is present, in which case the first subtitle stream of the subtitle asset is mapped."
+    "note": "Additional streams beyond the first video and first audio are not carried over (visible notice in the explanation). Subtitle streams are the exception only when a soft-subtitle operation is present (first subtitle stream of the subtitle asset mapped) or the output mode is 'subtitles' (the first subtitle stream of the INPUT is dumped). Audio-only output maps 0:a:0 exclusively."
   },
   "trim_policy": "Trimming re-encodes: the MVP prioritizes accurate cuts over fast stream-copy cuts (PRD FR-4).",
-  "copy_policy": "Stream copy (remux) is chosen only when no filters are required AND media metadata proves the input streams already match the requested codecs. Without metadata the planner re-encodes and says so. Soft subtitles are compatible with copy (mapped with -map N:s:0 and encoded with -c:s, overriding -c copy for that stream only); burning subtitles is a filter and forces a re-encode.",
+  "copy_policy": "Stream copy (remux) is chosen only when no filters are required AND media metadata proves the input streams already match the requested codecs. Without metadata the planner re-encodes and says so. Audio-only output copies the source audio codec when the metadata proves it matches the requested audio codec (e.g. 'extract the audio' from an AAC file to M4A); otherwise it re-encodes. Soft subtitles are compatible with copy (mapped with -map N:s:0 and encoded with -c:s, overriding -c copy for that stream only); burning subtitles is a filter and forces a re-encode.",
   "docs_provenance": {
     "seeking_and_duration": "https://ffmpeg.org/ffmpeg.html (options -ss, -t; input vs output placement)",
     "stream_mapping": "https://ffmpeg.org/ffmpeg.html (-map)",
@@ -207,8 +449,13 @@
     "hue_filter": "https://ffmpeg.org/ffmpeg-filters.html#hue_2",
     "overlay_filter": "https://ffmpeg.org/ffmpeg-filters.html#overlay_2",
     "pad_filter": "https://ffmpeg.org/ffmpeg-filters.html#pad",
-    "encoders": "https://ffmpeg.org/ffmpeg-all.html (libx264, libhevc, libvpx-vp9, aac, libopus, h264_nvenc, hevc_nvenc)",
-    "formats": "https://ffmpeg.org/ffmpeg-formats.html (mp4, mov, matroska, webm)",
+    "eq_filter": "https://ffmpeg.org/ffmpeg-filters.html#eq_2",
+    "fade_filter": "https://ffmpeg.org/ffmpeg-filters.html#fade_2",
+    "drawtext_filter": "https://ffmpeg.org/ffmpeg-filters.html#drawtext_2",
+    "volume_filter": "https://ffmpeg.org/ffmpeg-filters.html#volume_2",
+    "loudnorm_filter": "https://ffmpeg.org/ffmpeg-filters.html#loudnorm_2",
+    "encoders": "https://ffmpeg.org/ffmpeg-all.html (libx264, libhevc, libvpx-vp9, prores_ks, mpeg2video, mpeg4, mjpeg, dvvideo, gif, libwebp, aac, libopus, mp2, libmp3lame, ac3, eac3, alac, flac, libvorbis, pcm_s16le/s24le/f32le, h264_nvenc, hevc_nvenc)",
+    "formats": "https://ffmpeg.org/ffmpeg-formats.html (mp4, mov, matroska, webm, mpegts, flv, hls, avi, mxf, vob, asf, 3gp, dv, gif, webp, mp3, m4a, aac, ogg, flac, wav, aiff, mka, opus — general Format-Options and per-muxer sections)",
     "scaler": "https://ffmpeg.org/ffmpeg-scaler.html (pixel-format conversion, -pix_fmt)",
     "resampler": "https://ffmpeg.org/ffmpeg-resampler.html (-ar, -ac)",
     "crop_filter": "https://ffmpeg.org/ffmpeg-filters.html#crop_2",
@@ -218,6 +465,7 @@
     "bitstream_filters": "https://ffmpeg.org/ffmpeg-bitstream-filters.html (h264_mp4toannexb, hevc_mp4toannexb, aac_adtstoasc)",
     "subtitles_burn": "https://ffmpeg.org/ffmpeg-filters.html#subtitles_2 (subtitles / ass, libass)",
     "subtitles_soft": "https://ffmpeg.org/ffmpeg.html (-map N:s:0, -c:s) + https://ffmpeg.org/ffmpeg-all.html (mov_text, srt encoders)",
+    "subtitles_dump": "https://ffmpeg.org/ffmpeg-formats.html (srt, webvtt, ass muxers) + https://ffmpeg.org/ffmpeg.html (-map 0:s:0, -c:s)",
     "devices": "https://ffmpeg.org/ffmpeg-devices.html (lavfi, v4l2, alsa, dshow, avfoundation, x11grab)"
   }
 }
