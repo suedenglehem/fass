@@ -121,6 +121,18 @@ def test_resolve_paths_leaves_streams_and_abs_paths():
     assert notes == []
 
 
+def test_resolve_input_name_matches_run_time_rule():
+    # The pipeline's inspection shares this exact rule, so a bare name that
+    # exists in the input volume is probed and not reported "not found".
+    in_dir = Path(os.environ[execute.INPUT_DIR_ENV])
+    (in_dir / "titan.mp4").write_bytes(b"0")
+    assert execute.resolve_input_name("titan.mp4") == str(in_dir / "titan.mp4")
+    assert execute.resolve_input_name("missing.mp4") == "missing.mp4"
+    assert execute.resolve_input_name("/abs/titan.mp4") == "/abs/titan.mp4"
+    assert execute.resolve_input_name("udp://0.0.0.0:5000") == "udp://0.0.0.0:5000"
+    assert execute.resolve_input_name("lavfi:testsrc=duration=1") == "lavfi:testsrc=duration=1"
+
+
 def test_output_file_guard():
     out_dir = Path(os.environ[execute.OUTPUT_DIR_ENV])
     (out_dir / "x.mp4").write_bytes(b"0")

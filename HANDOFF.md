@@ -145,6 +145,25 @@ everything in a `docker/` folder. Delivered:
   line is one physical line. Verified live in real Chrome: tabs
   switch, /v1/config populates, Apply enabled, 0 JS exceptions,
   screenshot clean. Deployed via rsync + compose opt-ins + rebuild.
+- **Bare-input volume resolution (2026-10-24): "input file was not found"
+  false warning.** User report: typed `titan.mp4` (present in the /input
+  volume) into the UI's input field → Generate warned "input file was not
+  found on this machine", although a run worked fine (file transcoded).
+  Root cause: `execute.resolve_paths` resolves bare filenames against
+  $FASS_INPUT_DIR at RUN time, but the pipeline's probe + not-found
+  warning checked the raw relative path — so inside the container the
+  file was never seen. Fix: new shared helper
+  `execute.resolve_input_name()` (same rule as the run-time resolution;
+  stream URLs / source specs / non-bare names / no-match pass through)
+  used by `pipeline.generate` for BOTH the ffprobe candidate and the
+  warning check. Command argv still references the bare name (executor
+  resolves at run time — unchanged). Tests:
+  `test_resolve_input_name_matches_run_time_rule` (execute unit) +
+  `test_bare_input_resolved_against_input_volume` (pipeline: no warning
+  + `validation_level=="preflight"` proves the probe happened).
+  **533 passed.** Deployed to i7 (rsync + re-sed + rebuild) and verified
+  live: Generate with "titan.mp4" → ready, `warnings: []`,
+  `validation_level: preflight`.
 
 ## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
@@ -417,7 +436,8 @@ run tests from repo root.
 
 ## Next steps
 **M6 committed (pre-rewrite 2344be3)** and **pushed**. UI bug fixed
-+ pushed 2026-10-24 (see Current state). Nothing outstanding.
++ pushed 2026-10-24; bare-input volume-resolution fix committed +
+deployed to i7 (see Current state) — push pending user's word.
 - **plan0.md removed (2026-10-24, on request):** every deliverable in the
   doc was already shipped, so the file was removed, ~20 references in
   docstrings/README/DEVELOPMENT/HANDOFF scrubbed, and it was deleted

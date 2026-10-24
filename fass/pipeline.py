@@ -14,6 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fass.builder import build_argv, render_posix
 from fass.config import load_config
+from fass.execute import resolve_input_name
 from fass.explain import summarize
 from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
@@ -205,9 +206,11 @@ def generate(
     output_filename = _apply_stream_hosts(assets, output_filename, edit, resp)
 
     # Optional local inspection: only for files that
-    # exist on this machine — the MVP never uploads media.
+    # exist on this machine — the MVP never uploads media. A bare name
+    # resolves against the deployment's input volume, as the executor
+    # does at run time.
     if media is None and ffprobe_available():
-        candidate = Path(assets[edit.input_id].path)
+        candidate = Path(resolve_input_name(assets[edit.input_id].path))
         if candidate.exists():
             media = probe_media(str(candidate))
 
@@ -230,9 +233,11 @@ def generate(
 
     main_path = assets[edit.input_id].path
     # A stream URL or a source spec (lavfi:/dev/video0) never "exists" as a
-    # file — that is its nature, not a problem.
+    # file — that is its nature, not a problem. A bare name existing in
+    # the deployment's input volume is found through the same resolution
+    # the executor applies at run time.
     if stream_scheme(main_path) is None and not is_source_spec(main_path) \
-            and not Path(main_path).exists():
+            and not Path(resolve_input_name(main_path)).exists():
         resp.warnings.append(
             "input file was not found on this machine — the command references it exactly as given"
         )

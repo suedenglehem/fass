@@ -214,6 +214,26 @@ def _output_dir() -> str:
     return os.environ.get(OUTPUT_DIR_ENV, "/output" if Path("/output").is_dir() else "")
 
 
+def resolve_input_name(name: str) -> str:
+    """Resolve a bare input filename against the deployment's input volume
+    ($FASS_INPUT_DIR, or /input when it exists) — the same rule
+    resolve_paths applies at run time, shared with the pipeline's
+    inspection so a bare name that exists in the volume is probed and
+    not reported "not found". Stream URLs, source specs and non-bare
+    names pass through unchanged, as do bare names with no matching
+    file in the volume."""
+    in_dir = _input_dir()
+    if (
+        not in_dir
+        or stream_scheme(name) is not None
+        or is_source_spec(name)
+        or "/" in name
+    ):
+        return name
+    joined = os.path.join(in_dir, name)
+    return joined if os.path.exists(joined) else name
+
+
 def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
     """Resolve bare filenames against the volume mounts.
 

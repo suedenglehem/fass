@@ -518,3 +518,20 @@ def test_lavfi_source_input_end_to_end(tmp_path):
     assert (info.width, info.height) == (320, 240)
     assert info.duration is not None
     assert 1.5 <= info.duration <= 2.5
+
+
+def test_bare_input_resolved_against_input_volume(gen, media, tmp_path, monkeypatch):
+    # M6 docker deployment: the user types "titan.mp4" (a file in /input).
+    # The pipeline must find it through the same bare-name resolution the
+    # executor uses at run time — probe it, and no "not found" warning.
+    from fass import execute
+
+    vol = tmp_path / "input"
+    vol.mkdir()
+    (vol / "titan.mp4").write_bytes(media.base.read_bytes())
+    monkeypatch.setenv(execute.INPUT_DIR_ENV, str(vol))
+    r = gen("resize to 720p", input_path="titan.mp4",
+            output_filename=str(tmp_path / "out.mp4"))
+    assert r.status == "ready"
+    assert not any("not found on this machine" in w for w in r.warnings)
+    assert r.validation_level == "preflight"  # proves the file was probed
