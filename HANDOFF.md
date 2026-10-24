@@ -82,8 +82,8 @@ everything in a `docker/` folder. Delivered:
   (4) socket bind lost after the first Apply — recreate() rebuilt Binds
   from config only; fixed with `_unmanaged_binds()` (carries over the
   socket + any user-added mounts; regression test added).
-- Current i7 containers: fass **69d06f0a091b** (compose-recreated after
-  the launcher + compose GPU-pin changes; same config), fass-worker up;
+- Current i7 containers: fass **c54d1b9c4f75** (recreated by the
+  launcher's `rebuild` — fresh image, same config), fass-worker up;
   both healthy; docker status manage/worker true, engine 29.7.2.
   Apply result: ports {8000/tcp, 5000/udp}, 4 managed volumes + socket
   bind, gpu true (DeviceIDs ["1"]).
@@ -113,6 +113,19 @@ everything in a `docker/` folder. Delivered:
   `device_ids`) now agree on GPU 1. Verified: `compose stop`→`up -d`
   recreated fass (69d06f0a091b) with `DeviceIDs:["1"]`, 4060 Ti only,
   manage/worker still true.
+- **Launcher E2E tested on i7 (2026-10-24, 26772d9):** full pass over
+  ssh — status (up + healthz ok) → stop (state kept) → cold start
+  (healthy; "no graphical session (DISPLAY/WAYLAND_DISPLAY)" hint — i7
+  sits at the Wayland login screen, no user desktop session) →
+  idempotent start ("already up and healthy") → browser-fire path
+  proven with a stub browser + fake `DISPLAY`: exactly one argument,
+  `http://127.0.0.1:8000` → `rebuild` (fresh image, both containers
+  Recreated, healthy, GPU pin intact: `DeviceIDs:["1"]` → 4060 Ti only
+  in-container). The test exposed a real bug, now fixed in 26772d9:
+  the guard only checked `DISPLAY`, but GNOME Wayland sets
+  `WAYLAND_DISPLAY` — Chrome would have never fired on i7's actual
+  desktop. Real Chrome fires when the user runs the launcher from a
+  desktop terminal after logging into i7.
 
 ## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
@@ -361,8 +374,8 @@ tests/benchmark/{requests.json}, tests/test_benchmark.py,
 tests/test_media.py, tests/test_titan.py, tests/test_bsf.py,
 tests/test_subtitles.py (M5),
 tests/test_m6_{config,gpu,stream,execute,llm,api,worker}.py (M6),
-docker/{Dockerfile,entrypoint.sh,compose.yaml,README.md}, .dockerignore
-(M6), serve.sh (launch script),
+docker/{Dockerfile,entrypoint.sh,compose.yaml,README.md,launcher.sh},
+.dockerignore (M6), serve.sh (launch script),
 media/titan.mp4, pyproject.toml,
 .gitignore, README.md, docs/DEVELOPMENT.md, ffmpeg-assistant-prd.md,
 HANDOFF.md
@@ -385,8 +398,9 @@ run tests from repo root.
 
 ## Next steps
 **M6 committed as 2344be3** (31 files, +3572/−235) and **pushed** —
-nothing outstanding. **main = origin/main = 54e2a65** (M6 + HANDOFF
-records incl. i7 GPU pinning, stream in/out E2Es, docker/launcher.sh).
+nothing outstanding. **origin/main = 04230e5**; local main is ahead by
+**26772d9** (launcher WAYLAND_DISPLAY fix, tested E2E on i7) —
+**unpushed, push when asked**.
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
