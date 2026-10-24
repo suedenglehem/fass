@@ -429,7 +429,7 @@ run tests from repo root.
   history. Also removed the 6 stale fass dispatch worktrees (all jobs
   terminal, work integrated) and synced the deletion to i7.
 - **main = origin/main = 028ce91** (post-rewrite tip, pushed
-  2026-10-24); the UI fix commit lands on top (pushed same day).
+  2026-10-24); the UI fix (cfd3bc9) pushed on top same day; main = origin/main = cfd3bc9.
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
