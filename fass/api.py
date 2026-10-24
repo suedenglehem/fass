@@ -34,7 +34,15 @@ from fass import dockerctl, execute
 from fass.config import FassConfig, LLMConfig, config_path, load_config, save_config
 from fass.pipeline import generate
 from fass.probe.ffprobe import ffmpeg_available, parse_ffprobe_json, probe_ffmpeg
-from fass.registry import REGISTRY
+from fass.registry import (
+    REGISTRY,
+    format_option_specs,
+    filter_names,
+    input_schemes,
+    output_schemes,
+    sample_rates,
+    speed_limits,
+)
 from fass.schema import Asset, AssetKind, EditPlan, guess_kind
 from fass.nlu.rules import SUPPORTED_SUMMARY
 from fass.ui import UI_HTML
@@ -65,7 +73,9 @@ class CommandRequest(BaseModel):
     output_filename: str | None = Field(
         default=None, max_length=1024,
         description="output filename, or a stream URL to send the output to "
-                    "(rtmp://, rtmps://, rtsp://, rtsps://, srt://, udp://, rtp://, tcp://)"
+                    "(rtmp://, rtmps://, rtsp://, rtsps://, srt://, udp://, rtp://, "
+                    "tcp://, http://, https:// — http(s) derive the container from "
+                    "the URL path extension, defaulting to mpegts)"
     )
     target_shell: Literal["posix"] = "posix"
     previous_plan: EditPlan | None = None
@@ -159,11 +169,53 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/support")
     def support():
+        # The full M7 capability surface (registry-driven): output modes,
+        # the container/codec matrix, subtitle dump formats, the filter
+        # allowlist, per-container format options, stream schemes, pixel
+        # formats, profiles, presets, sample rates and speed limits.
+        matrix = REGISTRY["matrix"]
+        speed_min, speed_max = speed_limits()
         return {
             "summary": SUPPORTED_SUMMARY,
             "registry_version": REGISTRY["registry_version"],
+            "modes": ["video", "audio", "subtitles"],
             "video_codecs": list(REGISTRY["video_codecs"]),
             "audio_codecs": list(REGISTRY["audio_codecs"]),
+            "matrix": {
+                container: {
+                    "video": list(row["video"]),
+                    "audio": list(row["audio"]),
+                    "default_video": row["default_video"],
+                    "audio_codec": row["audio_codec"],
+                }
+                for container, row in matrix.items()
+            },
+            "subtitle_dumps": dict(REGISTRY["subtitles"]["dump_codecs"]),
+            "filters": {
+                "video": sorted(filter_names("video")),
+                "audio": sorted(filter_names("audio")),
+                "filtergraph": True,
+            },
+            "format_options": {
+                container: sorted(format_option_specs(container))
+                for container in matrix
+            },
+            "input_schemes": input_schemes(),
+            "output_schemes": output_schemes(),
+            "pixel_formats": {
+                k: list(v) for k, v in REGISTRY["pixel_formats"].items()
+                if k != "description"
+            },
+            "video_profiles": {
+                k: list(v) for k, v in REGISTRY["video_profiles"].items()
+                if k != "description"
+            },
+            "video_presets": {
+                k: list(v) for k, v in REGISTRY["video_presets"].items()
+                if k != "description"
+            },
+            "sample_rates": sample_rates(),
+            "speed": {"min": speed_min, "max": speed_max},
             "gpu": {"enabled": load_config().gpu.enabled,
                     "coders": {k: v["encoder"] for k, v in REGISTRY["gpu"]["coders"].items()}},
         }

@@ -206,6 +206,53 @@ def test_support_endpoint_lists_capabilities():
     assert d["registry_version"]
 
 
+def test_support_exposes_m7_surface():
+    # The full M7 capability surface: modes, the container/codec matrix,
+    # subtitle dump formats, filter names, per-container format options,
+    # stream schemes, pixel formats, profiles, presets, sample rates, speed.
+    d = client.get("/v1/support").json()
+    assert d["modes"] == ["video", "audio", "subtitles"]
+    assert "h264" in d["matrix"]["mp4"]["video"]
+    assert d["matrix"]["mp4"]["audio_codec"] == "aac"
+    assert d["matrix"]["mp3"]["video"] == []
+    assert d["matrix"]["mp3"]["audio"] == ["mp3"]
+    assert "mp3" in d["audio_codecs"] and "pcm_s16le" in d["audio_codecs"]
+    assert d["subtitle_dumps"] == {"srt_file": "srt", "vtt_file": "webvtt",
+                                   "ass_file": "ass"}
+    assert "scale" in d["filters"]["video"] and "crop" in d["filters"]["video"]
+    assert "volume" in d["filters"]["audio"] and "atempo" in d["filters"]["audio"]
+    assert d["filters"]["filtergraph"] is True
+    assert "movflags" in d["format_options"]["mp4"]
+    assert "hls_time" in d["format_options"]["hls"]
+    assert "mpegts_flags" in d["format_options"]["mpegts"]
+    assert "srt" in d["input_schemes"]
+    assert "http" in d["output_schemes"] and "https" in d["output_schemes"]
+    assert "yuv420p10le" in d["pixel_formats"]["h264"]
+    assert "baseline" in d["video_profiles"]["h264"]
+    assert "veryslow" in d["video_presets"]["h264"]
+    assert 44100 in d["sample_rates"]
+    assert d["speed"] == {"min": 0.25, "max": 8.0}
+
+
+@pytest.mark.parametrize("url,container", [
+    ("http://example.com/live.ts", "mpegts"),
+    ("https://example.com/live.mp4", "mp4"),
+    ("http://example.com/stream", "mpegts"),   # no extension -> scheme default
+])
+def test_http_output_destination_accepted(url, container):
+    # CommandRequest accepts http/https output destinations: the container
+    # is derived from the URL path extension (default mpegts) and the URL
+    # is the final argv token, exactly as given.
+    r = post("resize to 720p", {"main": "clip.mp4"}, output_filename=url)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    assert d["plan"]["output_destination"] == url
+    assert d["plan"]["output"]["container"] == container
+    assert d["arguments"][-1] == url
+    assert any("remote endpoint" in w for w in d["warnings"])
+
+
 def test_env_endpoint_reports_build():
     r = client.get("/v1/env")
     assert r.status_code == 200
@@ -329,6 +376,34 @@ def test_explicit_container_conflicting_with_stream_output_is_error():
     d = r.json()
     assert d["status"] == "error", d
     assert d["errors"], d
+
+
+# ------------------------------------------------------- M7 preflight (mocked build)
+
+
+def test_preflight_reports_missing_output_muxer(monkeypatch):
+    # The 6.1.1 case (registry note: the Ubuntu 6.1.1 build lacks the
+    # standalone AAC/ADTS muxer): when the probed build is missing the
+    # muxer the plan will write with, preflight reports it — availability
+    # is probed, never assumed. Mocked probe_ffmpeg so the test is
+    # deterministic on any machine.
+    from fass.pipeline import generate
+    from fass.probe.ffprobe import FfmpegInfo
+    from tests.conftest import assets_for, make_media
+
+    ff = FfmpegInfo(version="ffmpeg version 6.1.1",
+                    encoders={"libx264", "aac"},
+                    filters={"scale"},
+                    muxers={"mp4", "mov", "webm"})  # no matroska
+    monkeypatch.setattr("fass.pipeline.ffmpeg_available", lambda: True)
+    monkeypatch.setattr("fass.pipeline.probe_ffmpeg", lambda: ff)
+    r = generate("convert to mkv", assets_for(), media=make_media(),
+                 adapter_name="rules", preflight_check=True)
+    assert r.status == "ready", r.errors
+    mux = [c for c in r.checks if c["name"] == "muxer matroska"]
+    assert mux and mux[0]["ok"] is False
+    assert any("matroska" in w for w in r.warnings)
+    assert r.validation_level == "static"  # a failed check is not "preflight"
 
 
 def test_ui_offers_kind_select_for_extra_inputs():
