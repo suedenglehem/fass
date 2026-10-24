@@ -673,20 +673,43 @@ def plan_execution(
         # PRD FR-4: trimming re-encodes. An explicit target bitrate also
         # forces a re-encode: stream copy cannot honor a bitrate the input
         # does not have. A filtergraph decodes the video, so it re-encodes too.
+        # A container the registry marks reencode (MXF: the mxf muxer takes
+        # an encoded master and rejects stream-copied h264) re-encodes too.
+        force_reencode = bool(
+            REGISTRY["containers"].get(out.container, {}).get("reencode"))
         needs_reencode = (has_trim or bool(forced_ops)
                           or bool(edit.filtergraph)
-                          or edit.output.video_bitrate_kbps is not None)
+                          or edit.output.video_bitrate_kbps is not None
+                          or force_reencode)
+        if force_reencode and not (has_trim or bool(forced_ops)
+                                   or bool(edit.filtergraph)
+                                   or edit.output.video_bitrate_kbps is not None):
+            defaults.append(
+                f"{out.container} is a master format — the video is re-encoded "
+                "into it (a stream copy of the matching codec would still be "
+                "rejected by the muxer)"
+            )
         if not needs_reencode:
             if metadata and metadata.video_codec == edit.output.video_codec and \
-                    _audio_compatible(metadata, edit.output.container, edit.output.audio_mode):
+                    _audio_compatible(metadata, edit.output.container, edit.output.audio_mode) and \
+                    (edit.output.audio_codec is None
+                     or metadata.audio_codec == edit.output.audio_codec):
                 mode = "copy"
             else:
                 mode = "reencode"
                 if metadata:
-                    warnings.append(
-                        f"input video is {metadata.video_codec}; re-encoding to "
-                        f"{edit.output.video_codec} to match the requested output"
-                    )
+                    if metadata.video_codec == edit.output.video_codec:
+                        want = edit.output.audio_codec \
+                            or audio_for(edit.output.container)
+                        warnings.append(
+                            f"input audio is {metadata.audio_codec}; encoding to "
+                            f"{want} to match the requested output"
+                        )
+                    else:
+                        warnings.append(
+                            f"input video is {metadata.video_codec}; re-encoding to "
+                            f"{edit.output.video_codec} to match the requested output"
+                        )
                 elif stream_scheme(in_path) is not None:
                     defaults.append(
                         "input is a remote stream — it can't be probed locally, so the output is "
@@ -943,6 +966,19 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     if edit.output.video_preset is not None:
         opts += ["-preset", edit.output.video_preset]
         defaults.append(f"encoder preset {edit.output.video_preset}")
+    # MXF (master wrapper): ffmpeg 9.x's mxf muxer index table requires
+    # frame offsets within ±127, so the container caps the GOP below that —
+    # x264's default of 250 fails at the trailer on newer builds (6.1.1
+    # tolerated it). Only h264 is capped: mpeg2's default GOP is already
+    # small and prores takes no GOP option.
+    gop_cap = REGISTRY["containers"].get(edit.output.container, {}).get("gop")
+    if gop_cap is not None and not edit.output.gpu \
+            and edit.output.video_codec == "h264":
+        opts += ["-g", str(gop_cap)]
+        defaults.append(
+            f"GOP capped at {gop_cap} frames — the mxf muxer's index table "
+            "requires frame offsets within ±127"
+        )
     # Pixel-format conversion (scaler component): the codec default unless
     # the plan names one (validated against the registry matrix in plan_execution).
     pix_fmt = edit.output.pixel_format or vc["pix_fmt"]
@@ -969,10 +1005,15 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     elif audio_remove:
         opts.append("-an")
     else:
-        ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]
+        # A named audio_codec overrides the container's default (validated
+        # against the matrix in plan_execution); the bitrate override works
+        # the same way the audio-mode branch does.
+        acodec = edit.output.audio_codec or audio_for(edit.output.container)
+        ac = REGISTRY["audio_codecs"][acodec]
         opts += ["-c:a", ac["encoder"]]
-        if ac.get("bitrate_kbps") is not None:
-            opts += ["-b:a", f"{ac['bitrate_kbps']}k"]
+        kbps = edit.output.audio_bitrate_kbps or ac.get("bitrate_kbps")
+        if kbps is not None:
+            opts += ["-b:a", f"{kbps}k"]
         # Audio resampler targets (-ar / -ac); inert when the output has no
         # audio stream.
         for ro in edit.ops_of("audio_resample"):

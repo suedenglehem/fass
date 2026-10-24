@@ -6,7 +6,9 @@ operation multiset, trim interval, container/codec/audio mode.
 
 from __future__ import annotations
 
-from fass.schema import Asset, AudioReplaceOp, EditPlan, OutputSpec, guess_kind
+import pytest
+
+from fass.schema import Asset, AssetKind, AudioReplaceOp, EditPlan, OutputSpec, guess_kind
 from tests.conftest import make_media
 
 
@@ -569,3 +571,237 @@ def test_revision_new_destination_updates_container(gen):
     assert r.status == "ready"
     assert r.plan["output_destination"] == "srt://10.0.0.9:9000/show"
     assert r.plan["output"]["container"] == "srt"
+
+
+# ---------------------------------------------------------------- M7 (2026-10)
+# Output modes, broad containers/codecs, filters + filtergraph, format
+# options, stream I/O.
+
+
+def test_extract_audio_to_mp2_128k(gen):
+    """The user-reported driving case, typo included."""
+    r = gen("exctract audio track and transcode it to mp2 audio 128kbps", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "audio"
+    assert out["container"] == "mp2"
+    assert out["audio_codec"] == "mp2"
+    assert out["audio_bitrate_kbps"] == 128
+    assert out["video_codec"] is None
+
+
+def test_extract_audio_to_m4a(gen):
+    r = gen("extract the audio to m4a", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "audio"
+    assert out["container"] == "m4a"
+    assert out["audio_codec"] == "aac"
+
+
+def test_extract_audio_lossless_is_flac(gen):
+    r = gen("extract the audio lossless", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "audio"
+    assert out["container"] == "flac"
+    assert out["audio_codec"] == "flac"
+    assert out["audio_bitrate_kbps"] is None
+
+
+def test_extract_audio_to_wav_is_pcm(gen):
+    r = gen("extract the audio to wav", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "audio"
+    assert out["container"] == "wav"
+    assert out["audio_codec"] == "pcm_s16le"
+
+
+def test_prores_lands_in_mov(gen):
+    r = gen("re-encode with prores", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "video"
+    assert out["video_codec"] == "prores"
+    assert out["container"] == "mov"
+
+
+def test_avi_defaults_to_mpeg4(gen):
+    r = gen("convert to avi", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "avi"
+    assert out["video_codec"] == "mpeg4"
+
+
+def test_mxf_container(gen):
+    r = gen("convert to mxf", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "mxf"
+    assert out["video_codec"] == "h264"
+
+
+def test_hls_container(gen):
+    r = gen("convert to hls", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "hls"
+
+
+def test_mpeg2_for_broadcast_is_mpegts(gen):
+    r = gen("convert to mpeg2 for broadcast mpegts", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "mpegts"
+    assert out["video_codec"] == "mpeg2"
+
+
+def test_mpeg2_video_with_mp2_audio(gen):
+    r = gen("convert to mpeg2 video and mp2 audio", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "mpegts"
+    assert out["video_codec"] == "mpeg2"
+    assert out["audio_codec"] == "mp2"
+
+
+def test_video_only_removes_audio(gen):
+    for instr in ("make it video only, no audio", "remove the audio"):
+        r = gen(instr, "clip.mp4")
+        assert r.status == "ready", instr
+        assert r.plan["output"]["audio_mode"] == "remove"
+
+
+@pytest.mark.parametrize("instr,container", [
+    ("extract the subtitles to a file", "srt_file"),
+    ("dump the subtitles as vtt", "vtt_file"),
+    ("extract the subtitles to ass", "ass_file"),
+])
+def test_subtitle_dump_formats(gen, instr, container):
+    subs = Asset(path="subs.srt", kind=AssetKind.SUBTITLES)
+    r = gen(instr, "clip.mp4", extra={"subs": subs})
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "subtitles"
+    assert out["container"] == container
+
+
+def test_flip_vertically_is_a_video_filter(gen):
+    r = gen("flip vertically", "clip.mp4")
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and "vflip" in f[0]["expr"]
+    assert f[0]["domain"] == "video"
+
+
+def test_volume_up_is_an_audio_filter(gen):
+    r = gen("make the audio louder", "clip.mp4")
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and f[0]["expr"].startswith("volume=")
+    assert f[0]["domain"] == "audio"
+
+
+def test_loudnormalization_is_an_audio_filter(gen):
+    r = gen("normalize the audio loudness", "clip.mp4")
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and f[0]["expr"] == "loudnorm"
+    assert f[0]["domain"] == "audio"
+
+
+def test_raw_video_filter_expression(gen):
+    r = gen("apply the video filter 'eq=brightness=0.2'", "clip.mp4")
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and f[0]["expr"] == "eq=brightness=0.2"
+    assert f[0]["domain"] == "video"
+
+
+def test_pasted_filtergraph_quoted(gen):
+    r = gen("use this filtergraph: 'split[a][b]'", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["filtergraph"] == "split[a][b]"
+    assert not [o for o in r.plan["operations"] if o["type"] == "filter"]
+
+
+def test_pasted_filtergraph_unquoted(gen):
+    r = gen("use this filtergraph: split=2[a][b]", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["filtergraph"] == "split=2[a][b]"
+
+
+def test_pasted_filtergraph_complex(gen):
+    graph = "[0:v]split[a][b];[a]eq=contrast=1.2[v0];[b]eq=saturation=0[v1]"
+    r = gen(f'apply the filtergraph "{graph}"', "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["filtergraph"] == graph
+
+
+def test_filtergraph_conflicts_with_video_edits(gen):
+    r = gen("use this filtergraph: 'split[a][b]' and resize to 720p", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert any("filtergraph" in c["question"] for c in r.clarifications)
+
+
+def test_fade_out_computed_from_duration(gen):
+    r = gen("fade out the video at the end", "clip.mp4", media=make_media())
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and f[0]["expr"] == "fade=t=out:st=118.5:d=1.5"
+
+
+def test_faststart_format_option(gen):
+    r = gen("convert to mp4 with faststart", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["format_options"] == {"movflags": "faststart"}
+
+
+def test_hls_segment_duration(gen):
+    r = gen("make an hls with 6 second segments", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert out["format_options"] == {"hls_time": "6"}
+
+
+def test_http_output_destination(gen):
+    r = gen("send the output to http://192.168.0.50/stream.ts", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output_destination"] == "http://192.168.0.50/stream.ts"
+    assert r.plan["output"]["container"] == "mpegts"
+
+
+def test_srt_stream_input_is_accepted(gen):
+    r = gen("resize to 720p", "srt://192.168.0.50:5000")
+    assert r.status == "ready"
+    assert not r.warnings
+    assert "resize" in ops_by_type(r.plan)
+
+
+def test_h264_with_aac_audio(gen):
+    r = gen("convert to h264 with aac audio", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "video"
+    assert out["video_codec"] == "h264"
+    assert out["audio_codec"] == "aac"
+
+
+def test_replace_audio_by_dot_filename(gen):
+    song = Asset(path="song.mp3", kind=AssetKind.AUDIO)
+    r = gen("replace the audio with song.mp3", "clip.mp4", extra={"song": song})
+    assert r.status == "ready"
+    ar = ops_by_type(r.plan)["audio_replace"]
+    assert len(ar) == 1 and ar[0]["asset_id"] == "song"
+
+
+def test_audio_mode_keeps_audio_only_filters(gen):
+    r = gen("extract the audio, make it louder, to mp3", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "audio"
+    assert out["container"] == "mp3"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and f[0]["domain"] == "audio"

@@ -31,6 +31,7 @@ from fass.probe.ffprobe import (
 from fass.registry import (
     REGISTRY,
     all_filter_names,
+    audio_for,
     container_from_extension,
     is_source_spec,
     soft_subtitle_codec,
@@ -309,7 +310,8 @@ def generate(
                     enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
                 encoders.append(enc)
                 if edit.output.audio_mode.value == "encode":
-                    encoders.append(REGISTRY["audio_codecs"][REGISTRY["matrix"][edit.output.container]["audio_codec"]]["encoder"])
+                    acodec = edit.output.audio_codec or audio_for(edit.output.container)
+                    encoders.append(REGISTRY["audio_codecs"][acodec]["encoder"])
                 for op in edit.operations:
                     if op.type == "subtitles" and op.mode == "soft":
                         enc = soft_subtitle_codec(edit.output.container)

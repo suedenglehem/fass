@@ -73,13 +73,29 @@ for mp4/mov (mov_text) and mkv (srt) outputs; for any other container use
 "burn"), audio_replace (asset_id of an audio
 file — its first audio stream replaces the output audio; the output ends when the
 shorter of video and replacement audio ends), audio_resample (sample_rate and/or
-channels 1|2|6). Output extras (set on "output", only when the user asks):
+channels 1|2|6), filter (domain "video" or "audio" and expr — one allowlisted
+filter instance, e.g. "hflip", "volume=1.5", "eq=brightness=0.2"; see the
+allowlist below). Output extras (set on "output", only when the user asks):
 "pixel_format" ("yuv420p", "yuv420p10le", "yuv444p" — yuv444p is VP9-only),
 "video_profile" ("baseline"|"main"|"high" — H.264; on the GPU only "main"/"high")
 and "video_preset" ("ultrafast" through "veryslow" — H.264 CPU only),
 "gpu" (bool, default false). Output containers: {containers}. Video codecs: {codecs}.
 Codec/container matrix (anything else is unsupported): {matrix}
-Audio: "encode" (default, keep) or "remove". An audio_replace operation implies "encode".
+Output modes ("output.mode"): "video" (default — video + audio), "audio"
+(audio track only — set an audio container (mp3, mp2, m4a, aac, ogg, flac,
+wav, aiff, mka, opus) and an "audio_codec" ({audio_codecs}) and, only when the
+user names a bitrate, "audio_bitrate_kbps" (e.g. "mp2 128k" -> 128; lossless
+codecs — flac, alac, pcm_* — take no bitrate); "video_codec" stays null), or
+"subtitles" (dump the input's subtitle track to a file: container
+srt_file|vtt_file|ass_file, no codec flags at all).
+Audio: "audio_mode" "encode" (default, keep) or "remove" (video-only — "no
+audio", "remove the audio"); audio and subtitles modes have no audio_mode.
+An audio_replace operation implies "encode".
+Format options: only when the user names one ("with faststart", "6 second
+HLS segments"), set "format_options" on the output to {{"<key>": "<value>"}}
+using ONLY these keys: {format_opts}. Flagset keys take '+'-joined flags
+(movflags "faststart", mpegts_flags "resend_headers"); hls_flags are
+comma-joined; never invent a key or a value outside the table.
 GPU encoding (M6): set "gpu": true on "output" when the user asks to encode on the
 GPU / with nvenc / with an NVIDIA card. The GPU covers h264 (h264_nvenc) and h265
 (hevc_nvenc) only — VP9 is CPU-only, and x264 speed presets do not apply on the GPU.
@@ -93,23 +109,39 @@ Stream input/output (M3b):
   reference its bound asset id — never emit the URL as a path.
 - The output may be a stream destination: set "output_destination" on the plan to the
   URL exactly as the user gave it. Only these schemes are allowed: rtmp, rtmps, rtsp,
-  rtsps, srt, udp, rtp, tcp. The destination's scheme fixes the output container:
-  rtmp/rtmps -> flv, rtsp/rtsps -> rtsp, srt -> srt, udp/rtp/tcp -> mpegts — and
-  "output.container" must match it. FLV carries h264 + aac only.
+  rtsps, srt, udp, rtp, tcp, http, https. The destination's scheme fixes the output
+  container: rtmp/rtmps -> flv, rtsp/rtsps -> rtsp, srt -> srt, udp/rtp/tcp -> mpegts,
+  http/https -> the URL path's extension (.ts -> mpegts, .mp4 -> mp4, .m3u8 -> hls,
+  .mp3 -> mp3, defaulting to mpegts) — and "output.container" must match it.
+  FLV carries h264 + aac only.
 - Naming a stream destination is itself an edit. If the user names a file output format
   that conflicts with the destination's container, return "needs_clarification".
 {ops_doc}
+
+Filtergraph: when the user pastes a full FFmpeg filtergraph ("use this
+filtergraph: split=2[a][b]"), set plan "filtergraph" to the graph text
+verbatim — no prose, no extra quotes. It replaces the built-in video filter
+chain: it cannot be combined with resize/crop/rotate/speed/grayscale/watermark/
+burned subtitles/video filter ops — return "needs_clarification" instead.
+
+Allowed filter expressions (a "filter" op's expr, or any instance inside the
+filtergraph):
+{filters_doc}
+Common effects: flip horizontally -> "hflip"; flip vertically -> "vflip";
+louder -> "volume=1.5", quieter -> "volume=0.5"; normalize loudness ->
+"loudnorm"; fade out the video -> "fade=t=out:st=<start>:d=1.5" (for "at the
+end", only when the duration is known — otherwise ask).
 
 Available assets (reference by id ONLY — never emit file paths):
 {assets}
 
 Rules:
-- Never invent operations, parameters, or FFmpeg flags. No raw ffmpeg options or filter expressions anywhere in the plan.
+- Never invent operations, parameters, or FFmpeg flags. Filter text appears only in a "filter" op's expr and in "filtergraph", and only from the allowlist above.
 - Times are numbers of seconds. "720p" means resize height 720 with aspect_ratio "preserve" (no padding to 1280x720).
 - An input asset may have kind "source" (a local capture source such as lavfi:/v4l2:/
   alsa:/x11grab:) — reference it by id exactly like any other input.
-- If any part of the request is beyond the supported set (e.g. volume changes, extracting subtitles, concatenation, flipping, stabilization, HDR, lossless), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
-- If a detail is missing or ambiguous in a way that materially changes the edit (e.g. "make it smaller" without a target, missing watermark file, exact file size, lossless vs high quality), set status "needs_clarification" with exactly one focused question.
+- If any part of the request is beyond the supported set (e.g. concatenation/merging/stitching, splitting into segments, sepia/vintage/retro looks, denoising, stabilization, HDR, CUDA/VideoToolbox/QSV, an out-of-range factor or bitrate), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
+- If a detail is missing or ambiguous in a way that materially changes the edit (e.g. "make it smaller" without a target, missing watermark file, exact file size), set status "needs_clarification" with exactly one focused question.
 - Use documented defaults for low-risk choices and record them in "defaults".
 - For revisions: start from the previous plan, change only what the instruction changes, preserve everything else, and return the complete updated plan.
 - If the instruction matches nothing supported and is not a revision, ask which edit is wanted.
@@ -133,6 +165,12 @@ User: Convert to WebM with H.264.
 
 User: Cut the first 5 seconds and stream it to rtmp://live.example.com:1935/show.
 {{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"container": "flv", "video_codec": "h264", "audio_mode": "encode"}}, "trim": {{"start_seconds": 0, "duration_seconds": 5}}, "operations": [], "output_destination": "rtmp://live.example.com:1935/show"}}, "clarifications": [], "unsupported": [], "defaults": ["container set to flv by the stream destination"]}}
+
+User: Extract the audio track and transcode it to mp2 audio 128 kbps.
+{{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"mode": "audio", "container": "mp2", "audio_codec": "mp2", "audio_bitrate_kbps": 128}}, "trim": null, "operations": []}}, "clarifications": [], "unsupported": [], "defaults": ["audio codec set to mp2 (the mp2 container's codec)"]}}
+
+User: Dump the subtitles to a file.
+{{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"mode": "subtitles", "container": "srt_file"}}, "trim": null, "operations": []}}, "clarifications": [], "unsupported": [], "defaults": ["subtitle format defaulted to srt"]}}
 
 User: Encode this on the GPU as H.265.
 {{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"container": "mp4", "video_codec": "h265", "audio_mode": "encode", "gpu": true}}, "trim": null, "operations": []}}, "clarifications": [], "unsupported": [], "defaults": ["container defaulted to mp4", "GPU encoding: H.265 via hevc_nvenc"]}}
@@ -177,12 +215,29 @@ class LLMAdapter:
             f"- {name}: {spec['description']}"
             for name, spec in REGISTRY["operations"].items()
         )
+        filters = REGISTRY["filters"]
+        filters_doc = "\n".join(
+            ["Video filters (domain \"video\"):"]
+            + [f"- {name}: {spec['description']}" for name, spec in filters["video"].items()]
+            + ["Audio filters (domain \"audio\"):"]
+            + [f"- {name}: {spec['description']}" for name, spec in filters["audio"].items()]
+        )
+        fo = REGISTRY["format_options"]
+        fo_labels = {"generic": "any container", "mp4": "mp4/mov/m4a"}
+        format_opts = "; ".join(
+            f"{fo_labels.get(g, g)}: {', '.join(opts)}"
+            for g, opts in fo.items()
+            if g != "description"
+        )
         return SYSTEM_TEMPLATE.format(
             schema=_plan_schema(),
             containers=", ".join(REGISTRY["matrix"]),
             codecs=", ".join(REGISTRY["video_codecs"]),
+            audio_codecs=", ".join(REGISTRY["audio_codecs"]),
             matrix=matrix_txt,
             ops_doc=ops_doc,
+            filters_doc=filters_doc,
+            format_opts=format_opts,
             assets=_asset_lines(assets),
         )
 

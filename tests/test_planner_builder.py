@@ -749,21 +749,58 @@ def test_explain_subtitle_dump_plan():
 
 # ------------------------------------------------- M7 preflight: muxer probe
 
-def test_output_muxer_for_aac_plan_is_aac():
-    # the .aac ADTS case: the plan's output muxer is probed against the
-    # build, so _output_muxer must report "aac" for a .aac audio plan
+def test_output_muxer_for_aac_plan_is_adts():
+    # the .aac ADTS case: FFmpeg's muxer is named 'adts' — the 'aac' entry
+    # in '-formats' is demux-only, so preflight must probe 'adts'
     edit = _audio_plan("aac", "aac")
     ep = plan_execution(edit, _assets_main(), make_media())
-    assert _output_muxer(ep) == "aac"
+    assert _output_muxer(ep) == "adts"
 
 
-def test_preflight_flags_missing_aac_muxer():
-    # registry note: the Ubuntu 6.1.1 build lacks the standalone AAC/ADTS
-    # muxer — preflight reports it instead of assuming availability
+def test_preflight_flags_missing_adts_muxer():
+    # a build without the adts muxer is reported, never assumed
     ff = FfmpegInfo(version="ffmpeg version 6.1.1",
                     encoders={"aac"}, filters=set(),
-                    muxers={"mp4", "matroska", "webm"})  # no "aac" muxer
-    checks = preflight(make_media(), ff, ["aac"], [], ["aac"])
-    mux = [c for c in checks if c.name == "muxer aac"]
+                    muxers={"mp4", "matroska", "webm"})  # no "adts" muxer
+    checks = preflight(make_media(), ff, ["aac"], [], ["adts"])
+    mux = [c for c in checks if c.name == "muxer adts"]
     assert mux and mux[0].ok is False
     assert "NOT available" in mux[0].detail
+
+
+def test_preflight_aac_plan_passes_with_adts():
+    # the empirical Ubuntu 6.1.1 situation: '-formats' lists 'aac' demux-only
+    # but '-muxers' carries 'adts' — a .aac plan must pass the probe
+    ff = FfmpegInfo(version="ffmpeg version 6.1.1",
+                    encoders={"aac"}, filters=set(),
+                    muxers={"mp4", "adts"})
+    checks = preflight(make_media(), ff, ["aac"], [], ["adts"])
+    assert all(c.ok for c in checks)
+
+
+# --------- M7 regressions: the video-mode argv honors the output's own codecs
+
+def test_video_mode_named_audio_codec_overrides_container_default(gen):
+    # "convert to mpeg2 video and mp2 audio": mpegts's default audio is aac,
+    # but the named audio_codec must reach the argv (regression: the
+    # kept-audio branch used to emit the container default)
+    r = gen("convert to mpeg2 video and mp2 audio", media=make_media(),
+            output_filename="out.ts")
+    assert r.status == "ready"
+    argv = r.arguments
+    assert argv[argv.index("-c:a") + 1] == "mp2"
+    assert argv[argv.index("-b:a") + 1] == "192k"
+
+
+def test_mxf_output_reencodes_and_uses_pcm(gen):
+    # MXF is a master wrapper: even when the input codec matches, the video
+    # is re-encoded and the audio must be PCM (the mxf muxer rejects aac)
+    r = gen("convert to mxf", media=make_media(), output_filename="out.mxf")
+    assert r.status == "ready"
+    argv = r.arguments
+    assert "-c copy" not in argv
+    assert argv[argv.index("-c:v") + 1] == "libx264"
+    assert argv[argv.index("-c:a") + 1] == "pcm_s16le"
+    assert argv[argv.index("-g") + 1] == "120"  # mxf index table: frame offsets ±127
+    assert any("master format" in d for d in r.defaults)
+    assert any("GOP capped at 120" in d for d in r.defaults)

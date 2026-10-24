@@ -698,10 +698,32 @@ def _detect_subtitle_dump(t: str) -> str | None:
 
 # ---------------------------------------------------------------- filters (M7)
 
-# A pasted filtergraph: one or more '[label]' chains separated by ';'.
-_FILTER_GRAPH_RX = re.compile(
-    r"\[[^\s\[\]]+\](?:[^\s;])*(?:(?:\s*;\s*)\[[^\s\[\]]+\](?:[^\s;])*)*"
-)
+# A pasted filtergraph: a run of filtergraph characters (filter names,
+# arguments, '[label]' pads, ',' / ';' separators) that contains at least
+# one pad label AND names a filter outside the labels — 'split=2[a][b]',
+# "[0:v]split[a][b];[a]eq=contrast=1.2[v]". Prose like 'the [0:0] stream'
+# (no filter name outside the labels) is left alone.
+_FILTER_GRAPH_RX = re.compile(r"[A-Za-z0-9_=:\[\],.;'\"%+/.-]+")
+
+
+def _extract_pasted_graph(t: str) -> tuple[str | None, int, int]:
+    """Find a pasted filtergraph in t → (graph, start, end) or (None, 0, 0).
+    Surrounding paste quotes are dropped ('split[a][b]') so the validator
+    sees the bare graph; the cut span still spans the quotes."""
+    for m in _FILTER_GRAPH_RX.finditer(t):
+        run = m.group(0)
+        if "[" not in run or "]" not in run:
+            continue
+        outside = re.sub(r"\[[^\]]*\]", "", run).replace("[", "").replace("]", "")
+        if not re.search(r"[A-Za-z0-9_]", outside):
+            continue
+        g = run
+        if len(g) >= 2 and g[0] == g[-1] and g[0] in "'\"":
+            g = g[1:-1]
+        elif g[-1] in "'\"" and g.count(g[-1]) % 2:
+            g = g[:-1]
+        return g, m.start(), m.end()
+    return None, 0, 0
 
 # A raw 'name=args' token whose name is an allowlisted filter
 # ('eq=contrast=1.2', 'scale=1280:720', "drawtext=text='hi'").
@@ -747,14 +769,14 @@ def _detect_filters(
     # its span out of the text so 'split=2[a][b]' is not re-read as a raw
     # expression (its brackets are only legal inside a graph).
     graph: str | None = None
-    m = _FILTER_GRAPH_RX.search(t)
-    if m:
-        graph = m.group(0).strip()
+    g, g0, g1 = _extract_pasted_graph(t)
+    if g is not None:
+        graph = g
         problems = filtergraph_problems(graph)
         if problems:
             frag = f"the filtergraph '{graph[:80]}' is not usable: " + "; ".join(problems)
             graph = None
-        text = t[:m.start()] + " " + t[m.end():]
+        text = t[:g0] + " " + t[g1:]
     else:
         text = t
 

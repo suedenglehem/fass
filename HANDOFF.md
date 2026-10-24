@@ -59,7 +59,7 @@ origin/main: 08c949e, 5afac91; no push unless asked):**
 - Suite GREEN: **534 passed** (baseline 533; 7 capability-widening failures
   fixed across bench-077, test_planner_builder ×4, test_schema ×3).
 
-**Done, uncommitted at save (MY track): NLU rewrite COMPLETE.**
+**Done, committed as 4c0a0ed (MY track): NLU rewrite COMPLETE.**
 - fass/nlu/rules.py (~1900 lines): SUPPORTED_SUMMARY expanded; `_detect_codec`
   +prores/mpeg2/mpeg4/mjpeg; full-registry container detection (AVI no longer
   rejected; audio containers switch the plan to audio mode; subtitle dump
@@ -93,37 +93,99 @@ test_planner_builder). Their run: 555 passed (on the old rules.py — first
 end-to-end combination of my mode plans with their explain/preflight happens
 post-merge). Zero file overlap with my commit → clean merge. My local
 explain.py quick fix reverted (git checkout HEAD).
+**INTEGRATED:** merge commit **43b1182** on main (parents 4c0a0ed + d4938a6),
+full suite **555 passed** (534 + 21 worker tests) — first end-to-end
+combination of my mode plans with their explain/preflight, green.
+`dispatch_integrate(j_41200a56f4, 43b1182)` ACCEPTED.
 
-- **OPEN VERIFICATION ITEMS:** subtitle dump without `-c:s` + `.ass` muxer
-  existence must be confirmed empirically on BOTH ffmpeg builds with a
-  subtitle-bearing input (create by muxing a .srt into an mp4); .aac-ADTS file
-  tests probe-gated (local 6.1.1 lacks the muxer).
-- i7: NOT yet redeployed for M7 — after merge + full suite: rsync →
-  re-apply the two compose.yaml sed opt-ins (docker.sock + FASS_DOCKER_MANAGE=1)
-  → `./launcher.sh rebuild` → live-verify BOTH surfaces (user's exact mp2
-  instruction, HLS, mpegts/mpeg2, prores, avi, mxf, subtitle dump, filters,
-  srt stream, http). The old container-ID line below (e61ea65d558a) is stale —
-  record the new ID after the M7 rebuild.
+- **LOCAL REAL-FFMPEG VERIFICATION (6.1.1) — 21/21 PASS.**
+  /tmp/verify_m7_local.py drives generate() (rules) on media/titan.mp4 + a
+  subtitle-bearing copy (/tmp/fass_m7verify/titan_subs.mp4), executes the
+  argv, inspects outputs with ffprobe. Log: /tmp/fass_m7verify/local_run2.log.
+  Covers: mp2-128k @exactly 128000bps, m4a/flac/wav, prores@86.6Mbps in mov,
+  avi mpeg4+pcm, mxf h264+pcm_s16le, hls (5 segs/2s) + hls_time=6 (4 segs/6s),
+  mpeg2-ts, mpeg2+mp2 @192k, video-only, vflip/volume/loudnorm, faststart
+  (moov@36<mdat), filtergraph split (2 video streams), dump srt/vtt/ass
+  (.ass muxer EXISTS on 6.1.1 — empirical), aac ADTS copy. Bugs found+fixed
+  by this run (in the working tree, uncommitted; suite 588 passed):
+  (a) video-mode kept-audio branch ignored edit.output.audio_codec
+  (planner.py: emits the named codec + bitrate now; copy condition + warning
+  split; pipeline.py preflight checks the same codec — regression test added);
+  (b) mxf: `-c copy` fails on 6.1.1 (h264 arrives avcc-packaged; aac audio
+  rejected by the muxer — pcm_rechunk is PCM-only). Fix is registry-driven:
+  containers.mxf gains "reencode": true (planner forces a re-encode +
+  default note), matrix mxf audio narrowed to pcm_s16le/s24le/s32le
+  (aac/ac3/eac3 removed — empirical on 6.1.1: mpeg2/prores/h264 re-encoded
+  video all mux; mpeg4 video rejected; pcm audio works, aac does not).
+  "convert to mxf" now: libx264 + pcm_s16le, rc=0, 20.04s output;
+  (c) .aac container muxer was "aac" but FFmpeg's muxer is "adts" ('aac' in
+  '-formats' is demux-only) — preflight false-failed .aac on 6.1.1. Registry
+  muxer renamed to "adts"; 3 tests rewritten/added.
+- **DOCKER (9.0.1) REAL-FFMPEG VERIFICATION — 21/21 PASS.**
+  /tmp/verify_m7_docker.py (same battery, container paths /input/*) run
+  inside the fass container via `docker exec fass python`. Log:
+  i7:/tmp/fass_m7verify_docker.log. First run 20/21: mxf rc=176 —
+  ffmpeg 9.x's mxfenc index table requires frame offsets within ±127,
+  x264's default GOP 250 fails at the trailer ("Error writing trailer:
+  Not yet implemented in FFmpeg"); 6.1.1 tolerated it. Fix: containers.mxf
+  gains `"gop": 120` + planner emits `-g 120` for non-GPU h264 (mpeg2's
+  default GOP is already small; prores takes no GOP option) + default
+  note. Re-ran: 21/21, mxf rc=0 (h264+pcm_s16le). Local 6.1.1 regression
+  with the cap: rc=0, unchanged.
+- **i7 DEPLOYED + LIVE-VERIFIED (2026-10-24).** rsync → re-sed compose
+  opt-ins → `./docker/launcher.sh rebuild` → healthy. Containers: fass
+  **43fe89fee86d**, fass-worker **63eaa25d46d0** (both recreated at this
+  rebuild; e61ea65d558a/69d06f0a091b stale). No stale bare-python
+  `fass serve` on i7 — the host ps entries are the containers' processes.
+  Live API smoke (POST /v1/commands, 6/6 ready): the user's exact
+  mp2-128k instruction (with the typo), mxf (libx264 -g 120 pcm_s16le),
+  hls_time=6, subtitle dump, vflip+volume, srt:// stream input
+  (`-f srt -i srt://…`). End-to-end /v1/runs (FASS_ALLOW_EXECUTE=1):
+  mp2-128k run → status success, out.mp2 downloadable via
+  /media/output, 320256 B = exactly 20 s @ 128 kbps.
+
+**Done after integration (uncommitted):**
+- llm.py M7 sync (LLM-adapter fallback prompt): SYSTEM_TEMPLATE + _system —
+  filter op in the ops list; output modes documented (audio: audio container +
+  audio_codec + audio_bitrate_kbps, video_codec null; subtitles: srt_file/
+  vtt_file/ass_file, no codec flags); audio_mode remove (video-only);
+  format_options with the full registry key list (rendered from
+  REGISTRY['format_options'], flagset/hls_flags join semantics); filtergraph
+  verbatim rule + conflict clause; 39-filter allowlist (18 video + 22 audio)
+  rendered from REGISTRY['filters'] with example exprs + common-effect map
+  (hflip/vflip/volume/loudnorm/fade); stream output now lists http/https with
+  container-from-URL-extension rule (default mpegts); unsupported examples
+  rewritten to the real M7 set (concat, split-into-segments, sepia/vintage/
+  retro, denoise, stabilize, HDR, CUDA/VideoToolbox/QSV, out-of-range);
+  "lossless vs high quality" dropped from clarification examples; +2 examples
+  (mp2-128k audio extract — the user's driving case; subtitle dump).
+  **Full suite: 585 passed.** (Prompt renders 32 KB; parse() already passes
+  "Input duration" to the model, so fade-at-end guidance works.)
+- Filtergraph extraction bugfix in rules.py: old regex captured only from the
+  first `[` (dropped a leading unlabeled filter: 'split[a][b]' → '[a][b]') and
+  swallowed a pasted closing quote (→ validator saw "'"). New
+  `_extract_pasted_graph`: maximal run of filtergraph chars requiring a pad
+  label AND a filter name outside the labels; strips surrounding/odd paste
+  quotes; prose like 'the [0:0] stream' is left alone.
+- 30 new test cases appended to tests/test_rules.py (28 functions,
+  parametrize ×3 on dump formats): user's exact mp2-128k case (typo and all),
+  m4a, lossless→flac, wav→pcm, prores→mov, avi→mpeg4, mxf, hls, mpeg2 ts,
+  mpeg2+mp2, video-only (2 phrasings), dump srt/vtt/ass, vflip, volume,
+  loudnorm, raw expr, pasted graph quoted/unquoted/complex, graph-vs-edit
+  conflict, fade-out from duration, faststart, hls_time, http destination,
+  srt stream input (no missing-file warning), h264+aac, song.mp3 replace,
+  audio-mode filter retention. **Full suite: 585 passed.**
 
 **Next unfinished tasks:**
-1. Integrate j_41200a56f4: commit my M7 rules work → `git merge d4938a6`
-   (clean) → full suite (expect 555) → dispatch_integrate with the merge sha.
-2. New M7 NLU tests in tests/test_rules.py: mp2 128k extraction (the user's
-   driving case), m4a, prores→mov, avi, mxf, hls, mpeg2+mp2 ts, subtitle dump
-   srt/vtt/ass, filters (flip/volume/loudnorm/raw-expr/graph + fade-out with
-   media=make_media()), video-only, audio-mode op restriction,
-   format_options (faststart, hls_time, resend headers), http output
-   destination, srt stream input, lossless audio→flac, "h264 with aac audio",
-   "replace the audio with song.mp3" dot-guard.
-3. fass/nlu/llm.py SYSTEM_TEMPLATE/_system sync (modes, new containers/codecs,
-   filters, filtergraph, format options, srt input, http/https output; fix the
-   stale unsupported list ~line 111 and stream-scheme list 95-98).
-4. Real-ffmpeg verification on media/titan.mp4 in BOTH builds (local 6.1.1 +
-   i7 docker 9.0.1); subtitle dump + .ass muxer empirically.
-5. i7 deploy + live verification. Final user reply must answer "why not ALL
-   containers": the registry-driven architecture makes container/codec/
-   format-option support data — the added set is the practical full common
-   set supported by BOTH installed ffmpeg builds.
+1. ~~i7 docker 9.0.1 battery~~ — 21/21 (see above).
+2. ~~i7 deploy + live verification~~ — done (see above).
+3. Commit the uncommitted M7 battery + graph fix + llm.py sync + this window's
+   planner/pipeline/registry fixes (Co-Authored-By; no push unless asked).
+4. Final user reply answering "why not ALL containers": registry-driven
+   architecture — container/codec/format-option/filter support is DATA in
+   fass/registry/registry.json, not code paths; adding a container is adding
+   a row. The added set is the practical full common set supported by BOTH
+   installed ffmpeg builds (6.1.1 + 9.0.1), verified live on both.
 
 ## Prior state (2026-10-24, M6 COMPLETE — committed 2344be3)
 **M6 (docker packaging) — code, tests, i7 deploy, Apply E2E, docs all DONE.**
@@ -527,9 +589,12 @@ media/titan.mp4, pyproject.toml,
 HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **534 passed** in ~67 s (2026-10-24,
-M7 in progress, suite green at commit 5afac91; baseline 533 + 7
-capability-widening failures fixed: bench-077, test_planner_builder ×4,
+`./.venv/bin/python -m pytest -q` → **588 passed** in ~71 s (2026-10-24,
+M7: 555 at merge 43b1182 = 534 + 21 worker tests; +30 new M7 NLU test
+cases + planner/registry fixes + mxf -g 120 assertion, all uncommitted).
+Earlier: 534 at 5afac91 (2026-10-24, M7 in progress, suite green at
+commit 5afac91; baseline 533 + 7 capability-widening failures fixed:
+bench-077, test_planner_builder ×4,
 test_schema ×3).
 M6: 530 passed (452 pre-M6 + 78 test_m6_*.py incl. the worker sidecar
 suite + the `_unmanaged_binds` regression; bench-063/067 re-expected for
@@ -546,11 +611,15 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-**M7 in progress** — NLU rewrite DONE (uncommitted at save); next: integrate
-worker job **j_41200a56f4** (d4938a6, i7, completed) per the numbered task
-list in Current state, then new M7 NLU tests, llm.py sync, dual-build
-real-ffmpeg verification, i7 deploy. Main is 2 commits ahead of
-origin/main (08c949e, 5afac91) — no push unless asked.
+**M7 VERIFICATION COMPLETE (2026-10-24)** — NLU rewrite committed
+(4c0a0ed), worker job **j_41200a56f4** INTEGRATED (merge 43b1182,
+dispatch_integrate accepted), 30-case M7 test battery + filtergraph fix +
+llm.py sync + local/double-build real-ffmpeg verification (21/21 on
+6.1.1 AND 21/21 on 9.0.1 in docker, after the mxf `-g 120` fix) + i7
+deploy + live API/run E2E — all done. 588 passed. REMAINING: commit the
+uncommitted M7 battery + fixes (Co-Authored-By; no push unless asked) +
+final user reply ("why not ALL containers" — registry-driven data).
+Main is 6 commits ahead of origin/main — no push unless asked.
 
 **M6 committed (pre-rewrite 2344be3)** and **pushed**. UI bug fixed
 + pushed 2026-10-24; bare-input volume-resolution fix committed +
