@@ -46,8 +46,9 @@ docker compose -f docker/compose.yaml up -d --build
 
 - `./launcher.sh start` — no-op if the stack is already healthy, else
   `up -d` + wait for healthz, then fires Chrome at `http://127.0.0.1:8000`
-  (override with `FASS_GUI_URL` / `FASS_BROWSER`); over ssh (no DISPLAY)
-  it prints the URL instead.
+  (override with `FASS_GUI_URL` / `FASS_BROWSER`); over ssh (no graphical
+  session — neither `DISPLAY` nor `WAYLAND_DISPLAY` set) it prints the URL
+  instead.
 - `./launcher.sh rebuild` — `up -d --build` (fresh image) + GUI.
 - `./launcher.sh stop` — `compose stop`; volumes and state are kept.
 - `./launcher.sh status` — containers + healthz.

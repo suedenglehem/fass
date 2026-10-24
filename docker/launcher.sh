@@ -41,8 +41,8 @@ open_gui() {
     || command -v chromium-browser || true)}"
   if [[ -z "$browser" ]]; then
     echo "no chrome/chromium found — open $URL manually"
-  elif [[ -z "${DISPLAY:-}" ]]; then
-    echo "no DISPLAY — open $URL manually"
+  elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    echo "no graphical session (DISPLAY/WAYLAND_DISPLAY) — open $URL manually"
   else
     nohup "$browser" "$URL" >/dev/null 2>&1 &
     echo "opened $URL in $(basename "$browser")"
