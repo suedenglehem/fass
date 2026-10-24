@@ -424,7 +424,7 @@ async function saveCfg() {
   loadCfg();
 }
 async function applyCfg() {
-  if (!confirm('Recreate the fass container with the saved config?\nThe UI will lose connection for a few seconds while the container is swapped (the worker sidecar does the work).')) return;
+  if (!confirm('Recreate the fass container with the saved config?\\nThe UI will lose connection for a few seconds while the container is swapped (the worker sidecar does the work).')) return;
   $('apply-btn').disabled = true;
   $('cfg-status').innerHTML = '<span class="note">asking fass-worker to recreate the container…</span>';
   try {

@@ -224,6 +224,37 @@ def test_ui_served_at_root():
     assert "ffmpeg" in r.text.lower()
 
 
+def test_ui_script_is_valid_javascript():
+    # Regression: the confirm() dialog's text contained a '\n' that Python
+    # interpreted while building UI_HTML, so the browser received a real
+    # line break inside a JS single-quoted string and rejected the whole
+    # <script> — every tab button and Generate/Save/Apply went dead.
+    # Check the bytes the server actually serves, not the Python source.
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    js = re.search(r"<script>(.*?)</script>", client.get("/").text, re.S)
+    assert js, "the UI must carry an inline script"
+    # the specific victim: one physical line with the escape intact
+    line = next(l for l in js.group(1).splitlines() if "confirm(" in l)
+    assert "saved config?\\nThe UI" in line
+    # the whole block: a real JS parser on the served bytes
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available for the JS syntax check")
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(js.group(1))
+        path = f.name
+    try:
+        proc = subprocess.run([node, "--check", path], capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_ui_validation_line_uses_check_fields():
     # Regression: the Validation line once mapped c.check/c.status, which
     # don't exist on check objects ({name, ok, detail}) — the UI showed

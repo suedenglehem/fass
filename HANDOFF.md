@@ -83,8 +83,9 @@ everything in a `docker/` folder. Delivered:
   (4) socket bind lost after the first Apply — recreate() rebuilt Binds
   from config only; fixed with `_unmanaged_binds()` (carries over the
   socket + any user-added mounts; regression test added).
-- Current i7 containers: fass **c54d1b9c4f75** (recreated by the
-  launcher's `rebuild` — fresh image, same config), fass-worker up;
+- Current i7 containers: fass **e61ea65d558a** (recreated by
+  `launcher.sh rebuild` after the UI fix below — fresh image, same
+  config), fass-worker up;
   both healthy; docker status manage/worker true, engine 29.7.2.
   Apply result: ports {8000/tcp, 5000/udp}, 4 managed volumes + socket
   bind, gpu true (DeviceIDs ["1"]).
@@ -127,6 +128,23 @@ everything in a `docker/` folder. Delivered:
   `WAYLAND_DISPLAY` — Chrome would have never fired on i7's actual
   desktop. Real Chrome fires when the user runs the launcher from a
   desktop terminal after logging into i7.
+- **UI bug fixed (2026-10-24): "clicking Config does NOTHING".** The
+  whole web UI was dead, not just the Config tab. Root cause: the
+  confirm() dialog in `fass/ui.py` contained a `\n` inside a JS
+  single-quoted string; Python interpreted that escape while building
+  `UI_HTML`, so the browser received a real line break inside the
+  string → `SyntaxError: Invalid or unexpected token` → the entire
+  `<script>` block was rejected → `showTab`/`submit`/`saveCfg`/
+  `applyCfg` all undefined. The UI had been broken since M6 shipped.
+  Reproduced with headless Chrome over CDP on i7 (pageJsExceptions
+  caught it; `node --check` on the Python source had passed because
+  the source still holds the two-character `\`+`n` escape). Fix:
+  `\\n` in ui.py (one backslash — the only one in the file).
+  Regression test `test_ui_script_is_valid_javascript` syntax-checks
+  the SERVED bytes with node (skipif no node) + asserts the confirm
+  line is one physical line. Verified live in real Chrome: tabs
+  switch, /v1/config populates, Apply enabled, 0 JS exceptions,
+  screenshot clean. Deployed via rsync + compose opt-ins + rebuild.
 
 ## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
@@ -398,8 +416,8 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-**M6 committed as 2344be3** (31 files, +3572/−235) and **pushed** —
-nothing outstanding.
+**M6 committed (pre-rewrite 2344be3)** and **pushed**. UI bug fixed
++ pushed 2026-10-24 (see Current state). Nothing outstanding.
 - **plan0.md removed (2026-10-24, on request):** every deliverable in the
   doc was already shipped, so the file was removed, ~20 references in
   docstrings/README/DEVELOPMENT/HANDOFF scrubbed, and it was deleted
@@ -410,8 +428,8 @@ nothing outstanding.
   no longer resolves** — hashes only compare within pre- or post-rewrite
   history. Also removed the 6 stale fass dispatch worktrees (all jobs
   terminal, work integrated) and synced the deletion to i7.
-- **main = origin/main = fa78b85** (post-rewrite tip, pushed
-  2026-10-24).
+- **main = origin/main = 028ce91** (post-rewrite tip, pushed
+  2026-10-24); the UI fix commit lands on top (pushed same day).
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
