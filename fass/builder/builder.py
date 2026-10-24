@@ -2,8 +2,8 @@
 
 The argument array is built before any string is rendered. Paths travel
 as single argv elements and are never concatenated into a shell command;
-the POSIX renderer quotes each element independently (plan0.md / PRD
-security section).
+the POSIX renderer quotes each element independently (PRD security
+section).
 """
 
 from __future__ import annotations

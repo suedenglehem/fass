@@ -1,4 +1,4 @@
-"""Optional local inspection helpers (plan0.md section 2).
+"""Optional local inspection helpers.
 
 A filename alone cannot tell you whether a video has audio, what its
 duration is, or whether a requested encoder is installed. These helpers

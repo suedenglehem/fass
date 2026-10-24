@@ -1,4 +1,4 @@
-"""Planner: editing plan -> execution plan (plan0.md section 3).
+"""Planner: editing plan -> execution plan.
 
 Keeps *what the user wants* (EditPlan) separate from *how to do it*
 (stream selection, encoders, filters, option placement). Every default
@@ -508,7 +508,7 @@ def plan_execution(
         if sub_path and real_out == os.path.realpath(sub_path):
             raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
 
-    # -- remux vs re-encode (plan0.md section 3) ---------------------------
+    # -- remux vs re-encode ------------------------------------------------
     has_trim = edit.trim is not None
     # Soft subtitles only mux a track — they touch no frame, so they do not
     # force a re-encode (M5). Burning is a filter chain and does.

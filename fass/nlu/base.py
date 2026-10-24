@@ -1,6 +1,6 @@
 """NLU adapter interface (PRD section 8: one provider adapter,
-schema-constrained output; plan0.md section 1: the model's only job is to
-translate intent into a plan)."""
+schema-constrained output; the model's only job is to translate intent
+into a plan)."""
 
 from __future__ import annotations
 

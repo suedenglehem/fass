@@ -1,11 +1,11 @@
 """Deterministic rule-based NLU adapter.
 
 This is the offline development and testing stand-in for the LLM adapter
-(plan0.md: "you can test command generation without calling a model") and
-the fallback when no LLM provider is configured. It returns the same
+(command generation is testable without calling a model) and the fallback
+when no LLM provider is configured. It returns the same
 envelope and produces the same strict schema as the LLM adapter.
 
-Ambiguity is an explicit result (plan0.md section 5): the adapter returns
+Ambiguity is an explicit result: the adapter returns
 ``ready``, ``needs_clarification``, or ``unsupported`` — never a silent
 partial plan.
 """
@@ -788,7 +788,7 @@ _LOSSLESS = re.compile(r"\blossless\b|without\s+(?:any\s+)?(?:quality\s+)?loss\b
 
 def _scan_ambiguous(t: str, resize: ResizeOp | None) -> Clarification | None:
     """Focused questions for requests whose intent cannot be safely
-    resolved (plan0.md section 5, PRD clarification policy)."""
+    resolved (PRD clarification policy)."""
     if _LOSSLESS.search(t):
         return Clarification(
             question=(

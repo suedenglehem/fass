@@ -1,18 +1,19 @@
 # HANDOFF — fass (natural language → validated FFmpeg commands)
 
 ## Goal
-Implement plan0.md milestone 1: CLI-first pipeline (instruction → NLU → strict
-EditPlan → planner → builder argv → POSIX render), 5 MVP ops (trim, resize,
-grayscale, encode/convert, one watermark), 70+ deterministic tests, then a
-50-request benchmark, real media-fixture outcome tests, README. No web UI yet.
-Spec: ffmpeg-assistant-prd.md; guide: plan0.md.
+CLI-first pipeline (instruction → NLU → strict EditPlan → planner → builder
+argv → POSIX render), 5 MVP ops (trim, resize, grayscale, encode/convert,
+one watermark), 70+ deterministic tests, then a 50-request benchmark, real
+media-fixture outcome tests, README. No web UI yet. (Shipped as milestone 1;
+the original plan doc was removed from the repo and its history 2026-10-24.)
+Spec: ffmpeg-assistant-prd.md.
 
 **MILESTONE 1 COMPLETE (2026-10-23).** 162 tests pass (33 s): 70 deterministic
 (schema, rules, planner/builder, render-adversarial, cli) + 78 language
 benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 
 **MILESTONE 2 COMPLETE (2026-10-23).** FastAPI web layer over `generate()`
-(plan0: "add the web interface after that path works end to end"). 178 tests
+(web after the CLI path works end to end). 178 tests
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
@@ -460,7 +461,7 @@ tokens only, scheme allowlist, stream destinations disclosed.
 2. More ops beyond the current set (volume, concatenation, ...),
    LLM adapter evaluation against the 91-request benchmark.
 3. UI niceties (history, drag-drop — PRD explicitly defers drag-and-drop).
-4. plan0 §7 learning infra (corpus + eval harness) before any fine-tuning.
+4. Learning infra (consented-failure corpus + eval harness) before any fine-tuning.
 Remote `origin` (github.com/suedenglehem/fass.git) exists since 2026-10-23;
 commit/push with it only when asked.
 

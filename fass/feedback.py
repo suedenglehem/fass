@@ -1,4 +1,4 @@
-"""Consented feedback logging (PRD FR-7, plan0.md section 7).
+"""Consented feedback logging (PRD FR-7).
 
 Failures are recorded by category — incorrect intent, missing
 clarification, unsupported capability, builder bug, environment

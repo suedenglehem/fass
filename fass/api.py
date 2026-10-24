@@ -1,5 +1,5 @@
-"""FastAPI layer over the same generate() the CLI uses (plan0: the web
-interface comes after the CLI path works end to end).
+"""FastAPI layer over the same generate() the CLI uses (web interface
+after the CLI path works end to end).
 
 PRD §9 API contract: POST /v1/commands takes an instruction, an asset map of
 local file references, an output filename, a target shell, an optional

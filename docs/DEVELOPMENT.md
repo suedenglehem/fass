@@ -310,4 +310,4 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [ ] deferred (PRD §5): concatenation, transitions, audio
   mixing, HDR, batch processing
 
-Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`
+Spec: `ffmpeg-assistant-prd.md`

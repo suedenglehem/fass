@@ -1,4 +1,4 @@
-"""Media-outcome tests (plan0.md §6): generated commands must produce the
+"""Media-outcome tests: generated commands must produce the
 intended *edits*, verified by probing real output media — not by comparing
 command strings.
 
@@ -241,7 +241,7 @@ def test_hostile_filename_runs_end_to_end(gen, media, tmp_path):
     assert info.width % 2 == 0
 
 
-# ------------------------------------------- difficult fixtures (plan0 §6)
+# ------------------------------------------- difficult fixtures
 
 def test_resize_portrait_keeps_even_width(gen, media, tmp_path):
     out = tmp_path / "portrait_720.mp4"

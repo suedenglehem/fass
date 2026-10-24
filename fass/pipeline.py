@@ -204,7 +204,7 @@ def generate(
     # becomes the configured docker host address / 0.0.0.0 bind.
     output_filename = _apply_stream_hosts(assets, output_filename, edit, resp)
 
-    # Optional local inspection (plan0.md section 2): only for files that
+    # Optional local inspection: only for files that
     # exist on this machine — the MVP never uploads media.
     if media is None and ffprobe_available():
         candidate = Path(assets[edit.input_id].path)

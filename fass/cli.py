@@ -1,4 +1,4 @@
-"""Command-line interface (plan0.md: CLI first, web after)."""
+"""Command-line interface."""
 
 from __future__ import annotations
 

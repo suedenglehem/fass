@@ -1,4 +1,4 @@
-"""API tests for the FastAPI layer (plan0 milestone 2): the web service is a
+"""API tests for the FastAPI layer: the web service is a
 thin wrapper over the same generate() the CLI uses, so the tests assert the
 PRD §9 contract — structured domain outcomes are 200 responses, malformed
 requests are 422 — and the security invariants (assets stay local, POSIX

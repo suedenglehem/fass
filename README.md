@@ -103,4 +103,4 @@ the container and the results are playable from the UI. The Config tab's
   `ftp://`, … are rejected)
 - output never overwrites the input; `-y` is never emitted
 
-Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`
+Spec: `ffmpeg-assistant-prd.md`

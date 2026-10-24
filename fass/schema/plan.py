@@ -1,4 +1,4 @@
-"""Versioned structured editing-plan schema (PRD FR-2, plan0.md section 1).
+"""Versioned structured editing-plan schema (PRD FR-2).
 
 The plan describes what the user *wants*, independent of FFmpeg syntax:
 no raw flags, no filter expressions, no file paths. Assets are referenced
@@ -295,7 +295,7 @@ class ParseStatus(str, Enum):
 
 
 class ParseResult(BaseModel):
-    """Envelope every NLU adapter returns (plan0.md section 5)."""
+    """Envelope every NLU adapter returns."""
 
     model_config = ConfigDict(extra="forbid")
 

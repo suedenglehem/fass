@@ -1,11 +1,11 @@
-"""Milestone-1 language benchmark (plan0.md: "50 representative requests").
+"""Language benchmark: representative natural-language requests.
 
 Each entry in tests/benchmark/requests.json is a natural-language request
 with the expected outcome derived from the PRD (section 13 scenarios,
 clarification policy, scope). The test runs the deterministic rules
 adapter through the full pipeline and compares the *plan* — status,
 operation multiset, trim interval (±0.01s), and output spec fields —
-never command wording (plan0.md section 6).
+never command wording.
 
 Expectations follow the PRD, not the adapter: a mismatch is a bug report
 against fass/nlu/rules.py, not a reason to weaken the expectation.
