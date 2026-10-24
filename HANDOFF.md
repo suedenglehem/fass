@@ -16,7 +16,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-24, M6 COMPLETE — commit pending)
+## Current state (2026-10-24, M6 COMPLETE — committed 2344be3)
 **M6 (docker packaging) — code, tests, i7 deploy, Apply E2E, docs all DONE.**
 User request: package fass+ffmpeg in docker (jrottenberg/ffmpeg:9.0-nvidia2404),
 config tab (volume + stream-port mapping), streams in/out, GPU transcoding,
@@ -357,18 +357,17 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-**NEXT: commit M6** (no push unless asked) — the working tree holds the
-whole milestone (modified core files + untracked docker/, fass/config.py,
-fass/dockerctl.py, fass/execute.py, fass/ui.py, tests/test_m6_*.py,
-.dockerignore, .resume). After the commit: nothing outstanding.
+**M6 committed as 2344be3** (31 files, +3572/−235) — nothing outstanding
+(no push unless asked). **main = 2344be3**, **origin/main = d7c895c**
+(M5 + HANDOFF); M6 not yet pushed.
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
 done + deployed to i7 + E2E-verified (including Apply twice). The
 8-component build goal is code-complete AND documented. Both delegated
 jobs (j_893e3a47a6, j_bf063ade65) integrated, accepted, no jobs in
-flight. 530 tests green (2026-10-24). **origin/main = d7c895c** (M5 +
-HANDOFF); M6 not yet pushed. Both machines launch the dev server via
+flight. 530 tests green (2026-10-24). Working tree clean apart from
+untracked `.resume`. Both machines launch the dev server via
 `serve.sh`; i7 additionally runs the docker deployment (compose project
 "docker"). Nothing outstanding unless the user asks.
 
