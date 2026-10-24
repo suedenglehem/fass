@@ -46,6 +46,10 @@ services:
           devices:
             - driver: nvidia
               capabilities: [gpu]
+              # Pin to GPU 1 (RTX 4060 Ti): GPU 0 (RTX 4080 Super) runs the
+              # strata LLM and must stay untouched. Keep in sync with the
+              # Config tab's gpu.device (Apply re-creates from that value).
+              device_ids: ["1"]
     restart: unless-stopped
 
   fass-worker:

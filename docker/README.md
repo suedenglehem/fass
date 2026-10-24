@@ -40,6 +40,18 @@ docker compose -f docker/compose.yaml up -d --build
 #    http://<host>:8000
 ```
 
+### Launcher (start / stop + GUI)
+
+`docker/launcher.sh` wraps the compose lifecycle and opens the web GUI:
+
+- `./launcher.sh start` — no-op if the stack is already healthy, else
+  `up -d` + wait for healthz, then fires Chrome at `http://127.0.0.1:8000`
+  (override with `FASS_GUI_URL` / `FASS_BROWSER`); over ssh (no DISPLAY)
+  it prints the URL instead.
+- `./launcher.sh rebuild` — `up -d --build` (fresh image) + GUI.
+- `./launcher.sh stop` — `compose stop`; volumes and state are kept.
+- `./launcher.sh status` — containers + healthz.
+
 The entrypoint seeds `/config/config.json` on first start with deployment
 sensible defaults (OpenAI-compatible LLM at the docker bridge gateway
 `172.17.0.1:8080`, model `qwen3.8-27b` — the strata server on the host; GPU

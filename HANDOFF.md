@@ -82,10 +82,11 @@ everything in a `docker/` folder. Delivered:
   (4) socket bind lost after the first Apply — recreate() rebuilt Binds
   from config only; fixed with `_unmanaged_binds()` (carries over the
   socket + any user-added mounts; regression test added).
-- Current i7 containers: fass **597bf50e2716** (post-3rd-apply),
-  fass-worker up; both healthy; docker status manage/worker true,
-  engine 29.7.2. Apply result: ports {8000/tcp, 5000/udp}, 4 managed
-  volumes + socket bind, gpu true.
+- Current i7 containers: fass **69d06f0a091b** (compose-recreated after
+  the launcher + compose GPU-pin changes; same config), fass-worker up;
+  both healthy; docker status manage/worker true, engine 29.7.2.
+  Apply result: ports {8000/tcp, 5000/udp}, 4 managed volumes + socket
+  bind, gpu true (DeviceIDs ["1"]).
 - **GPU pinning (2026-10-24):** i7 runs strata (LLM) on GPU 0 (RTX 4080
   Super) — fass docker is pinned to **GPU 1 (RTX 4060 Ti)** via
   `gpu.device="1"` in the Config tab + Apply (3rd apply: 2f5be4a87f2a →
@@ -98,6 +99,20 @@ everything in a `docker/` folder. Delivered:
   plan rewrites host→`172.17.0.1` (gateway) + injects `-f mpegts` +
   remote-endpoint disclosure, container pushes live, host receiver
   captured 7.98 s / 2.4 MB.
+- **`docker/launcher.sh` (2026-10-24):** user-facing start/stop for the
+  i7 deployment — `start` (no-op if healthy, else `up -d` + healthz wait)
+  + fires `google-chrome` at the GUI (http://127.0.0.1:8000;
+  `FASS_GUI_URL`/`FASS_BROWSER` overrides, graceful no-DISPLAY message
+  for ssh); `rebuild` = `up -d --build`; `stop` = `compose stop`
+  (state/volumes kept); `status` = containers + healthz.
+- **compose.yaml now pins the GPU too** (`device_ids: ["1"]` on the
+  nvidia reservation): before this, the pin existed only in the worker's
+  Apply-created container, so a fresh `compose up` (e.g. after `down`)
+  would have re-granted all GPUs and nvenc could hit the LLM's card.
+  Both creation paths (Apply from config `gpu.device` and compose
+  `device_ids`) now agree on GPU 1. Verified: `compose stop`→`up -d`
+  recreated fass (69d06f0a091b) with `DeviceIDs:["1"]`, 4060 Ti only,
+  manage/worker still true.
 
 ## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
