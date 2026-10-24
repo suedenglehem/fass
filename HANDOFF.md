@@ -385,8 +385,8 @@ run tests from repo root.
 
 ## Next steps
 **M6 committed as 2344be3** (31 files, +3572/−235) and **pushed** —
-nothing outstanding. **main = origin/main = 473f70c** (M6 + HANDOFF
-records incl. i7 GPU pinning + stream in/out E2Es).
+nothing outstanding. **main = origin/main = 54e2a65** (M6 + HANDOFF
+records incl. i7 GPU pinning, stream in/out E2Es, docker/launcher.sh).
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
