@@ -399,9 +399,19 @@ run tests from repo root.
 
 ## Next steps
 **M6 committed as 2344be3** (31 files, +3572/−235) and **pushed** —
-nothing outstanding. **main = origin/main = 3915e9b** (pushed
-2026-10-24: 26772d9 launcher WAYLAND_DISPLAY fix, launcher E2E on i7,
-+ this record).
+nothing outstanding.
+- **plan0.md removed (2026-10-24, on request):** every deliverable in the
+  doc was already shipped, so the file was removed, ~20 references in
+  docstrings/README/DEVELOPMENT/HANDOFF scrubbed, and it was deleted
+  from ALL git history (`git filter-repo --invert-paths --path
+  plan0.md`; backup refs purged + `git gc --prune=now`; force-pushed).
+  Verified: plan0.md in no commit/tree/ref. Consequence: **every commit
+  hash recorded in this file (and in mycelium) predates the rewrite and
+  no longer resolves** — hashes only compare within pre- or post-rewrite
+  history. Also removed the 6 stale fass dispatch worktrees (all jobs
+  terminal, work integrated) and synced the deletion to i7.
+- **main = origin/main = fa78b85** (post-rewrite tip, pushed
+  2026-10-24).
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
