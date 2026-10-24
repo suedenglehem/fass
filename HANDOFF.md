@@ -82,10 +82,19 @@ everything in a `docker/` folder. Delivered:
   (4) socket bind lost after the first Apply — recreate() rebuilt Binds
   from config only; fixed with `_unmanaged_binds()` (carries over the
   socket + any user-added mounts; regression test added).
-- Current i7 containers: fass **2f5be4a87f2a** (post-2nd-apply),
+- Current i7 containers: fass **597bf50e2716** (post-3rd-apply),
   fass-worker up; both healthy; docker status manage/worker true,
   engine 29.7.2. Apply result: ports {8000/tcp, 5000/udp}, 4 managed
   volumes + socket bind, gpu true.
+- **GPU pinning (2026-10-24):** i7 runs strata (LLM) on GPU 0 (RTX 4080
+  Super) — fass docker is pinned to **GPU 1 (RTX 4060 Ti)** via
+  `gpu.device="1"` in the Config tab + Apply (3rd apply: 2f5be4a87f2a →
+  597bf50e2716). Container sees exactly one GPU (`DeviceIDs:["1"]`,
+  re-indexed as CUDA 0 inside) so `h264_nvenc` can never touch the LLM's
+  card. Verified: `nvidia-smi -L` in-container → 4060 Ti only; nvenc run
+  exit 0. Stream-in E2E also verified same day: push mpegts →
+  `udp://127.0.0.1:5000` (mapped), plan binds `udp://0.0.0.0:5000`, run
+  success, 4.86 s output.
 
 ## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
