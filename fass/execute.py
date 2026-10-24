@@ -32,9 +32,14 @@ from pathlib import Path
 
 from fass.registry import (
     REGISTRY,
+    all_muxers,
+    container_from_extension,
+    filtergraph_problems,
+    format_option_errors,
     is_source_spec,
     output_device_formats,
     source_input_formats,
+    stream_output_info,
     stream_scheme,
 )
 
@@ -45,6 +50,15 @@ RUN_DIR_ENV = "FASS_RUN_DIR"
 
 # ------------------------------------------------------------ argv validation
 
+# Every '-<key> value' format option the registry lets a container carry
+# (generic set + the per-container groups: movflags, mpegts_flags, hls_*, …).
+_FORMAT_OPTION_KEYS = {
+    key
+    for group, opts in REGISTRY["format_options"].items()
+    if group != "description" and isinstance(opts, dict)
+    for key in opts
+}
+
 _BOOL_FLAGS = {"-hide_banner", "-an", "-shortest"}
 _VALUE_FLAGS = {
     "-loglevel", "-ss", "-t", "-i", "-f",
@@ -53,7 +67,7 @@ _VALUE_FLAGS = {
     "-b:v", "-b:a", "-maxrate", "-bufsize",
     "-crf", "-rc", "-cq", "-profile:v", "-preset", "-pix_fmt",
     "-ar", "-ac", "-movflags",
-}
+} | {f"-{key}" for key in _FORMAT_OPTION_KEYS}
 KNOWN_FLAGS = _BOOL_FLAGS | _VALUE_FLAGS
 
 _FILTER_FLAGS = {"-filter_complex", "-vf", "-af"}
@@ -64,10 +78,9 @@ _CODECS = (
     | set(REGISTRY["subtitles"]["soft_codecs"].values())
     | {"pcm_s16le", "copy"}
 )
-_MUXERS = {
-    "mp4", "mov", "matroska", "webm", "mpegts", "flv", "rtsp", "srt",
-    "udp", "rtp", "tcp",
-} | set(source_input_formats()) | set(output_device_formats())
+# Registry-driven: every container muxer, the fixed-container stream muxers,
+# the source-input demuxers (lavfi, …) and the output device formats.
+_MUXERS = all_muxers() | set(source_input_formats()) | set(output_device_formats())
 _PIX_FMTS = {pf for pfs in REGISTRY["pixel_formats"].values() for pf in pfs}
 _PRESETS = {p for ps in REGISTRY["video_presets"].values() for p in ps}
 _PROFILES = {"baseline", "main", "high"}
@@ -92,16 +105,35 @@ def _is_path_token(tok: str) -> bool:
     )
 
 
+def _output_container(argv: list[str]) -> str | None:
+    """Container of the plan's output destination — the context format-option
+    values are validated against. Stream destinations resolve through the
+    registry (http/https derive the container from the URL path extension,
+    defaulting to mpegts); plain files through their extension. None for
+    destinations with no container to speak of (audio devices)."""
+    if len(argv) < 2:
+        return None
+    dest = argv[-1]
+    info = stream_output_info(dest)
+    if info is not None:
+        return info[0]
+    name = dest.rsplit("/", 1)[-1]
+    if "." not in name:
+        return None
+    return container_from_extension(name.rsplit(".", 1)[-1])
+
+
 def validate_argv(argv: list[str]) -> list[str]:
     """Return a list of problems (empty = valid)."""
     problems: list[str] = []
     if not argv or argv[0] != "ffmpeg":
         return ["argv must start with 'ffmpeg'"]
+    container = _output_container(argv)
     expect_value: str | None = None
     positionals = 0
     for i, tok in enumerate(argv[1:], start=1):
         if expect_value is not None:
-            problems.extend(_check_value(expect_value, tok, i))
+            problems.extend(_check_value(expect_value, tok, i, container))
             expect_value = None
             continue
         if tok in _BOOL_FLAGS:
@@ -135,14 +167,17 @@ def validate_argv(argv: list[str]) -> list[str]:
     return problems
 
 
-def _check_value(flag: str, value: str, index: int) -> list[str]:
+def _check_value(flag: str, value: str, index: int,
+                 container: str | None = None) -> list[str]:
     p = f"value for '{flag}'"
     if not _PATH_RE.match(value):
         return [f"{p} contains control characters"]
     if flag in _FILTER_FLAGS:
-        if not value or not _PATH_RE.match(value):
+        if not value:
             return [f"{p} is empty or malformed"]
-        return []
+        # full graph validation (filter names, chain/instance syntax) —
+        # the same validator the schema layer used on the plan
+        return [f"{p}: {msg}" for msg in filtergraph_problems(value)]
     if flag == "-i":
         return []  # input path / stream URL / source spec
     if flag == "-f":
@@ -193,14 +228,19 @@ def _check_value(flag: str, value: str, index: int) -> list[str]:
         if value not in ("1", "2", "6"):
             return [f"{p} must be 1, 2 or 6 channels"]
         return []
-    if flag == "-movflags":
-        if value != "+faststart":
-            return [f"{p} only supports '+faststart' in the MVP"]
-        return []
     if flag == "-loglevel":
         if value not in ("quiet", "error", "warning", "info", "verbose"):
             return [f"{p} '{value}' is not a log level"]
         return []
+    key = flag[1:]
+    if key in _FORMAT_OPTION_KEYS:
+        # '-<key> value' format option (movflags, brand, hls_time, …):
+        # validated per its registry kind — flagset members, numeric
+        # ranges, enums — against the plan's output container
+        if container is None:
+            return []
+        return [f"{p}: {msg}"
+                for msg in format_option_errors(container, {key: value})]
     return []
 
 

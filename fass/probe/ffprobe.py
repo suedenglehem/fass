@@ -24,6 +24,11 @@ _HDR_PIX_FMTS = {
 # the second column, which is how they are told apart.
 _FILTER_FLAG = re.compile(r"^[TSC.-]+$")
 
+# `ffmpeg -muxers` rows: "  E mp4   MP4 (MPEG-4 Part 14)" — the flags column
+# is built from [D.E]; the legend rows (" D. = Demuxing supported") carry "="
+# as the name column.
+_MUX_FLAG = re.compile(r"^[DE.]+$")
+
 
 @dataclass
 class MediaInfo:
@@ -48,6 +53,7 @@ class FfmpegInfo:
     version: str | None = None
     encoders: set[str] = field(default_factory=set)
     filters: set[str] = field(default_factory=set)
+    muxers: set[str] = field(default_factory=set)
 
 
 def ffprobe_available() -> bool:
@@ -158,7 +164,10 @@ def probe_media(path: str) -> MediaInfo | None:
 
 
 def probe_ffmpeg() -> FfmpegInfo | None:
-    """Inspect the local FFmpeg build for encoders and filters."""
+    """Inspect the local FFmpeg build for encoders, filters and muxers.
+
+    Muxer availability is build-specific (e.g. the ADTS ``aac`` muxer is
+    absent from some builds), so it is probed, never assumed."""
     if not ffmpeg_available():
         return None
     info = FfmpegInfo()
@@ -176,6 +185,16 @@ def probe_ffmpeg() -> FfmpegInfo | None:
             if len(parts) >= 2 and _FILTER_FLAG.match(parts[0]) and parts[1] != "=":
                 names.add(parts[1])
         info.filters = names
+    mux = _run(["ffmpeg", "-hide_banner", "-muxers"])
+    if mux:
+        # Rows look like "  E mp4             MP4 (MPEG-4 Part 14)"; legend
+        # rows (" D. = Demuxing supported") carry "=" as the name column.
+        names = set()
+        for line in mux.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and _MUX_FLAG.match(parts[0]) and parts[1] != "=":
+                names.add(parts[1])
+        info.muxers = names
     return info
 
 
@@ -187,8 +206,13 @@ class Check:
 
 
 def preflight(media: MediaInfo | None, ff: FfmpegInfo | None,
-              encoders: list[str], filters: list[str]) -> list[Check]:
-    """Local capability preflight (PRD FR-5, optional level)."""
+              encoders: list[str], filters: list[str],
+              muxers: list[str] | None = None) -> list[Check]:
+    """Local capability preflight (PRD FR-5, optional level).
+
+    ``muxers`` are the muxers the plan will ask FFmpeg to write with; each
+    is checked against the probed ``-muxers`` set — availability is
+    build-specific, so it is never assumed."""
     checks: list[Check] = []
     if ff is None:
         checks.append(Check("ffmpeg build", False, "ffmpeg not found locally — checks limited to static validation"))
@@ -200,4 +224,7 @@ def preflight(media: MediaInfo | None, ff: FfmpegInfo | None,
     for name in filters:
         ok = name in ff.filters
         checks.append(Check(f"filter {name}", ok, "available" if ok else "NOT available in this FFmpeg build"))
+    for name in muxers or []:
+        ok = name in ff.muxers
+        checks.append(Check(f"muxer {name}", ok, "available" if ok else "NOT available in this FFmpeg build"))
     return checks

@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from fass.planner import ExecutionPlan, fmt_num
 from fass.probe.ffprobe import MediaInfo
-from fass.registry import REGISTRY, soft_subtitle_codec, stream_scheme
+from fass.registry import (
+    REGISTRY,
+    soft_subtitle_codec,
+    stream_scheme,
+    subtitle_dump_codec,
+)
 from fass.schema import EditPlan
 
 _POS_WORDS = {
@@ -22,7 +27,32 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
     lines: list[str] = []
     out = edit.output
 
-    if ep.mode == "copy":
+    if out.mode == "subtitles":
+        codec = subtitle_dump_codec(out.container)
+        lines.append(
+            f"Subtitle dump: the input's first subtitle stream is written "
+            f"as {codec} in {out.container.upper()}"
+        )
+        lines.append(
+            "No re-encoding: the muxer decodes the subtitle stream itself "
+            "(no codec flag)"
+        )
+    elif out.mode == "audio":
+        if ep.mode == "copy":
+            lines.append(
+                "Audio remux (stream copy): no re-encoding — the input "
+                "audio stream already fits the target container"
+            )
+        else:
+            ac = REGISTRY["audio_codecs"][out.audio_codec]
+            kbps = out.audio_bitrate_kbps or ac.get("bitrate_kbps")
+            quality = (f" at {kbps}k" if kbps is not None
+                       else " (lossless/PCM — no bitrate flag)")
+            lines.append(
+                f"Audio extract: encoded as {ac['encoder']} "
+                f"({out.audio_codec}){quality} in {out.container.upper()}"
+            )
+    elif ep.mode == "copy":
         lines.append("Remux (stream copy): no re-encoding — the input streams already match the target")
     else:
         vc = REGISTRY["video_codecs"][out.video_codec]
@@ -57,7 +87,10 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             )
         else:
             lines.append(f"Trim: keep from {fmt_num(trim.start_seconds)}s to the end")
-        lines.append("Trim re-encodes for frame-accurate cuts (MVP policy)")
+        if out.mode == "video":
+            lines.append("Trim re-encodes for frame-accurate cuts (MVP policy)")
+        elif out.mode == "subtitles":
+            lines.append("Trim: subtitle events outside the kept range are dropped")
 
     for op in edit.operations:
         if op.type == "resize":
@@ -79,7 +112,15 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             dirn = "clockwise" if op.clockwise else "counterclockwise"
             lines.append(f"Rotate: {op.angle}° {dirn}")
         elif op.type == "speed":
-            lines.append(f"Speed: playback at {op.factor:g}x (video and audio together)")
+            if out.mode == "audio":
+                lines.append(f"Speed: playback at {op.factor:g}x (audio, pitch preserved)")
+            else:
+                lines.append(f"Speed: playback at {op.factor:g}x (video and audio together)")
+        elif op.type == "filter":
+            if op.domain == "audio":
+                lines.append(f"Audio filter: {op.expr}")
+            else:
+                lines.append(f"Video filter: {op.expr}")
         elif op.type == "grayscale":
             lines.append("Grayscale: video made black and white (audio unaffected)")
         elif op.type == "watermark":
@@ -109,11 +150,21 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             lines.append(f"Audio resample: to {', '.join(bits)} (codec re-encoded to match)")
 
     ar = next((o for o in edit.operations if o.type == "audio_replace"), None)
-    if ar is not None:
+    if out.mode == "subtitles":
+        pass  # a subtitle dump carries no audio — nothing to say about it
+    elif out.mode == "audio":
+        if ar is not None:
+            lines.append(
+                f"Audio: replaced with the first audio stream of input "
+                f"'{ar.asset_id}' — it is the output's only audio stream"
+            )
+    elif ar is not None:
         ac = REGISTRY["audio_codecs"][REGISTRY["matrix"][out.container]["audio_codec"]]
+        br = ac.get("bitrate_kbps")
+        bit = f" {br}k" if br is not None else " (lossless — no bitrate flag)"
         lines.append(
             f"Audio: replaced with the first audio stream of input '{ar.asset_id}' "
-            f"(encoded as {ac['encoder'].upper()} {ac['bitrate_kbps']}k); "
+            f"(encoded as {ac['encoder'].upper()}{bit}); "
             "output ends when the shorter of video and replacement audio ends (-shortest)"
         )
     elif out.audio_mode.value == "remove":
@@ -122,7 +173,9 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         lines.append("Audio: kept (copied)")
     else:
         ac = REGISTRY["audio_codecs"][REGISTRY["matrix"][out.container]["audio_codec"]]
-        lines.append(f"Audio: kept, encoded as {ac['encoder'].upper()} {ac['bitrate_kbps']}k")
+        br = ac.get("bitrate_kbps")
+        bit = f" {br}k" if br is not None else " (lossless — no bitrate flag)"
+        lines.append(f"Audio: kept, encoded as {ac['encoder'].upper()}{bit}")
 
     if media is not None:
         lines.append(f"Input: {media.width}x{media.height}, {media.duration:g}s, {media.video_codec}"
