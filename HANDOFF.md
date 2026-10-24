@@ -357,9 +357,9 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-**M6 committed as 2344be3** (31 files, +3572/−235) — nothing outstanding
-(no push unless asked). **main = 2344be3**, **origin/main = d7c895c**
-(M5 + HANDOFF); M6 not yet pushed.
+**M6 committed as 2344be3** (31 files, +3572/−235) and **pushed** —
+nothing outstanding. **main = origin/main = ad0b030** (2344be3 M6 +
+ad0b030 HANDOFF).
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
