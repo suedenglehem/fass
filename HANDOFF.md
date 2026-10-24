@@ -92,9 +92,12 @@ everything in a `docker/` folder. Delivered:
   597bf50e2716). Container sees exactly one GPU (`DeviceIDs:["1"]`,
   re-indexed as CUDA 0 inside) so `h264_nvenc` can never touch the LLM's
   card. Verified: `nvidia-smi -L` in-container → 4060 Ti only; nvenc run
-  exit 0. Stream-in E2E also verified same day: push mpegts →
+  exit 0. Stream E2Es also verified same day: **in** — push mpegts →
   `udp://127.0.0.1:5000` (mapped), plan binds `udp://0.0.0.0:5000`, run
-  success, 4.86 s output.
+  success, 4.86 s output; **out** — "stream it to `udp://host:9999`" →
+  plan rewrites host→`172.17.0.1` (gateway) + injects `-f mpegts` +
+  remote-endpoint disclosure, container pushes live, host receiver
+  captured 7.98 s / 2.4 MB.
 
 ## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
