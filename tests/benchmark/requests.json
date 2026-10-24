@@ -262,7 +262,7 @@
   {
     "id": "bench-050",
     "instruction": "Re-encode lossless",
-    "expected": {"status": "needs_clarification"}
+    "expected": {"status": "ready", "ops": [], "container": "mov", "video_codec": "prores"}
   },
   {
     "id": "bench-051",
@@ -312,7 +312,7 @@
   {
     "id": "bench-060",
     "instruction": "Extract the audio to mp3",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "ops": [], "container": "mp3", "video_codec": null}
   },
   {
     "id": "bench-061",
@@ -322,7 +322,7 @@
   {
     "id": "bench-062",
     "instruction": "Convert to AVI",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "ops": [], "container": "avi", "video_codec": "mpeg4"}
   },
   {
     "id": "bench-063",
@@ -357,7 +357,7 @@
   {
     "id": "bench-069",
     "instruction": "Add a text overlay",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "needs_clarification"}
   },
   {
     "id": "bench-070",

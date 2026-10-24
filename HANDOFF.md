@@ -17,7 +17,115 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-24, M6 COMPLETE — committed 2344be3)
+## Current state (2026-10-24, M7 IN PROGRESS — capability expansion)
+**M7 — broad FFmpeg capability expansion, half done.** Trigger: user report
+"'extract audio track and transcode it to mp2 audio 128kbps' returns 2 errors
+(audio-only not supported; mp2 not in the matrix) + mxf unsupported → why can't
+you add support of ALL audio and video containers". Full scope (user messages):
+audio-only output, video-only output, subtitle dump (.srt/.vtt/.ass), ProRes/AVI/
+MXF + full common container set, audio+video filters + arbitrary filtergraph,
+SRT protocol input, HTTP/HTTPS output, full mpegts/HLS/muxer support, all
+ffmpeg `formats` page format-options. Standing instruction: every feature
+verified in BOTH the local Python checkout (ffmpeg 6.1.1) AND the i7 docker
+deployment (jrottenberg/ffmpeg 9.0.1, live after rebuild).
+
+**Done, committed as 5afac91 (local only — main is 2 commits ahead of
+origin/main: 08c949e, 5afac91; no push unless asked):**
+- Schema: `OutputSpec.mode` video|audio|subtitles (+ `_mode_consistency`);
+  container literal 30 values (video: mp4/mov/mkv/webm/mpegts/flv/avi/mxf/vob/
+  asf/3gp/dv/gif/webp/hls + stream rtsp/srt; audio: mp3/mp2/m4a/aac/ogg/flac/
+  wav/aiff/mka/opus; dump: srt_file/vtt_file/ass_file); video_codec +
+  prores/mpeg2/mpeg4/mjpeg/dv/gif/webp; audio_codec + mp2/ac3/eac3/alac/vorbis/
+  pcm_s16le/s24le/f32le; `format_options: dict[str,str]` validated per registry
+  kind; `FilterOp` (domain video|audio) + `EditPlan.filtergraph` (≤4096);
+  per-codec profile/pixel_format validated at schema level via
+  `capability_errors` (mode-aware, duck-typed).
+- Registry: matrix rows for avi (mpeg4/pcm_s16le), mxf, vob, asf, 3gp, dv, gif,
+  webp, hls + every audio container; flagsets for mp4/mpegts/avi/flv/mp3/wav/
+  hls (+faststart, +use_metadata_tags, hls_time, …); 28 containers; srt added
+  to streaming.input + input_format srt→srt; output http/https (container from
+  URL extension, default mpegts); subtitles dump_codecs (srt/webvtt/ass);
+  filter allowlists: 18 video + 16 audio.
+- Planner/builder: mode-aware plans — audio: `-map 0:a:0` + `-af`, no video
+  maps; subtitles: `-map 0:s:0`, NO codec flags (muxer decodes AVSubtitle
+  itself); PCM/lossless audio codecs never emit `-b:a`; filtergraph forces
+  re-encode, labeled output pads → explicit `-map [label]`; format options →
+  pre-output flags with dedup.
+- Verified argv on media/titan.mp4 (smoke, real commands): user's exact case →
+  `ffmpeg -hide_banner -loglevel error -i titan.mp4 -map 0:a:0 -c:a mp2 -b:a
+  128k out.mp2` (ready); prores mov (`-c:v prores_ks -profile:v standard
+  -pix_fmt yuv422p10le`), avi mpeg4 (no `-b:a`), mxf, hls (`.m3u8` + `-f hls`),
+  video-only (`-an`), http output (`-f mpegts http://…`), srt input (`-f srt`).
+- Suite GREEN: **534 passed** (baseline 533; 7 capability-widening failures
+  fixed across bench-077, test_planner_builder ×4, test_schema ×3).
+
+**Done, uncommitted at save (MY track): NLU rewrite COMPLETE.**
+- fass/nlu/rules.py (~1900 lines): SUPPORTED_SUMMARY expanded; `_detect_codec`
+  +prores/mpeg2/mpeg4/mjpeg; full-registry container detection (AVI no longer
+  rejected; audio containers switch the plan to audio mode; subtitle dump
+  containers to subtitles mode); `_NATURAL_VIDEO_CONTAINER` {prores→mov,
+  mpeg2→mpegts, mpeg4→avi} — a codec lands in its natural container;
+  UNSUPPORTED_PATTERNS trimmed (flip/mirror, volume/louder/quieter,
+  extract-subtitles, blur/fade, sharpen, text-overlay, extract-audio all now
+  supported); bitrate split video (100–200000) vs audio (32–3840, audio
+  context only); lossless → prores (video) / flac (audio), not clarification;
+  new detectors: audio-only, subtitle dump (before burn-in detection),
+  audio-codec, named filters → FilterOp (hflip/vflip/boxblur/unsharp/
+  drawtext/fade/eq/volume/loudnorm/afade/…), raw filter exprs +
+  `filtergraph=`, format options (faststart, hls_time, resend_headers);
+  mode-aware parse() + _merge_revision; final check via capability_errors.
+  No-op gate: a stream `dest` alone IS an edit (dest is None in the gate).
+- Test conversions for the widened behavior: 5 Python tests (test_rules ×3,
+  test_subtitles ×2) + 4 benchmark expectations (bench-050/060/062/069) now
+  assert M7 behavior (prores→mov, mp3 audio-mode extraction, avi/mpeg4,
+  unquoted-text overlay → clarification). **Full suite green: 534 passed.**
+
+**Worker job j_41200a56f4 (i7) COMPLETED — integrating:** commit **d4938a6**
+on dispatch/j_41200a56f4 (base 07c7c17; merge-base with main = 5afac91). 8
+files +521/−48: fass/api.py (/v1/support full M7 surface), fass/execute.py
+(_MUXERS from all_muxers(), _check_value filtergraph + format-option
+validation), fass/pipeline.py (per-mode preflight), fass/probe/ffprobe.py
+(muxer probe — 6.1.1 lacks the aac ADTS muxer, 9.0.1 has it → probe-driven),
+fass/explain.py (mode-aware; strictly better than my discarded quick fix —
+adds filter-op lines, subtitle_dump_codec, mode-aware trim/speed, PCM
+lossless wording), + 21 tests (test_api, test_m6_execute,
+test_planner_builder). Their run: 555 passed (on the old rules.py — first
+end-to-end combination of my mode plans with their explain/preflight happens
+post-merge). Zero file overlap with my commit → clean merge. My local
+explain.py quick fix reverted (git checkout HEAD).
+
+- **OPEN VERIFICATION ITEMS:** subtitle dump without `-c:s` + `.ass` muxer
+  existence must be confirmed empirically on BOTH ffmpeg builds with a
+  subtitle-bearing input (create by muxing a .srt into an mp4); .aac-ADTS file
+  tests probe-gated (local 6.1.1 lacks the muxer).
+- i7: NOT yet redeployed for M7 — after merge + full suite: rsync →
+  re-apply the two compose.yaml sed opt-ins (docker.sock + FASS_DOCKER_MANAGE=1)
+  → `./launcher.sh rebuild` → live-verify BOTH surfaces (user's exact mp2
+  instruction, HLS, mpegts/mpeg2, prores, avi, mxf, subtitle dump, filters,
+  srt stream, http). The old container-ID line below (e61ea65d558a) is stale —
+  record the new ID after the M7 rebuild.
+
+**Next unfinished tasks:**
+1. Integrate j_41200a56f4: commit my M7 rules work → `git merge d4938a6`
+   (clean) → full suite (expect 555) → dispatch_integrate with the merge sha.
+2. New M7 NLU tests in tests/test_rules.py: mp2 128k extraction (the user's
+   driving case), m4a, prores→mov, avi, mxf, hls, mpeg2+mp2 ts, subtitle dump
+   srt/vtt/ass, filters (flip/volume/loudnorm/raw-expr/graph + fade-out with
+   media=make_media()), video-only, audio-mode op restriction,
+   format_options (faststart, hls_time, resend headers), http output
+   destination, srt stream input, lossless audio→flac, "h264 with aac audio",
+   "replace the audio with song.mp3" dot-guard.
+3. fass/nlu/llm.py SYSTEM_TEMPLATE/_system sync (modes, new containers/codecs,
+   filters, filtergraph, format options, srt input, http/https output; fix the
+   stale unsupported list ~line 111 and stream-scheme list 95-98).
+4. Real-ffmpeg verification on media/titan.mp4 in BOTH builds (local 6.1.1 +
+   i7 docker 9.0.1); subtitle dump + .ass muxer empirically.
+5. i7 deploy + live verification. Final user reply must answer "why not ALL
+   containers": the registry-driven architecture makes container/codec/
+   format-option support data — the added set is the practical full common
+   set supported by BOTH installed ffmpeg builds.
+
+## Prior state (2026-10-24, M6 COMPLETE — committed 2344be3)
 **M6 (docker packaging) — code, tests, i7 deploy, Apply E2E, docs all DONE.**
 User request: package fass+ffmpeg in docker (jrottenberg/ffmpeg:9.0-nvidia2404),
 config tab (volume + stream-port mapping), streams in/out, GPU transcoding,
@@ -419,8 +527,11 @@ media/titan.mp4, pyproject.toml,
 HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **530 passed** in ~67 s, no failures
-(2026-10-24, M6: 452 pre-M6 + 78 test_m6_*.py incl. the worker sidecar
+`./.venv/bin/python -m pytest -q` → **534 passed** in ~67 s (2026-10-24,
+M7 in progress, suite green at commit 5afac91; baseline 533 + 7
+capability-widening failures fixed: bench-077, test_planner_builder ×4,
+test_schema ×3).
+M6: 530 passed (452 pre-M6 + 78 test_m6_*.py incl. the worker sidecar
 suite + the `_unmanaged_binds` regression; bench-063/067 re-expected for
 the new subtitle capability since M5).
 364 at M4 (2026-10-23; 265 at M3b: +56 M4 core suite 515d443, +30 M4 NLU
@@ -435,9 +546,15 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
+**M7 in progress** — NLU rewrite DONE (uncommitted at save); next: integrate
+worker job **j_41200a56f4** (d4938a6, i7, completed) per the numbered task
+list in Current state, then new M7 NLU tests, llm.py sync, dual-build
+real-ffmpeg verification, i7 deploy. Main is 2 commits ahead of
+origin/main (08c949e, 5afac91) — no push unless asked.
+
 **M6 committed (pre-rewrite 2344be3)** and **pushed**. UI bug fixed
 + pushed 2026-10-24; bare-input volume-resolution fix committed +
-deployed to i7 (see Current state) — push pending user's word.
+deployed to i7 (see Prior state) — push pending user's word.
 - **plan0.md removed (2026-10-24, on request):** every deliverable in the
   doc was already shipped, so the file was removed, ~20 references in
   docstrings/README/DEVELOPMENT/HANDOFF scrubbed, and it was deleted

@@ -17,12 +17,24 @@ import re
 
 from fass.probe.ffprobe import MediaInfo
 from fass.registry import (
+    REGISTRY,
+    all_filter_names,
+    audio_codec_for,
+    audio_codecs_for,
+    audio_container_for_codec,
+    audio_for,
+    capability_errors,
     default_codec,
-    matrix_error,
+    filter_expr_problems,
+    filter_names,
+    filtergraph_problems,
+    format_option_errors,
+    format_option_specs,
     output_schemes,
     sample_rates,
     speed_limits,
     stream_output_info,
+    video_codecs_for,
 )
 from fass.schema import (
     Asset,
@@ -33,6 +45,7 @@ from fass.schema import (
     Clarification,
     CropOp,
     EditPlan,
+    FilterOp,
     GrayscaleOp,
     OutputSpec,
     ParseResult,
@@ -47,25 +60,36 @@ from fass.schema import (
 )
 
 SUPPORTED_SUMMARY = (
-    "Supported: resize (e.g. '720p', '1280x720'), cropping to exact dimensions "
-    "('crop to 1280x720'), trim ('cut from 00:10 to 00:30', 'the first 20 "
-    "seconds'), speed changes ('make it 2x faster', 'half speed'), rotation "
-    "('rotate 90 degrees'), container conversion (mp4, mov, mkv, webm, mpeg-ts), "
-    "video encoding (H.264, H.265, VP9) at quality presets or a target bitrate "
-    "(e.g. 'cbr 10 Mbps'), pixel format ('10-bit', 'yuv444p'), encoder profile "
-    "('baseline profile') and speed preset ('ultrafast preset') for H.264, "
-    "grayscale ('black and white'), one image watermark (position, margin, "
-    "scale), subtitles from an srt/ass/ssa/vtt file ('add subtitles from "
-    "subs.srt' — burned in by default, or soft/selectable on request), audio "
-    "keep/remove, audio resampling ('resample audio to 44.1k mono'), and "
-    "replacing the audio with another file ('replace the audio with "
-    "music.mp3'). Inputs may also be remote streams (http(s)://, "
+    "Supported: resize (e.g. '720p', '1280x720'), cropping to exact "
+    "dimensions ('crop to 1280x720'), trim ('cut from 00:10 to 00:30', "
+    "'the first 20 seconds'), speed changes ('make it 2x faster', 'half "
+    "speed'), rotation ('rotate 90 degrees'), grayscale, flipping/mirroring "
+    "('flip horizontally'), blur, sharpening, fading in/out, a text overlay "
+    "('add the text \"hello\"') and named FFmpeg filters ('use the loudnorm "
+    "filter', 'apply eq=contrast=1.2', or a full filtergraph: 'use the "
+    "graph [0:v]split=2[a][b]'); audio keep/remove, resampling ('resample "
+    "audio to 44.1k mono'), replacing with another file ('replace the audio "
+    "with music.mp3'), volume ('set the volume to 200%', 'louder', "
+    "'quieter'), loudness normalization, echo, audio fades — and "
+    "audio-only output ('extract the audio to mp3', 'make it a wav'); "
+    "dumping the input's subtitles to a file ('dump the subtitles to vtt'); "
+    "container conversion to any supported container (mp4, mov, mkv, webm, "
+    "mpeg-ts, flv, hls, avi, mxf, vob, asf, 3gp, dv, gif, webp, mp3, mp2, "
+    "m4a, aac, ogg, flac, wav, aiff, mka, opus); video encoding (H.264, "
+    "H.265, VP9, ProRes, MPEG-2, MPEG-4, MJPEG) at quality presets or a "
+    "target bitrate (video: 'cbr 10 Mbps'; audio: 'mp2 128k'), pixel "
+    "format, encoder profile (H.264 baseline/high, ProRes 422/4444) and "
+    "speed preset for H.264, and container format options ('faststart', "
+    "'hls_time=6', 'mpegts_flags=resend_headers'); one image watermark "
+    "(position, margin, scale), subtitles from an srt/ass/ssa/vtt file "
+    "('add subtitles from subs.srt' — burned in by default, or soft/"
+    "selectable on request). Inputs may also be remote streams (http(s)://, "
     "rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp:// URLs), local "
     "capture sources (lavfi:, v4l2:, alsa:, x11grab: …), and the output may "
     "be a stream ('stream this to rtmp://host:1935/live', 'publish to "
-    "rtsp://server:554/live', 'send it to udp://127.0.0.1:5004') or a local "
-    "audio device ('play the audio to alsa:hw:0') — the destination's scheme "
-    "fixes the output format."
+    "https://host/out.m3u8', 'send it to udp://127.0.0.1:5004') or a local "
+    "audio device ('play the audio to alsa:hw:0') — the destination's "
+    "scheme fixes the output format."
 )
 
 # ---------------------------------------------------------------- time
@@ -439,6 +463,17 @@ def _detect_profile(t: str) -> str | None:
         return m.group(1).lower()
     if re.search(r"(?:max(?:imum)?|most)\s+compatib|\bfor\s+compatib", t, re.I):
         return "baseline"
+    # ProRes family: 'prores 422' -> standard, 'pro res 4444 xq' -> 4444xq …
+    m = re.search(
+        r"\b(?:prores|pro[-\s]?res)\s+(?:profile\s+)?(proxy|lt|standard|hq|"
+        r"422|4444(?:[\s-]?xq)?)\b", t, re.I)
+    if m:
+        raw = re.sub(r"[\s-]+", " ", m.group(1).lower())
+        if raw == "4444 xq":
+            return "4444xq"
+        if raw == "422":
+            return "standard"
+        return raw
     return None
 
 
@@ -486,28 +521,350 @@ def _detect_codec(t: str) -> str | None:
         return "h265"
     if re.search(r"\bvp9\b|v-p9", t, re.I):
         return "vp9"
+    if re.search(r"\bprores\b|\bpro[-\s]res\b", t, re.I):
+        return "prores"
+    if re.search(r"\bm[-\s]?jpeg\b|\bmjpeg\b", t, re.I):
+        return "mjpeg"
+    if re.search(r"\bmpeg[-\s]?2\b", t, re.I):
+        return "mpeg2"
+    if re.search(r"\bmpeg[-\s]?4\b", t, re.I):
+        return "mpeg4"
     return None
 
 
+# Every extension in the registry maps to its container — the matrix, not
+# this adapter, decides what is supported.
 _EXT_TO_CONTAINER = {
-    "mp4": "mp4", "m4v": "mp4", "mov": "mov", "qt": "mov",
-    "mkv": "mkv", "webm": "webm",
-    "ts": "mpegts", "mts": "mpegts", "m2ts": "mpegts",
+    ext.lower(): name
+    for name, meta in REGISTRY["containers"].items()
+    for ext in meta["extensions"]
+}
+# both the srt:// stream container and the srt_file dump claim '.srt' —
+# for a file path that extension is a subtitle dump, never the protocol
+_EXT_TO_CONTAINER["srt"] = "srt_file"
+
+# Words that name a video-capable container. A leading dot/slash/word char
+# excludes matches inside a filename ('clip.mp4' is the input, not the
+# target); 'save as .ts' is caught by the dedicated '.ts' alternative.
+_VIDEO_CONTAINER_RX = re.compile(
+    r"(?<![\w./-])(mpeg[-\s]?ts|transport\s+stream|mpeg2?\s+ts|m2ts|mts|quicktime|"
+    r"hls|avi|mxf|vob|flv|asf|wmv|3gp|gif|webp|webm|mkv|mov|m4v|mp4|dv)\b"
+    r"|\.ts\b|\bts\s+file\b",
+    re.I,
+)
+_WORD_TO_VIDEO_CONTAINER = {
+    "mpegts": "mpegts", "mpeg ts": "mpegts", "mpeg2 ts": "mpegts",
+    "transport stream": "mpegts", "m2ts": "mpegts", "mts": "mpegts",
+    "quicktime": "mov", "hls": "hls", "avi": "avi", "mxf": "mxf",
+    "vob": "vob", "flv": "flv", "asf": "asf", "wmv": "asf", "3gp": "3gp",
+    "gif": "gif", "webp": "webp", "webm": "webm", "mkv": "mkv",
+    "mov": "mov", "m4v": "mp4", "mp4": "mp4", "dv": "dv",
 }
 
 
 def _detect_container(t: str) -> tuple[str | None, str | None]:
-    """Return (container, unsupported_fragment)."""
-    if re.search(r"\bquicktime\b", t, re.I):
-        return "mov", None
-    m = re.search(r"\b(mp4|mkv|webm|mov|m4v)\b", t, re.I)
-    if m:
-        return _EXT_TO_CONTAINER[m.group(1)], None
-    if re.search(r"\bmpeg[-\s]?ts\b|\.ts\b|\bts\s+file\b|\btransport\s+stream\b|\bmts\b|\bm2ts\b", t, re.I):
+    """Return (container, unsupported_fragment) — video-capable containers."""
+    m = _VIDEO_CONTAINER_RX.search(t)
+    if not m:
+        return None, None
+    word = m.group(1)
+    if word is None:  # '.ts' / 'ts file'
         return "mpegts", None
-    if re.search(r"\bavi\b", t, re.I):
-        return None, "AVI container (not in the MVP container set)"
-    return None, None
+    return _WORD_TO_VIDEO_CONTAINER[word.lower().replace("-", " ")], None
+
+
+# Audio-only containers: the codec IS the format. Same filename guard as
+# above — 'replace the audio with song.mp3' names an input file, not a
+# target format.
+_AUDIO_CONTAINER_RX = re.compile(
+    r"(?<![\w./-])(mp3|mp2|m4a|aac|ogg|oga|flac|wave|wav|aiff|aif|opus)\b",
+    re.I,
+)
+_WORD_TO_AUDIO_CONTAINER = {
+    "mp3": "mp3", "mp2": "mp2", "m4a": "m4a", "aac": "aac",
+    "ogg": "ogg", "oga": "ogg", "flac": "flac", "wave": "wav",
+    "wav": "wav", "aiff": "aiff", "aif": "aiff", "opus": "opus",
+}
+
+
+def _detect_audio_container(t: str) -> str | None:
+    m = _AUDIO_CONTAINER_RX.search(t)
+    if not m:
+        return None
+    return _WORD_TO_AUDIO_CONTAINER[m.group(1).lower()]
+
+
+# A video container word in an audio-only request maps to its natural
+# audio form ('extract the audio to mp4' means m4a, not an mpeg file).
+_VIDEO_TO_AUDIO_CONTAINER = {
+    "mp4": "m4a", "m4v": "m4a", "mov": "m4a", "mkv": "mka", "webm": "ogg",
+    "mpegts": "mp2", "flv": "mp3",
+}
+
+# Containers that carry audio only, and containers that carry video —
+# derived from the matrix, not lists kept in sync by hand. The *_file
+# subtitle-dump containers carry neither.
+_AUDIO_CONTAINERS = frozenset(
+    name for name, row in REGISTRY["matrix"].items()
+    if not row.get("video") and not name.endswith("_file")
+)
+_VIDEO_CONTAINERS = frozenset(
+    name for name, row in REGISTRY["matrix"].items() if row.get("video")
+)
+
+# An explicit video codec with no named container lands in its natural
+# home — ProRes is a .mov file, MPEG-2 a broadcast .ts, MPEG-4 an .avi.
+# An explicitly named container always wins over this.
+_NATURAL_VIDEO_CONTAINER = {"prores": "mov", "mpeg2": "mpegts", "mpeg4": "avi"}
+
+
+def _resolve_audio_container(video_container: str | None, audio_container: str | None,
+                             audio_codec: str | None) -> str | None:
+    """Container for an audio-only output, when the instruction names one
+    of its ingredients: an explicit audio word > the codec's format > the
+    audio twin of a video word. None when nothing is named — the caller
+    applies the input-filename / mp3 fallbacks."""
+    if audio_container is not None:
+        return audio_container
+    if audio_codec is not None:
+        return audio_container_for_codec(audio_codec)
+    if video_container is not None:
+        return _VIDEO_TO_AUDIO_CONTAINER.get(video_container)
+    return None
+
+
+def _detect_audio_codec(t: str) -> str | None:
+    """An audio codec named in the instruction (same filename guard)."""
+    rx = (r"(?<![\w./-])")
+    if re.search(rx + r"mp2\b", t, re.I):
+        return "mp2"
+    if re.search(rx + r"mp3\b", t, re.I):
+        return "mp3"
+    if re.search(rx + r"(?:eac3|dd\s*\+?)\b", t, re.I):
+        return "eac3"
+    if re.search(rx + r"ac3\b", t, re.I):
+        return "ac3"
+    if re.search(rx + r"aac\b", t, re.I):
+        return "aac"
+    if re.search(rx + r"(?:alac|apple\s+lossless)\b", t, re.I):
+        return "alac"
+    if re.search(rx + r"opus\b", t, re.I):
+        return "opus"
+    if re.search(rx + r"vorbis\b", t, re.I):
+        return "vorbis"
+    if re.search(rx + r"flac\b", t, re.I):
+        return "flac"
+    if re.search(rx + r"(?:pcm|wave|wav)\b", t, re.I):
+        return "pcm_s16le"
+    return None
+
+
+# "extract the audio", "audio only", "audio track", "without the video" …
+_AUDIO_ONLY = re.compile(
+    r"\b(?:extract|rip|pull|export|dump|write|save|get|take)\s+(?:the\s+)?"
+    r"(?:audio|sound|music|soundtrack)\b"
+    r"|\baudio[\s-]?(?:only|track|file)\b"
+    r"|\b(?:just|only)\s+(?:the\s+)?audio\b"
+    r"|\bwithout\s+(?:the\s+)?video\b",
+    re.I,
+)
+
+# A subtitle DUMP ('extract the subtitles', 'dump the subtitles to srt') —
+# must be tested before the burn/soft subtitle detector, which would ask
+# for a subtitle file the user never intends to provide.
+_SUB_DUMP_RE = re.compile(
+    r"\b(?:extract|dump|export|pull|write|get|convert|turn)\s+(?:the\s+)?"
+    r"(?:subtitles?|captions?|subs)\b"
+    r"|\b(?:subtitles?|captions?|subs)\s+(?:to|into|as)\s+(?:a\s+)?"
+    r"(?:srt|vtt|webvtt|ass|ssa)\b",
+    re.I,
+)
+
+
+def _detect_subtitle_dump(t: str) -> str | None:
+    """The dump container (srt_file/vtt_file/ass_file) for a subtitle
+    dump request, else None. SRT is the default format."""
+    if not _SUB_DUMP_RE.search(t):
+        return None
+    m = re.search(r"\b(vtt|webvtt|ass|ssa|srt)\b", t)
+    if m:
+        name = m.group(1).lower()
+        if name in ("vtt", "webvtt"):
+            return "vtt_file"
+        if name in ("ass", "ssa"):
+            return "ass_file"
+    return "srt_file"
+
+
+# ---------------------------------------------------------------- filters (M7)
+
+# A pasted filtergraph: one or more '[label]' chains separated by ';'.
+_FILTER_GRAPH_RX = re.compile(
+    r"\[[^\s\[\]]+\](?:[^\s;])*(?:(?:\s*;\s*)\[[^\s\[\]]+\](?:[^\s;])*)*"
+)
+
+# A raw 'name=args' token whose name is an allowlisted filter
+# ('eq=contrast=1.2', 'scale=1280:720', "drawtext=text='hi'").
+_RAW_FILTER_RX = re.compile(r"\b([a-z][a-z0-9_]*(?:=[^\s,;]+)+)\b")
+
+# 'apply the loudnorm filter', 'use boxblur'…
+_NAMED_FILTER_RX = re.compile(
+    r"\b(?:apply|use|add|run|with)\s+(?:the\s+)?([a-z][a-z0-9_]*)\s+filter\b", re.I
+)
+
+_TEXT_OVERLAY_RX = re.compile(
+    r"\b(?:add|overlay|put|write|superimpose)\s+(?:the\s+|some\s+|a\s+)?"
+    r"text\s+[\"']([^\"']{1,80})[\"']",
+    re.I,
+)
+
+
+def _detect_filters(
+    t: str, duration: float | None
+) -> tuple[list[FilterOp], str | None, str | None, Clarification | None, str | None]:
+    """Video/audio filters: named phrases, raw 'name=args' expressions,
+    named filters, and a full custom filtergraph.
+    Returns (ops, graph, note, clarification, unsupported_fragment)."""
+    video_filters = filter_names("video")
+    ops: list[FilterOp] = []
+    seen: set[str] = set()
+    notes: list[str] = []
+    clar: Clarification | None = None
+    frag: str | None = None
+
+    def add(domain: str, expr: str) -> None:
+        nonlocal frag
+        if expr in seen or frag:
+            return
+        seen.add(expr)
+        problems = filter_expr_problems(expr)
+        if problems:
+            frag = f"the filter '{expr}' is not usable: " + "; ".join(problems)
+            return
+        ops.append(FilterOp(domain=domain, expr=expr))
+
+    # A pasted graph claims the whole request — validate it first and cut
+    # its span out of the text so 'split=2[a][b]' is not re-read as a raw
+    # expression (its brackets are only legal inside a graph).
+    graph: str | None = None
+    m = _FILTER_GRAPH_RX.search(t)
+    if m:
+        graph = m.group(0).strip()
+        problems = filtergraph_problems(graph)
+        if problems:
+            frag = f"the filtergraph '{graph[:80]}' is not usable: " + "; ".join(problems)
+            graph = None
+        text = t[:m.start()] + " " + t[m.end():]
+    else:
+        text = t
+
+    # --- video phrases -------------------------------------------------
+    m = re.search(r"\b(?:flip|mirror)\w*\b", text, re.I)
+    if m:
+        window = text[m.start():m.start() + 35]
+        if re.search(r"verti\w*", window, re.I):
+            add("video", "vflip")
+        else:
+            add("video", "hflip")
+            if not re.search(r"horizont\w*|verti\w*", window, re.I):
+                notes.append("flip assumed horizontal")
+
+    if re.search(r"\bblur\w*\b", text, re.I):
+        add("video", "boxblur=2:2")
+    if re.search(r"\bsharpen\w*\b", text, re.I):
+        add("video", "unsharp=5:5:1.0")
+
+    m = _TEXT_OVERLAY_RX.search(text)
+    if m:
+        label = m.group(1).replace("\\", "\\\\").replace("'", "\\'")
+        add("video",
+            f"drawtext=text='{label}':fontsize=48:box=1:boxcolor=black@0.5:"
+            f"x=(w-text_w)/2:y=h-text_h-50")
+
+    # fade in/out — audio when an audio/sound/music word sits within ~30
+    # chars of 'fade', video otherwise
+    m = re.search(r"\bfade(?:s|d|ing)?\s+(in|out)\b", text, re.I)
+    if m:
+        direction = m.group(1).lower()
+        ctx = text[max(0, m.start() - 30):m.end() + 10]
+        audio = re.search(r"\b(?:audio|sound|music)\b", ctx, re.I) is not None
+        if audio:
+            if direction == "in":
+                add("audio", "afade=t=in:st=0:d=2")
+            elif duration is None:
+                clar = Clarification(
+                    question="How long is the clip? I need its length to "
+                             "time the audio fade-out.")
+            else:
+                add("audio", f"afade=t=out:st={max(0.0, duration - 2):g}:d=2")
+        else:
+            if direction == "in":
+                add("video", "fade=t=in:st=0:d=1.5")
+            elif duration is None:
+                clar = Clarification(
+                    question="How long is the clip? I need its length to "
+                             "time the fade-out.")
+            else:
+                add("video", f"fade=t=out:st={max(0.0, duration - 1.5):g}:d=1.5")
+
+    # --- audio phrases ---------------------------------------------------
+    m = re.search(r"\bvolume\s+(?:to\s+)?(\d+(?:\.\d+)?)\b", text, re.I)
+    if m:
+        n = float(m.group(1))
+        value = n / 100.0 if n > 10 else n  # >10 reads as a percentage
+        if value > 0:
+            add("audio", f"volume={value:g}")
+    elif re.search(r"\blouder\b|\bvolume\s+up\b", text, re.I):
+        add("audio", "volume=1.5")
+    elif re.search(r"\bquieter\b|\bsofter\b|\bsoften\b|\bvolume\s+down\b", text, re.I):
+        add("audio", "volume=0.5")
+
+    if re.search(r"\bnormaliz\w*\s+(?:the\s+)?audio\b|\bloudness\b|\bloudnorm\b", text, re.I):
+        add("audio", "loudnorm")
+    if re.search(r"\becho\b", text, re.I):
+        add("audio", "aecho=0.8:0.88:60:0.4")
+    if re.search(r"\bsilence\s+(?:the\s+)?audio\b", text, re.I):
+        add("audio", "anull")
+
+    # --- raw 'name=args' and 'apply the X filter' -------------------------
+    for m in _RAW_FILTER_RX.finditer(text):
+        expr = m.group(1)
+        name = expr.split("=", 1)[0]
+        if name in all_filter_names():
+            add("audio" if name in filter_names("audio") else "video", expr)
+    for m in _NAMED_FILTER_RX.finditer(text):
+        name = m.group(1).lower()
+        if name in all_filter_names():
+            add("audio" if name in filter_names("audio") else "video", name)
+
+    return ops, graph, ("; ".join(notes) if notes else None), clar, frag
+
+
+def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
+    """key=value tokens whose key is a valid option for the container
+    (registry-driven), plus natural-language mappings ('faststart',
+    '6 second segments', 'resend headers')."""
+    out: dict[str, str] = {}
+    if not container:
+        return out
+    specs = format_option_specs(container)
+    filters = all_filter_names()
+    for m in re.finditer(r"\b([a-z][a-z0-9_]+)=([^\s,;]+)\b", t):
+        key, value = m.group(1), m.group(2)
+        if key in specs and key not in filters and key not in out:
+            out[key] = value
+    if "movflags" in specs and re.search(r"\bfast\s?start\b", t, re.I):
+        out["movflags"] = "faststart"
+    if container == "hls" and "hls_time" in specs:
+        m = re.search(
+            r"\b(\d+)\s*second(?:s)?\s+(?:of\s+)?segments?\b"
+            r"|\bsegments?\s+(?:of\s+)?(\d+)\b", t, re.I)
+        if m:
+            out["hls_time"] = m.group(1) or m.group(2)
+    if container == "mpegts" and "mpegts_flags" in specs:
+        if re.search(r"\bresend\s+headers?\b", t, re.I):
+            out["mpegts_flags"] = "resend_headers"
+    return out
 
 
 # ---------------------------------------------------------------- grayscale / audio / watermark
@@ -516,7 +873,7 @@ GRAYSCALE_RE = re.compile(r"black\s+and\s+white|\bb&w\b|gr(?:a|e)y\s*scale|desat
 
 _AUDIO_REMOVE = re.compile(
     r"\b(?:remove|strip|drop|delete)\s+(?:the\s+)?audio\b|\bno\s+audio\b|"
-    r"without\s+(?:the\s+)?audio\b|\baudio\s+off\b|mute\s+everything",
+    r"without\s+(?:the\s+)?audio\b|\baudio\s+off\b|mute\s+everything|\bvideo\s+only\b",
     re.I,
 )
 _AUDIO_KEEP = re.compile(
@@ -691,25 +1048,20 @@ def _detect_subtitles(t: str, assets: dict):
 # ---------------------------------------------------------------- unsupported
 
 UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
-    # speed, rotation and cropping are now supported — their detectors run in
-    # parse() before this scan, so only what the detectors cannot resolve
+    # speed, rotation, cropping, flips, volume changes, filters, subtitle
+    # dumps and audio extraction are supported (M5–M7) — their detectors run
+    # in parse() before this scan, so only what a detector cannot resolve
     # (e.g. an out-of-range factor) reaches the user, with its own message
-    (re.compile(r"\bflip(?:ping)?\b|\bmirror(?:ing)?\b", re.I), "flipping and mirroring"),
-    (re.compile(r"\bvolume\b|\blouder\b|\bquieter\b|\bsoften\w*\b|\bamplif\w*\b|\bloudness\b|\bnormali[sz]e\s+audio\b", re.I), "audio level changes"),
-    # Adding subtitles IS supported (M5) — only extracting them to a
-    # separate file is not. (An srt:// URL is a stream scheme, M3b — no
-    # pattern here may eat it.)
-    (re.compile(r"\bextract\s+(?:the\s+)?(?:subtitles?|captions?)\b", re.I), "extracting subtitles to a separate file"),
     (re.compile(r"\bconcat(?:enate)?\b|\bmerge\w*\b|\bstitch\w*\b|\bappend\w*\b", re.I), "concatenation of multiple files"),
-    (re.compile(r"\bsplit(?:ting)?\b", re.I), "splitting into segments"),
-    (re.compile(r"\bblur(?:ring)?\b|\bsepia\b|\bvintage\b|\bretro\b|\bfade(?:s|d|ing)?\b", re.I), "additional color effects"),
-    (re.compile(r"\bsharpen\w*\b|\bdenois\w*\b|\bstabil(?:is|iz)\w*\b", re.I), "stabilization, sharpening, denoising"),
-    (re.compile(r"add\s+(?:some\s+|the\s+|a\s+)?text\b|\btext\s+overlay\b|\btitle\s+card\b|\btimestamp\b", re.I), "text overlays"),
+    # 'split the video into 3 parts' — but 'split' as a FILTER
+    # ('[0:v]split=2[a][b]') is a filtergraph, not a segment request
+    (re.compile(r"\bsplit(?:ting)?\s+(?:the\s+)?(?:video|file|clip|it)\b|\bsplit\s+into\b", re.I), "splitting into segments"),
+    (re.compile(r"\bsepia\b|\bvintage\b|\bretro\b", re.I), "additional color effects"),
+    (re.compile(r"\bdenois\w*\b|\bstabil(?:is|iz)\w*\b", re.I), "stabilization and denoising"),
     (re.compile(r"\bhdr\b|\btone[\s-]?map\w*\b", re.I), "HDR workflows"),
     # gpu/nvenc/hardware acceleration are supported (M6, NVIDIA nvenc);
     # the other hardware-encoding stacks stay out
     (re.compile(r"\bcuda\b|\bvideotoolbox\b|\bqsv\b", re.I), "CUDA / VideoToolbox / QSV hardware acceleration"),
-    (re.compile(r"\bextract\s+(?:the\s+)?audio\b", re.I), "extracting audio to a separate file"),
 ]
 
 
@@ -741,16 +1093,34 @@ _BITRATE = re.compile(
 )
 
 
-def _detect_bitrate(t: str) -> int | None:
-    """Target video bitrate in kbps, when the instruction names one
-    ('cbr 10 Mbps', '5 mbps', '2000 kbps')."""
+_BITRATE_AUDIO_CTX = re.compile(
+    r"\b(?:audio|sound|music|mp2|mp3|aac|alac|flac|opus|vorbis)\b", re.I
+)
+
+
+def _bitrate_is_audio(t: str, mode: str) -> bool:
+    """Whether a named bitrate targets the audio stream: audio mode
+    always, otherwise when an audio word sits within ~25 chars before the
+    bitrate token ('aac audio at 128 kbps')."""
+    if mode == "audio":
+        return True
+    m = _BITRATE.search(t)
+    return m is not None and _BITRATE_AUDIO_CTX.search(
+        t[max(0, m.start() - 25):m.start()]) is not None
+
+
+def _detect_bitrate(t: str, audio: bool = False) -> int | None:
+    """Target bitrate in kbps, when the instruction names one
+    ('cbr 10 Mbps', '128 kbps'). `audio` selects the audio range
+    (32–3840); the video range is 100–200000."""
     m = _BITRATE.search(t)
     if not m:
         return None
     value = float(m.group(1))
     unit = m.group(2).lower()
     kbps = int(round(value * 1000)) if unit.startswith("m") else int(round(value))
-    if not (100 <= kbps <= 200000):
+    lo, hi = (32, 3840) if audio else (100, 200000)
+    if not (lo <= kbps <= hi):
         return None
     return kbps
 
@@ -789,13 +1159,8 @@ _LOSSLESS = re.compile(r"\blossless\b|without\s+(?:any\s+)?(?:quality\s+)?loss\b
 def _scan_ambiguous(t: str, resize: ResizeOp | None) -> Clarification | None:
     """Focused questions for requests whose intent cannot be safely
     resolved (PRD clarification policy)."""
-    if _LOSSLESS.search(t):
-        return Clarification(
-            question=(
-                "true lossless encoding (e.g. ProRes) is not in the MVP presets; 'visually "
-                "lossless' is usually just high-quality H.264. Which did you mean?"
-            )
-        )
+    # 'lossless' no longer needs a question — parse() resolves it to
+    # ProRes (video) or FLAC (audio) with a note.
     if _SIZE_TARGET.search(t):
         return Clarification(
             question=(
@@ -844,18 +1209,46 @@ class RulesAdapter:
         audio = _detect_audio(t)
         watermark, wm_clar, wm_note = _detect_watermark(t, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
-        subtitle, sub_clar, sub_note = _detect_subtitles(t, assets)
+        # a subtitle DUMP must win over the burn/soft subtitle detector,
+        # which would ask for a subtitle file the user never intends to give
+        sub_dump = _detect_subtitle_dump(t)
+        subtitle, sub_clar, sub_note = (
+            (None, None, None) if sub_dump else _detect_subtitles(t, assets))
         if audio_replace is not None and audio in ("remove", "conflict"):
             audio = None  # a replacement wins over remove / keep+remove
         grayscale = GRAYSCALE_RE.search(t) is not None
         codec = _detect_codec(t)
         container, unsupported_container = _detect_container(t)
-        bitrate_kbps = _detect_bitrate(t)
+        audio_codec = _detect_audio_codec(t)
+        audio_container = _detect_audio_container(t)
+        # 'lossless' resolves to a real codec instead of a question: FLAC
+        # for an audio output, ProRes for a video one (visible as a note)
+        lossless_note: str | None = None
+        if _LOSSLESS.search(t) and codec is None and audio_codec is None:
+            if audio_container is not None or re.search(r"\b(?:audio|sound|music)\b", t, re.I):
+                audio_codec = "flac"
+                lossless_note = "lossless interpreted as FLAC (lossless audio codec)"
+            else:
+                codec = "prores"
+                lossless_note = "lossless interpreted as ProRes (visually lossless mastering codec)"
+        # the output MODE: subtitle dump > audio-only > video. An audio
+        # container/codec word alone implies audio mode, but only when it
+        # is not the audio of a named video ('h264 with aac audio').
+        audio_wanted = _AUDIO_ONLY.search(t) is not None
+        mode = ("subtitles" if sub_dump else
+                "audio" if (audio_wanted or (
+                    audio_container is not None and container is None and codec is None))
+                else "video")
+        bitrate_is_audio = _bitrate_is_audio(t, mode)
+        audio_bitrate = _detect_bitrate(t, True) if bitrate_is_audio else None
+        video_bitrate = _detect_bitrate(t, False) if not bitrate_is_audio else None
+        filters, filtergraph, filter_note, filter_clar, filter_frag = \
+            _detect_filters(t, media.duration if media else None)
         if unsupported_container:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
             return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
-        for frag in (crop_frag, speed_frag, rotate_frag, rs_frag):
+        for frag in (crop_frag, speed_frag, rotate_frag, rs_frag, filter_frag):
             if frag is not None:
                 unsupported.append(UnsupportedPart(fragment=frag,
                                                    reason="outside the MVP support set"))
@@ -873,6 +1266,15 @@ class RulesAdapter:
             )
         dest = dests[0] if dests else None
         dest_container = stream_output_info(dest)[0] if dest else None
+        if dest is not None and mode != "video":
+            return ParseResult(
+                status=ParseStatus.NEEDS_CLARIFICATION,
+                clarifications=[Clarification(
+                    question=(f"a stream destination carries a video output, but this "
+                              f"request reads as a {mode} dump — which did you intend?")),
+                ],
+                defaults=[trim_note] if trim_note else [],
+            )
         if dest is not None and container is not None and container != dest_container:
             return ParseResult(
                 status=ParseStatus.NEEDS_CLARIFICATION,
@@ -902,8 +1304,10 @@ class RulesAdapter:
                 wm_note = "watermark: kept the previous image"
 
         # 3b. revision: keep the previous subtitle file when the follow-up
-        #    re-mentions subtitles without naming a new file
-        if previous_plan is not None and sub_clar is not None and _SUBTITLES_RE.search(t):
+        #    re-mentions subtitles without naming a new file (a subtitle
+        #    DUMP re-mention is handled by the mode switch instead)
+        if previous_plan is not None and sub_dump is None and sub_clar is not None \
+                and _SUBTITLES_RE.search(t):
             prev_sub = next(
                 (o for o in previous_plan.operations if o.type == "subtitles"), None)
             if prev_sub is not None:
@@ -917,9 +1321,46 @@ class RulesAdapter:
                 sub_clar = None
                 sub_note = "subtitles: kept the previous file"
 
+        # 3c. mode conflicts: edits the output mode cannot carry
+        video_filters = [f for f in filters if f.domain == "video"]
+        mode_conflict = None
+        if mode == "audio" and (audio == "remove" or resize is not None
+                                or crop is not None or rotate is not None
+                                or watermark is not None or grayscale
+                                or filtergraph or video_filters):
+            mode_conflict = Clarification(
+                question=("an audio-only output cannot carry video edits "
+                          "(resize, crop, rotation, effects) or a removed audio "
+                          "track — did you mean a video export with those audio "
+                          "settings, or a plain audio extraction?"))
+        elif mode == "subtitles" and (audio in ("remove", "keep")
+                                      or resize is not None or crop is not None
+                                      or rotate is not None or watermark is not None
+                                      or grayscale or speed is not None
+                                      or audio_resample is not None
+                                      or audio_replace is not None
+                                      or filters or filtergraph):
+            mode_conflict = Clarification(
+                question=("a subtitle dump extracts the subtitle stream only — "
+                          "video and audio edits don't apply to it (trimming is "
+                          "fine). Should I just dump the subtitles, or keep "
+                          "these as a video edit?"))
+        graph_conflict = None
+        if filtergraph is not None and (watermark is not None
+                                        or (subtitle is not None and subtitle.mode == "burn")
+                                        or resize is not None or crop is not None
+                                        or rotate is not None or speed is not None
+                                        or grayscale or video_filters):
+            graph_conflict = Clarification(
+                question=("a custom filtergraph replaces the built-in video filter "
+                          "chain — I can't combine it with the other video edits "
+                          "in the same request. Should I use only the filtergraph, "
+                          "or only the built-in edits?"))
+
         # 4. explicit clarifications win (focused, one at a time)
         for c in (trim_clar, resize_clar, crop_clar, speed_clar, rotate_clar,
-                  rs_clar, wm_clar, ar_clar, sub_clar, ambiguous):
+                  rs_clar, wm_clar, ar_clar, sub_clar, filter_clar, mode_conflict,
+                  graph_conflict, ambiguous):
             if c is not None:
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -935,10 +1376,16 @@ class RulesAdapter:
 
         # 5. build / merge the plan
         if previous_plan is not None:
+            prev_path = assets.get(previous_plan.input_id, Asset(path="input.mp4")).path
+            input_ext = os.path.splitext(prev_path)[1].lstrip(".").lower()
             plan, changed = _merge_revision(
                 previous_plan, t, trim, resize, audio, watermark, grayscale,
                 audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
                 audio_resample=audio_resample, subtitle=subtitle, gpu=gpu,
+                codec=codec, container=container, audio_codec=audio_codec,
+                audio_container=audio_container, audio_bitrate=audio_bitrate,
+                video_bitrate=video_bitrate, mode=mode, sub_dump=sub_dump,
+                filters=filters, filtergraph=filtergraph, input_ext=input_ext,
             )
             if not changed:
                 return ParseResult(
@@ -962,6 +1409,9 @@ class RulesAdapter:
                 ops.append(watermark)
             if speed is not None:
                 ops.append(speed)
+            for f in filters:
+                if f.domain == "video":
+                    ops.append(f)
             if subtitle is not None:
                 # last among the video ops, so a burned filter runs on the
                 # final dimensions (after resize/crop/rotate/speed)
@@ -970,8 +1420,18 @@ class RulesAdapter:
                 ops.append(audio_replace)
             if audio_resample is not None:
                 ops.append(audio_resample)
+            for f in filters:
+                if f.domain == "audio":
+                    ops.append(f)
+            # an audio output carries no video edits; a subtitle dump none
+            if mode == "audio":
+                ops = [o for o in ops if o.type in ("speed", "audio_resample",
+                                                    "audio_replace")
+                       or (o.type == "filter" and o.domain == "audio")]
+            elif mode == "subtitles":
+                ops = []
             plan.operations = ops
-            if audio == "remove":
+            if mode == "video" and audio == "remove":
                 plan.output.audio_mode = AudioMode.REMOVE
             if dest is not None:
                 plan.output_destination = dest
@@ -987,6 +1447,10 @@ class RulesAdapter:
             notes.append(ar_note)
         if sub_note:
             notes.append(sub_note)
+        if lossless_note:
+            notes.append(lossless_note)
+        if filter_note:
+            notes.append(filter_note)
 
         # 6. resolve output defaults — visible, never hidden
         # (gpu alone is not an edit — it only matters when an encode
@@ -997,8 +1461,12 @@ class RulesAdapter:
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
                     and audio != "remove" and audio_replace is None and subtitle is None \
-                    and bitrate_kbps is None and dest is None \
-                    and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b", t):
+                    and audio_codec is None and sub_dump is None and not audio_wanted \
+                    and video_bitrate is None and audio_bitrate is None \
+                    and dest is None \
+                    and not filters and filtergraph is None \
+                    and not _detect_format_options(t, container) \
+                    and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b|\bextract\w*", t):
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
                     clarifications=[Clarification(question="which edit would you like?",
@@ -1007,51 +1475,123 @@ class RulesAdapter:
                 )
             main_path = assets.get(plan.input_id, Asset(path="input.mp4")).path
             ext = os.path.splitext(main_path)[1].lstrip(".").lower()
-            if container is None:
-                if dest is not None:
-                    # the stream destination's scheme fixes the container
-                    container = dest_container
-                    notes.append(f"container set to {container} by the stream destination {dest}")
-                elif ext in _EXT_TO_CONTAINER:
+            if mode == "audio":
+                # audio container: explicit audio word > the codec's format
+                # > the audio twin of a video word ('to mp4' means m4a)
+                # > the input filename > mp3
+                if audio_container is not None:
+                    container = audio_container
+                    notes.append(f"audio container set to {container}")
+                elif audio_codec is not None:
+                    container = audio_container_for_codec(audio_codec) or "mp3"
+                    notes.append(f"container set to {container} (the format {audio_codec} is carried in)")
+                elif container is not None:
+                    container = _VIDEO_TO_AUDIO_CONTAINER.get(container, container)
+                    notes.append(f"container set to {container} (audio form of the requested video format)")
+                elif ext in _EXT_TO_CONTAINER and _EXT_TO_CONTAINER[ext] in _AUDIO_CONTAINERS:
                     container = _EXT_TO_CONTAINER[ext]
                     notes.append(f"container defaulted to {container} (from the input filename)")
                 else:
-                    container = "mp4"
-                    notes.append("container defaulted to mp4")
-            if codec is None:
-                codec = default_codec(container)
-                notes.append(f"video codec defaulted to {codec} (the {container.upper()} preset default)")
-            plan.output.container = container
-            plan.output.video_codec = codec
-            if pixel_format is not None:
-                plan.output.pixel_format = pixel_format
-                notes.append(f"output pixel format set to {pixel_format}")
-            if video_profile is not None:
-                plan.output.video_profile = video_profile
-                notes.append(f"encoder profile set to {video_profile}")
-            if video_preset is not None:
-                plan.output.video_preset = video_preset
-                notes.append(f"encoding speed preset set to {video_preset}")
-            if bitrate_kbps is not None:
-                plan.output.video_bitrate_kbps = bitrate_kbps
-                notes.append(
-                    f"targeting a {bitrate_kbps / 1000:g} Mbps video bitrate (CBR-style target)"
-                )
-            if gpu:
-                plan.output.gpu = True
-                notes.append("encoding on GPU (NVIDIA nvenc)")
-        else:
-            # revision: keep previously resolved container/codec unless the
-            # instruction changed them (already applied in _merge_revision)
-            container = plan.output.container
-            codec = plan.output.video_codec
+                    container = "mp3"
+                    notes.append("audio container defaulted to mp3")
+                # an explicit codec the container doesn't carry wins: switch
+                # to the format that does
+                if audio_codec is not None and audio_codec not in \
+                        REGISTRY["matrix"].get(container, {}).get("audio", []):
+                    swap = audio_container_for_codec(audio_codec)
+                    if swap and swap != container:
+                        notes.append(f"container switched to {swap} ({audio_codec} is not carried by {container})")
+                        container = swap
+                if audio_codec is None:
+                    audio_codec = audio_codec_for(container, None)
+                    notes.append(f"audio codec set to {audio_codec} (the {container.upper()} default)")
+                plan.output.mode = "audio"
+                plan.output.video_codec = None
+                plan.output.gpu = False
+                plan.output.pixel_format = None
+                plan.output.video_profile = None
+                plan.output.video_preset = None
+                plan.output.video_bitrate_kbps = None
+                plan.output.container = container
+                plan.output.audio_codec = audio_codec
+                if audio_bitrate is not None:
+                    plan.output.audio_bitrate_kbps = audio_bitrate
+                    notes.append(f"targeting a {audio_bitrate} kbps audio bitrate")
+            elif mode == "subtitles":
+                plan.output.mode = "subtitles"
+                plan.output.container = sub_dump
+                plan.output.video_codec = None
+                plan.output.audio_codec = None
+                plan.output.gpu = False
+                plan.output.pixel_format = None
+                plan.output.video_profile = None
+                plan.output.video_preset = None
+                plan.output.video_bitrate_kbps = None
+                plan.output.audio_mode = AudioMode.ENCODE
+                notes.append(f"subtitle dump format: {sub_dump}")
+            else:  # video
+                # an explicit codec with no named container lands in the
+                # codec's natural home ('prores' is a .mov file)
+                if codec is not None and container is None and dest is None:
+                    natural = _NATURAL_VIDEO_CONTAINER.get(codec)
+                    if natural is not None:
+                        container = natural
+                        notes.append(f"container set to {natural} (the natural home for {codec.upper()})")
+                if container is None:
+                    if dest is not None:
+                        # the stream destination's scheme fixes the container
+                        container = dest_container
+                        notes.append(f"container set to {container} by the stream destination {dest}")
+                    elif ext in _EXT_TO_CONTAINER:
+                        container = _EXT_TO_CONTAINER[ext]
+                        notes.append(f"container defaulted to {container} (from the input filename)")
+                    else:
+                        container = "mp4"
+                        notes.append("container defaulted to mp4")
+                if codec is None:
+                    codec = default_codec(container)
+                    notes.append(f"video codec defaulted to {codec} (the {container.upper()} preset default)")
+                plan.output.container = container
+                plan.output.video_codec = codec
+                if audio_codec is not None:
+                    plan.output.audio_codec = audio_codec
+                    notes.append(f"audio codec set to {audio_codec}")
+                if pixel_format is not None:
+                    plan.output.pixel_format = pixel_format
+                    notes.append(f"output pixel format set to {pixel_format}")
+                if video_profile is not None:
+                    plan.output.video_profile = video_profile
+                    notes.append(f"encoder profile set to {video_profile}")
+                if video_preset is not None:
+                    plan.output.video_preset = video_preset
+                    notes.append(f"encoding speed preset set to {video_preset}")
+                if video_bitrate is not None:
+                    plan.output.video_bitrate_kbps = video_bitrate
+                    notes.append(
+                        f"targeting a {video_bitrate / 1000:g} Mbps video bitrate (CBR-style target)"
+                    )
+                if gpu:
+                    plan.output.gpu = True
+                    notes.append("encoding on GPU (NVIDIA nvenc)")
+            format_options = _detect_format_options(t, plan.output.container)
+            if format_options:
+                plan.output.format_options = format_options
+                notes.append("format options: "
+                             + ", ".join(f"{k}={v}" for k, v in format_options.items()))
+            if filtergraph is not None:
+                plan.filtergraph = filtergraph
+                notes.append("custom filtergraph set")
 
-        matrix_err = matrix_error(container, codec)
-        if matrix_err:
+        # final capability gate — the registry is the single source of truth.
+        # (Field mutations above bypass the model validators, so the check
+        # must run explicitly here.)
+        errors = capability_errors(plan.output) + format_option_errors(
+            plan.output.container, plan.output.format_options)
+        if errors:
             return ParseResult(
                 status=ParseStatus.UNSUPPORTED,
-                unsupported=[UnsupportedPart(fragment=f"{codec} in {container.upper()}",
-                                              reason=matrix_err)],
+                unsupported=[UnsupportedPart(fragment=plan.output.container,
+                                              reason=e) for e in errors],
             )
 
         return ParseResult(status=ParseStatus.READY, plan=plan, defaults=notes)
@@ -1061,43 +1601,152 @@ class RulesAdapter:
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
-                    audio_resample=None, subtitle=None, gpu=None):
+                    audio_resample=None, subtitle=None, gpu=None, codec=None,
+                    container=None, audio_codec=None, audio_container=None,
+                    audio_bitrate=None, video_bitrate=None, mode=None,
+                    sub_dump=None, filters=None, filtergraph=None, input_ext=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
     changed: list[str] = []
 
-    if gpu is not None and plan.output.gpu != gpu:
-        plan.output.gpu = gpu
-        changed.append("gpu -> on (nvenc)" if gpu else "gpu -> off (cpu)")
-    codec = _detect_codec(t)
-    if codec and plan.output.video_codec != codec:
-        plan.output.video_codec = codec
-        changed.append(f"video codec -> {codec}")
-    container, _ = _detect_container(t)
-    if container and plan.output.container != container:
-        plan.output.container = container
-        changed.append(f"container -> {container}")
-    bitrate = _detect_bitrate(t)
-    if bitrate is not None and plan.output.video_bitrate_kbps != bitrate:
-        plan.output.video_bitrate_kbps = bitrate
-        changed.append(f"video bitrate -> {bitrate} kbps")
-    pixel_format = _detect_pixel_format(t)
-    if pixel_format and plan.output.pixel_format != pixel_format:
-        plan.output.pixel_format = pixel_format
-        changed.append(f"pixel format -> {pixel_format}")
-    profile = _detect_profile(t)
-    if profile and plan.output.video_profile != profile:
-        plan.output.video_profile = profile
-        changed.append(f"video profile -> {profile}")
-    preset = _detect_preset(t)
-    if preset and plan.output.video_preset != preset:
-        plan.output.video_preset = preset
-        changed.append(f"video preset -> {preset}")
+    # --- a mode switch resets the fields the new mode forbids ------------
+    if mode is not None and mode != plan.output.mode:
+        if mode == "subtitles":
+            plan.output.mode = "subtitles"
+            plan.output.container = sub_dump or "srt_file"
+            plan.output.video_codec = None
+            plan.output.audio_codec = None
+            plan.output.video_bitrate_kbps = None
+            plan.output.pixel_format = None
+            plan.output.video_profile = None
+            plan.output.video_preset = None
+            plan.output.gpu = False
+            plan.output.audio_mode = AudioMode.ENCODE
+            plan.filtergraph = None
+            if plan.output_destination is not None:
+                plan.output_destination = None
+                changed.append("stream destination dropped (a subtitle dump is a file)")
+            if plan.operations:
+                plan.operations = []
+                changed.append("operations dropped (a subtitle dump takes none)")
+            changed.append(f"mode -> subtitle dump ({plan.output.container})")
+        elif mode == "audio":
+            plan.output.mode = "audio"
+            plan.output.video_codec = None
+            plan.output.video_bitrate_kbps = None
+            plan.output.pixel_format = None
+            plan.output.video_profile = None
+            plan.output.video_preset = None
+            plan.output.gpu = False
+            plan.filtergraph = None
+            if plan.output_destination is not None:
+                plan.output_destination = None
+                changed.append("stream destination dropped (an audio output is a file)")
+            new_container = _resolve_audio_container(container, audio_container, audio_codec)
+            if new_container is None and plan.output.container not in _AUDIO_CONTAINERS:
+                if input_ext in _EXT_TO_CONTAINER and _EXT_TO_CONTAINER[input_ext] in _AUDIO_CONTAINERS:
+                    new_container = _EXT_TO_CONTAINER[input_ext]
+                else:
+                    new_container = "mp3"
+            if new_container is not None and plan.output.container != new_container:
+                plan.output.container = new_container
+                changed.append(f"container -> {new_container} (audio-only output)")
+            codec_choice = audio_codec or plan.output.audio_codec
+            if codec_choice is not None and codec_choice not in \
+                    REGISTRY["matrix"].get(plan.output.container, {}).get("audio", []):
+                swap = audio_container_for_codec(codec_choice)
+                if swap is not None and swap != plan.output.container:
+                    plan.output.container = swap
+                    changed.append(f"container -> {swap} (carries {codec_choice})")
+            if codec_choice is None:
+                codec_choice = audio_codec_for(plan.output.container, None)
+                changed.append(f"audio codec -> {codec_choice} (the {plan.output.container.upper()} default)")
+            if codec_choice is not None and plan.output.audio_codec != codec_choice:
+                plan.output.audio_codec = codec_choice
+                changed.append(f"audio codec -> {codec_choice}")
+            if plan.output.audio_mode != AudioMode.ENCODE:
+                plan.output.audio_mode = AudioMode.ENCODE
+            kept = [o for o in plan.operations
+                    if o.type in ("speed", "audio_resample", "audio_replace")
+                    or (o.type == "filter" and o.domain == "audio")]
+            if len(kept) != len(plan.operations):
+                plan.operations = kept
+                changed.append("video edits dropped (an audio-only output carries no video)")
+            changed.append("mode -> audio-only")
+        else:  # back to video
+            plan.output.mode = "video"
+            if plan.output.container not in _VIDEO_CONTAINERS:
+                plan.output.container = "mp4"
+                changed.append("container -> mp4 (video output)")
+            changed.append("mode -> video")
+
+    # --- field updates, per current mode ----------------------------------
+    if plan.output.mode == "video":
+        if gpu is not None and plan.output.gpu != gpu:
+            plan.output.gpu = gpu
+            changed.append("gpu -> on (nvenc)" if gpu else "gpu -> off (cpu)")
+        if container is not None and plan.output.container != container:
+            plan.output.container = container
+            changed.append(f"container -> {container}")
+        if codec is not None and plan.output.video_codec != codec:
+            plan.output.video_codec = codec
+            changed.append(f"video codec -> {codec}")
+        if plan.output.video_codec is None:
+            # restored after an away-mode that dropped it
+            plan.output.video_codec = default_codec(plan.output.container)
+            if plan.output.video_codec:
+                changed.append(f"video codec -> {plan.output.video_codec} "
+                               f"(the {plan.output.container.upper()} preset default)")
+        # an explicit codec lands in its natural home when no container
+        # was named ('make it prores' on an mp4 plan -> mov)
+        if codec is not None and container is None:
+            natural = _NATURAL_VIDEO_CONTAINER.get(codec)
+            if natural is not None and plan.output.container != natural:
+                plan.output.container = natural
+                changed.append(f"container -> {natural} (the natural home for {codec.upper()})")
+        if video_bitrate is not None and plan.output.video_bitrate_kbps != video_bitrate:
+            plan.output.video_bitrate_kbps = video_bitrate
+            changed.append(f"video bitrate -> {video_bitrate} kbps")
+        pixel_format = _detect_pixel_format(t)
+        if pixel_format and plan.output.pixel_format != pixel_format:
+            plan.output.pixel_format = pixel_format
+            changed.append(f"pixel format -> {pixel_format}")
+        profile = _detect_profile(t)
+        if profile and plan.output.video_profile != profile:
+            plan.output.video_profile = profile
+            changed.append(f"video profile -> {profile}")
+        preset = _detect_preset(t)
+        if preset and plan.output.video_preset != preset:
+            plan.output.video_preset = preset
+            changed.append(f"video preset -> {preset}")
+    else:
+        # audio / subtitle outputs: drop video-only fields this instruction
+        # may have named (parse() already clarified the intent)
+        for field in ("video_bitrate_kbps", "pixel_format", "video_profile",
+                      "video_preset"):
+            if getattr(plan.output, field) is not None:
+                setattr(plan.output, field, None)
+        if plan.output.gpu:
+            plan.output.gpu = False
+
+    if audio_codec is not None and plan.output.mode != "subtitles" \
+            and plan.output.audio_codec != audio_codec:
+        if audio_codec not in REGISTRY["matrix"].get(plan.output.container, {}).get("audio", []) \
+                and plan.output.mode == "audio":
+            swap = audio_container_for_codec(audio_codec)
+            if swap is not None and swap != plan.output.container:
+                plan.output.container = swap
+                changed.append(f"container -> {swap} (carries {audio_codec})")
+        plan.output.audio_codec = audio_codec
+        changed.append(f"audio codec -> {audio_codec}")
+    if audio_bitrate is not None and plan.output.audio_bitrate_kbps != audio_bitrate:
+        plan.output.audio_bitrate_kbps = audio_bitrate
+        changed.append(f"audio bitrate -> {audio_bitrate} kbps")
 
     # A newly named destination always wins over the previous one; the scheme
     # fixes the container, so switch it when they disagree.
-    if dest is not None and plan.output_destination != dest:
+    if dest is not None and plan.output.mode == "video" and plan.output_destination != dest:
         plan.output_destination = dest
         changed.append(f"stream destination -> {dest}")
         d_container = stream_output_info(dest)[0]
@@ -1105,21 +1754,23 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
             plan.output.container = d_container
             changed.append(f"container -> {d_container} (required by the {dest} destination)")
 
-    if audio == "keep" and plan.output.audio_mode != AudioMode.ENCODE:
-        plan.output.audio_mode = AudioMode.ENCODE
-        changed.append("audio -> keep")
-    elif audio == "remove" and plan.output.audio_mode != AudioMode.REMOVE:
-        plan.output.audio_mode = AudioMode.REMOVE
-        changed.append("audio -> remove")
+    if plan.output.mode == "video":
+        if audio == "keep" and plan.output.audio_mode != AudioMode.ENCODE:
+            plan.output.audio_mode = AudioMode.ENCODE
+            changed.append("audio -> keep")
+        elif audio == "remove" and plan.output.audio_mode != AudioMode.REMOVE:
+            plan.output.audio_mode = AudioMode.REMOVE
+            changed.append("audio -> remove")
 
-    if audio_replace is not None:
+    if audio_replace is not None and plan.output.mode != "subtitles":
         # a replacement replaces any prior replacement and implies encoded audio
         plan.operations = [o for o in plan.operations if o.type != "audio_replace"]
         plan.operations.append(audio_replace)
-        if plan.output.audio_mode != AudioMode.ENCODE:
+        if plan.output.mode != "subtitles" and plan.output.audio_mode != AudioMode.ENCODE:
             plan.output.audio_mode = AudioMode.ENCODE
         changed.append(f"audio -> replaced ({audio_replace.asset_id})")
-    elif audio == "remove" and any(o.type == "audio_replace" for o in plan.operations):
+    elif audio == "remove" and plan.output.mode == "video" \
+            and any(o.type == "audio_replace" for o in plan.operations):
         plan.operations = [o for o in plan.operations if o.type != "audio_replace"]
         changed.append("audio replacement removed")
 
@@ -1140,37 +1791,68 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if trim is not None and plan.trim != trim:
         plan.trim = trim
         changed.append("trim updated")
-    if resize is not None:
-        plan.operations = [o for o in plan.operations if o.type != "resize"]
-        plan.operations.insert(0, resize)
-        changed.append("resize updated")
-    # crop and rotate go right after resize (before watermark/grayscale), so
-    # the filter order matches a fresh plan
-    base = 1 if any(o.type == "resize" for o in plan.operations) else 0
-    for op in (crop, rotate):
-        if op is not None:
-            plan.operations = [o for o in plan.operations if o.type != op.type]
-            plan.operations.insert(base, op)
-            base += 1
-            changed.append(f"{op.type} updated")
+    # trim is the one edit a subtitle dump (and an audio extraction) keeps
+    if plan.output.mode == "video":
+        if resize is not None:
+            plan.operations = [o for o in plan.operations if o.type != "resize"]
+            plan.operations.insert(0, resize)
+            changed.append("resize updated")
+        # crop and rotate go right after resize (before watermark/grayscale),
+        # so the filter order matches a fresh plan
+        base = 1 if any(o.type == "resize" for o in plan.operations) else 0
+        for op in (crop, rotate):
+            if op is not None:
+                plan.operations = [o for o in plan.operations if o.type != op.type]
+                plan.operations.insert(base, op)
+                base += 1
+                changed.append(f"{op.type} updated")
+        if watermark is not None:
+            plan.operations = [o for o in plan.operations if o.type != "watermark"]
+            plan.operations.append(watermark)
+            changed.append("watermark updated")
+        if grayscale and not any(o.type == "grayscale" for o in plan.operations):
+            plan.operations.append(GrayscaleOp())
+            changed.append("grayscale added")
+        if subtitle is not None:
+            # a new subtitle request (possibly the previous file with a new
+            # mode) replaces any prior subtitle op; the negation above already
+            # removed it when "remove the subtitles" was said
+            plan.operations = [o for o in plan.operations if o.type != "subtitles"]
+            plan.operations.append(subtitle)
+            changed.append(f"subtitles updated ({subtitle.mode})")
     for op in (speed, audio_resample):
-        if op is not None:
+        if op is not None and plan.output.mode != "subtitles":
             plan.operations = [o for o in plan.operations if o.type != op.type]
             plan.operations.append(op)
             changed.append(f"{op.type} updated")
-    if watermark is not None:
-        plan.operations = [o for o in plan.operations if o.type != "watermark"]
-        plan.operations.append(watermark)
-        changed.append("watermark updated")
-    if grayscale and not any(o.type == "grayscale" for o in plan.operations):
-        plan.operations.append(GrayscaleOp())
-        changed.append("grayscale added")
-    if subtitle is not None:
-        # a new subtitle request (possibly the previous file with a new
-        # mode) replaces any prior subtitle op; the negation above already
-        # removed it when "remove the subtitles" was said
-        plan.operations = [o for o in plan.operations if o.type != "subtitles"]
-        plan.operations.append(subtitle)
-        changed.append(f"subtitles updated ({subtitle.mode})")
+
+    if filters and plan.output.mode != "subtitles":
+        plan.operations = [o for o in plan.operations if o.type != "filter"]
+        if plan.output.mode == "video":
+            vf = [f for f in filters if f.domain == "video"]
+            af = [f for f in filters if f.domain == "audio"]
+            if vf:
+                # spliced before the subtitles op (burned subs run last)
+                try:
+                    idx = next(i for i, o in enumerate(plan.operations)
+                               if o.type == "subtitles")
+                except StopIteration:
+                    idx = len(plan.operations)
+                plan.operations[idx:idx] = vf
+            plan.operations.extend(af)
+        else:  # audio mode: audio-domain filters only (parse clarified the rest)
+            plan.operations.extend(f for f in filters if f.domain == "audio")
+        changed.append("filters updated")
+    if filtergraph is not None and plan.output.mode == "video" \
+            and plan.filtergraph != filtergraph:
+        plan.filtergraph = filtergraph
+        changed.append("filtergraph updated")
+
+    # registry-driven format options for the (possibly new) container
+    fo = _detect_format_options(t, plan.output.container)
+    if fo and {**plan.output.format_options, **fo} != plan.output.format_options:
+        plan.output.format_options = {**plan.output.format_options, **fo}
+        changed.append("format options: "
+                       + ", ".join(f"{k}={v}" for k, v in fo.items()))
 
     return plan, changed

@@ -447,17 +447,25 @@ def test_remove_subtitles_fresh_plan_is_no_op(gen):
     assert "subtitles" not in ops_by_type(r.plan)
 
 
-def test_extract_subtitles_unsupported(gen):
+def test_extract_subtitles_is_a_dump(gen):
+    # Extracting the input's subtitles is a subtitle dump (srt_file, subtitles
+    # mode) — a stream copy, no asset needed.
     r = gen("extract the subtitles to a file", "clip.mp4",
             extra={"subs": SUBS_ASSET})
-    assert r.status == "unsupported"
-    assert any("extract" in u["fragment"].lower() for u in r.unsupported)
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "subtitles"
+    assert out["container"] == "srt_file"
 
 
 def test_soften_audio_is_not_a_subtitle_request(gen):
-    # 'soften' alone must not arm the soft-subtitle detector
+    # 'soften' alone must not arm the soft-subtitle detector: it is an audio
+    # volume filter, not a subtitle request.
     r = gen("soften the audio", "clip.mp4", extra={"subs": SUBS_ASSET})
-    assert r.status == "unsupported"  # volume is deferred
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert any("volume" in o["expr"] for o in f), "expected a volume filter"
+    assert all(o["type"] != "subtitles" for o in r.plan["operations"])
 
 
 def test_subtitles_revision_remove(gen):

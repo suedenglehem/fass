@@ -69,9 +69,13 @@ def test_exact_file_size_asks(gen):
     assert r.status == "needs_clarification"
 
 
-def test_lossless_asks(gen):
+def test_lossless_maps_to_prores(gen):
+    # "lossless" is a video-quality request: it maps to the ProRes codec,
+    # which lands in its natural container (mov), not a clarification.
     r = gen("re-encode lossless", "clip.mp4")
-    assert r.status == "needs_clarification"
+    assert r.status == "ready"
+    assert r.plan["output"]["video_codec"] == "prores"
+    assert r.plan["output"]["container"] == "mov"
 
 
 def test_end_before_start_is_rejected():
@@ -235,14 +239,24 @@ def test_m4_ops_combo_order(gen):
     assert ops == ["crop", "rotate", "speed"]
 
 
-def test_flip_still_unsupported(gen):
+def test_flip_horizontally_is_a_video_filter(gen):
+    # H-flip is a plain video filter (hflip), not an unsupported op.
     r = gen("flip the video horizontally", "clip.mp4")
-    assert r.status == "unsupported"
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f, "expected a filter op for the flip"
+    assert "hflip" in f[0]["expr"]
+    assert f[0]["domain"] == "video"
 
 
-def test_extract_audio_is_unsupported(gen):
+def test_extract_audio_to_mp3_is_audio_mode(gen):
+    # Audio-only extraction: audio output mode, mp3 container, no video codec.
     r = gen("extract the audio to mp3", "clip.mp4")
-    assert r.status == "unsupported"
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "audio"
+    assert out["container"] == "mp3"
+    assert out["video_codec"] is None
 
 
 def test_avc_synonym_for_h264(gen):
