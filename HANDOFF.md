@@ -398,9 +398,9 @@ run tests from repo root.
 
 ## Next steps
 **M6 committed as 2344be3** (31 files, +3572/−235) and **pushed** —
-nothing outstanding. **origin/main = 04230e5**; local main is ahead by
-**26772d9** (launcher WAYLAND_DISPLAY fix, tested E2E on i7) —
-**unpushed, push when asked**.
+nothing outstanding. **main = origin/main = 3915e9b** (pushed
+2026-10-24: 26772d9 launcher WAYLAND_DISPLAY fix, launcher E2E on i7,
++ this record).
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
 (subtitles) all done and committed. M6 (docker deployment: packaging,
 Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
