@@ -8,7 +8,11 @@ structured response (status, plan, argv, rendered command, explanation,
 defaults, warnings, validation results, clarifications).
 
 Security invariants (PRD §10), all enforced by design here:
-- the service NEVER executes generated commands — it returns argv, period;
+- the service NEVER executes generated commands by default — it returns
+  argv, period. Execution (M6, docker deployment) is an explicit opt-in
+  per deployment via FASS_ALLOW_EXECUTE, runs the argv array with the
+  shell disabled, and validates every flag against the builder's
+  vocabulary before a process is spawned;
 - assets are local paths bound by the client; the model never sees paths;
 - no media upload endpoints; nothing leaves the machine;
 - target shell is POSIX only — other shells are deferred and a non-POSIX
@@ -23,14 +27,17 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from fass import dockerctl, execute
+from fass.config import FassConfig, LLMConfig, config_path, load_config, save_config
 from fass.pipeline import generate
 from fass.probe.ffprobe import ffmpeg_available, parse_ffprobe_json, probe_ffmpeg
 from fass.registry import REGISTRY
 from fass.schema import Asset, AssetKind, EditPlan, guess_kind
 from fass.nlu.rules import SUPPORTED_SUMMARY
+from fass.ui import UI_HTML
 
 
 class AssetRef(BaseModel):
@@ -69,12 +76,54 @@ class CommandRequest(BaseModel):
     preflight: bool = False
 
 
+class RunRequest(BaseModel):
+    """POST /v1/runs body (M6): the argv ARRAY from a ready command —
+    never a shell string."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    arguments: list[str] = Field(min_length=2, max_length=256)
+    timeout: float | None = Field(
+        default=None, gt=0, le=86400,
+        description="optional wall-clock limit in seconds (file outputs "
+                    "finish on their own; streams run until stopped)",
+    )
+
+
+class LLMTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    use_unsaved: bool = False
+    llm: LLMConfig | None = None
+
+
+def _llm_status() -> dict:
+    """Docker-control availability for the config tab. 'worker' (not
+    'manage') is what gates the Apply button: the sidecar does the swap."""
+    if not dockerctl.manage_enabled():
+        return {"manage": False, "worker": bool(dockerctl.worker_address()),
+                "version": None, "container": None,
+                "error": "docker socket not mounted / FASS_DOCKER_MANAGE not set"}
+    try:
+        ver = dockerctl.engine_version()
+    except dockerctl.DockerError as e:
+        return {"manage": False, "worker": bool(dockerctl.worker_address()),
+                "version": None, "container": None, "error": str(e)}
+    container = None
+    try:
+        container = dockerctl.find_container().get("Id", "")[:12]
+    except dockerctl.DockerError:
+        pass
+    return {"manage": True, "worker": bool(dockerctl.worker_address()),
+            "version": ver.get("Version"), "container": container, "error": None}
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="fass",
         version="1.0",
         description="Natural language -> validated FFmpeg commands "
-        "(argv first; the service never executes anything).",
+                    "(argv first; execution is an explicit per-deployment opt-in).",
     )
 
     @app.get("/healthz")
@@ -115,17 +164,24 @@ def create_app() -> FastAPI:
             "registry_version": REGISTRY["registry_version"],
             "video_codecs": list(REGISTRY["video_codecs"]),
             "audio_codecs": list(REGISTRY["audio_codecs"]),
+            "gpu": {"enabled": load_config().gpu.enabled,
+                    "coders": {k: v["encoder"] for k, v in REGISTRY["gpu"]["coders"].items()}},
         }
 
     @app.get("/v1/env")
     def env():
         if not ffmpeg_available():
-            return {"available": False, "note": "ffmpeg not found on PATH"}
+            return {"available": False, "note": "ffmpeg not found on PATH",
+                    "execution": execute.execution_enabled()}
         ff = probe_ffmpeg()
         encoders = {}
         for name, spec in REGISTRY["video_codecs"].items():
             encoders[f"video:{name}"] = {
                 "encoder": spec["encoder"], "present": spec["encoder"] in ff.encoders,
+            }
+        for name, coder in REGISTRY["gpu"]["coders"].items():
+            encoders[f"video:{name}_gpu"] = {
+                "encoder": coder["encoder"], "present": coder["encoder"] in ff.encoders,
             }
         for name, spec in REGISTRY["audio_codecs"].items():
             encoders[f"audio:{name}"] = {
@@ -137,7 +193,144 @@ def create_app() -> FastAPI:
             "registry_version": REGISTRY["registry_version"],
             "encoders": encoders,
             "filters": {n: n in ff.filters for n in ("scale", "pad", "hue", "overlay", "format")},
+            "execution": execute.execution_enabled(),
+            "gpu": load_config().gpu.model_dump(),
         }
+
+    # ------------------------------------------------------- config (M6)
+
+    @app.get("/v1/config")
+    def get_config():
+        cfg = load_config()
+        return {
+            "config": cfg.model_dump(),
+            "path": str(config_path()),
+            "compose": dockerctl.compose_preview(cfg),
+            "docker": _llm_status(),
+        }
+
+    @app.put("/v1/config")
+    def put_config(body: FassConfig):
+        path = save_config(body)
+        return {
+            "saved": str(path),
+            "config": body.model_dump(),
+            "compose": dockerctl.compose_preview(body),
+            "note": "LLM and stream-address changes are live immediately; "
+                    "volume/port/GPU changes need Apply (container recreate)",
+        }
+
+    @app.post("/v1/config/apply")
+    def apply_config():
+        """Ask the fass-worker sidecar to recreate this container from the
+        saved config. The worker stops THIS container to run the swap, so
+        the UI should expect the connection to drop after the ack and
+        poll /v1/config/apply-result until fass is back."""
+        worker = dockerctl.worker_address()
+        if not worker:
+            raise HTTPException(
+                409,
+                "Apply needs the fass-worker sidecar (FASS_DOCKER_WORKER) — "
+                "add the fass-worker service from docker/compose.yaml, or "
+                "apply the compose preview on the host (docker compose up -d)",
+            )
+        import json
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"http://{worker}/swap",
+            data=json.dumps({"config": load_config().model_dump()}).encode(),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read().decode()).get("detail", str(e))
+            except Exception:
+                detail = str(e)
+            raise HTTPException(e.code, f"fass-worker: {detail}")
+        except (urllib.error.URLError, OSError) as e:
+            raise HTTPException(
+                502, f"fass-worker at {worker} is not reachable: {e}"
+            )
+
+    @app.get("/v1/config/apply-result")
+    def apply_result():
+        state = dockerctl.read_apply_state()
+        if state is None:
+            raise HTTPException(404, "no apply has been recorded yet")
+        return state
+
+    @app.post("/v1/config/llm-test")
+    def llm_test(body: LLMTestRequest | None = None):
+        from fass.nlu.llm import LLMAdapter
+
+        body = body or LLMTestRequest()
+        llm = body.llm if (body.use_unsaved and body.llm) else load_config().llm
+        if llm.provider == "openai":
+            adapter = LLMAdapter(
+                api_key=llm.api_key or None, model=llm.model or None,
+                provider="openai", host=llm.host or None, port=llm.port or None,
+            )
+        else:
+            adapter = LLMAdapter(api_key=llm.api_key or None, model=llm.model or None)
+        if not adapter.available():
+            raise HTTPException(
+                422,
+                "LLM not configured" if llm.provider == "anthropic"
+                else "OpenAI-compatible LLM needs host, port and model",
+            )
+        try:
+            answer, seconds = adapter.test()
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "model": adapter.model, "seconds": seconds,
+                "answer": answer}
+
+    # -------------------------------------------------------- runs (M6)
+
+    @app.post("/v1/runs")
+    def start_run(body: RunRequest):
+        try:
+            run = execute.start_run(body.arguments, timeout=body.timeout)
+        except PermissionError as e:
+            raise HTTPException(403, str(e))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return {"run": run.to_dict()}
+
+    @app.get("/v1/runs")
+    def list_runs():
+        return {"runs": execute.list_runs()}
+
+    @app.get("/v1/runs/{run_id}")
+    def get_run(run_id: str):
+        run = execute.get_run(run_id)
+        if run is None:
+            raise HTTPException(404, "run not found")
+        return run
+
+    @app.get("/v1/runs/{run_id}/log", response_class=PlainTextResponse)
+    def get_run_log(run_id: str):
+        log = execute.log_tail(run_id)
+        if log is None:
+            raise HTTPException(404, "run not found")
+        return log
+
+    @app.post("/v1/runs/{run_id}/stop")
+    def stop_run(run_id: str):
+        return {"stopped": execute.stop_run(run_id)}
+
+    @app.get("/media/output/{filename}")
+    def media_output(filename: str):
+        path = execute.output_file(filename)
+        if path is None:
+            raise HTTPException(404, "file not found in the /output volume")
+        return FileResponse(path, filename=path.name)
 
     @app.get("/", response_class=HTMLResponse)
     def index():
@@ -147,182 +340,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
-
-# ------------------------------------------------------------- minimal UI
-# Self-contained page (no external assets, per the local-first model): a
-# request form, the clarification flow, and the command output — PRD §9 UI.
-
-UI_HTML = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fass — natural language → validated FFmpeg commands</title>
-<style>
-:root {
-  --bg: #f6f7f9; --card: #fff; --text: #1c2128; --muted: #57606a;
-  --border: #d0d7de; --accent: #0969da;
-  --ready: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
-    --border: #30363d; --accent: #58a6ff;
-    --ready: #3fb950; --warn: #d29922; --bad: #f85149;
-  }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, sans-serif; }
-main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
-h1 { font-size: 20px; margin: 0 0 4px; }
-.sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
-form, .result { background: var(--card); border: 1px solid var(--border);
-  border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-input, textarea, select { width: 100%; padding: 8px 10px; font: inherit;
-  color: var(--text); background: var(--bg); border: 1px solid var(--border);
-  border-radius: 6px; }
-textarea { min-height: 64px; resize: vertical; }
-.row { display: flex; gap: 12px; flex-wrap: wrap; }
-.row > div { flex: 1 1 200px; }
-.check { display: flex; align-items: center; gap: 8px; margin-top: 12px;
-  font-size: 14px; color: var(--text); }
-.check input { width: auto; }
-button { margin-top: 14px; padding: 9px 18px; font: inherit; font-weight: 600;
-  color: #fff; background: var(--accent); border: 0; border-radius: 6px;
-  cursor: pointer; }
-.badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
-  font-size: 13px; font-weight: 600; margin-bottom: 10px; }
-.b-ready { background: color-mix(in srgb, var(--ready) 15%, transparent); color: var(--ready); }
-.b-clar { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
-.b-bad   { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
-pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px 12px; overflow-x: auto; font-size: 13px; white-space: pre-wrap;
-  word-break: break-all; }
-.cmd { font-weight: 600; }
-h2 { font-size: 14px; margin: 14px 0 6px; color: var(--muted); }
-ul { margin: 4px 0; padding-left: 20px; }
-li { margin: 2px 0; }
-.copy { margin-left: 10px; padding: 2px 10px; font-size: 12px; background: none;
-  border: 1px solid var(--border); color: var(--muted); border-radius: 6px; }
-</style>
-</head>
-<body>
-<main>
-  <h1>fass</h1>
-  <p class="sub">Natural language → <strong>validated</strong> FFmpeg commands.
-  The model only plans; the command is built deterministically and never executed here.</p>
-  <form id="f" autocomplete="off">
-    <label for="instr">Instruction</label>
-    <textarea id="instr" required placeholder="cut from 00:10 to 00:30, resize to 720p, and add my logo to the bottom-right corner"></textarea>
-    <div class="row">
-      <div><label for="inp">Input video (local path or stream URL)</label>
-        <input id="inp" required placeholder="clip.mp4 or rtmp://host:1935/live"></div>
-      <div><label for="out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)</label>
-        <input id="out" placeholder="out.mp4, or rtmp://host:1935/live"></div>
-    </div>
-    <div class="row">
-      <div><label for="wm">Watermark image (optional)</label>
-        <input id="wm" placeholder="logo.png"></div>
-      <div><label for="ad">Adapter</label>
-        <select id="ad"><option>auto</option><option>rules</option><option>llm</option></select></div>
-    </div>
-    <label for="extra-h">Additional inputs (optional — audio/video/image files or streams, e.g. "replace the audio with song.mp3")</label>
-    <div id="extra"></div>
-    <button type="button" class="copy" onclick="addExtra()">+ add input</button>
-    <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
-    <button type="submit">Generate</button>
-  </form>
-  <div class="result" id="res" hidden></div>
-</main>
-<script>
-const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let extraN = 0;
-function addExtra() {
-  extraN += 1;
-  const id = 'in' + extraN;
-  const row = document.createElement('div');
-  row.className = 'row';
-  row.innerHTML = `<div><input class="extra-inp" data-id="${id}" placeholder="e.g. song.mp3 (id: ${id})"></div>
-    <div style="flex: 0 0 auto"><select class="extra-kind" style="width:auto">
-      <option value="auto">auto</option><option value="video">video</option>
-      <option value="audio">audio</option><option value="image">image</option>
-      <option value="source">source</option>
-    </select></div>
-    <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
-  $('extra').appendChild(row);
-}
-async function submit(e) {
-  e.preventDefault();
-  const assets = { main: $('inp').value.trim() };
-  if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
-  document.querySelectorAll('.extra-inp').forEach(i => {
-    const v = i.value.trim();
-    if (!v) return;
-    const kind = i.parentElement.querySelector('.extra-kind').value;
-    assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };
-  });
-  const body = {
-    instruction: $('instr').value.trim(),
-    assets,
-    target_shell: 'posix',
-    adapter: $('ad').value,
-    preflight: $('pf').checked,
-  };
-  if ($('out').value.trim()) body.output_filename = $('out').value.trim();
-  $('res').hidden = false;
-  $('res').innerHTML = '<span class="badge b-clar">working…</span>';
-  try {
-    const r = await fetch('/v1/commands', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      $('res').innerHTML = `<span class="badge b-bad">request error</span>
-        <pre>${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2))}</pre>`;
-      return;
-    }
-    render(data);
-  } catch (err) {
-    $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
-  }
-}
-function lists(items) {
-  if (!items || !items.length) return '';
-  return '<ul>' + items.map(i => `<li>${esc(i)}</li>`).join('') + '</ul>';
-}
-function render(d) {
-  const badge = d.status === 'ready' ? 'b-ready' :
-                d.status === 'needs_clarification' ? 'b-clar' : 'b-bad';
-  let html = `<span class="badge ${badge}">${esc(d.status)}</span>`;
-  if (d.status === 'ready') {
-    html += `<h2>Command</h2>
-      <pre class="cmd" id="cmd">${esc(d.command)}</pre>
-      <button class="copy" onclick="navigator.clipboard.writeText($('cmd').textContent)">copy</button>
-      <h2>Argument array (shell-safe)</h2><pre>${esc(JSON.stringify(d.arguments, null, 2))}</pre>
-      <h2>What it does</h2>${lists(d.summary)}
-      <h2>Defaults applied</h2>${lists(d.defaults) || '<p>none</p>'}
-      <h2>Warnings</h2>${lists(d.warnings) || '<p>none</p>'}
-      <h2>Validation</h2><p>${esc(d.validation_level)} — ${esc((d.checks || []).map(c => (c.ok ? 'ok' : 'FAIL') + ': ' + c.name + ' — ' + c.detail).join('; ') || 'n/a')}</p>`;
-  } else if (d.status === 'needs_clarification') {
-    html += '<h2>Please clarify</h2>' + lists(
-      (d.clarifications || []).map(c => c.question || c.reason || JSON.stringify(c)));
-  } else if (d.status === 'unsupported') {
-    html += '<h2>Not supported in the MVP</h2>' + lists(
-      (d.unsupported || []).map(u => (u.reason || '') + (u.hint ? ' — ' + u.hint : ''))) +
-      '<h2>Supported instead</h2><p>' + esc(d.unsupported && d.unsupported[0] && d.unsupported[0].hint || '') + '</p>';
-  } else {
-    html += '<h2>Errors</h2>' + lists(d.errors);
-  }
-  $('res').innerHTML = html;
-}
-$('f').addEventListener('submit', submit);
-</script>
-</body>
-</html>
-"""

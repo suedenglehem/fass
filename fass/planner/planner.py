@@ -20,6 +20,7 @@ from fass.registry import (
     bsf_for_copy,
     capability_check,
     extension_for,
+    gpu_coder,
     input_format_for,
     output_device_for,
     output_device_parts,
@@ -326,6 +327,26 @@ def plan_execution(
             f"encoder presets are only supported for H.264 (x264) in the MVP "
             f"('{out.video_preset}' does not apply to {out.video_codec.upper()})"
         )
+    if out.gpu:
+        coder = gpu_coder(out.video_codec)
+        if coder is None:
+            errors.append(
+                f"GPU encoding is not available for {out.video_codec.upper()} — "
+                "it is CPU-only (libvpx-vp9); use H.264 or H.265 on the GPU"
+            )
+        else:
+            if out.video_preset is not None:
+                errors.append(
+                    f"the x264 speed preset '{out.video_preset}' does not apply to "
+                    f"GPU encoding ({coder['encoder']}) — drop the preset"
+                )
+            if out.video_profile is not None \
+                    and out.video_profile not in coder["profiles"]:
+                errors.append(
+                    f"GPU {out.video_codec.upper()} supports the "
+                    f"{' and '.join(coder['profiles'])} profiles — "
+                    f"'{out.video_profile}' has no GPU form"
+                )
     resample = edit.ops_of("audio_resample")
     if resample and out.audio_mode == AudioMode.REMOVE:
         errors.append("the audio is removed, so it cannot be resampled")
@@ -522,6 +543,11 @@ def plan_execution(
     else:
         mode = "reencode"
 
+    if edit.output.gpu and mode == "copy":
+        warnings.append(
+            "the GPU was requested, but this output is a stream copy "
+            "(no re-encode) — the GPU will not be used"
+        )
     if device is not None:
         ep = _build_device_plan(edit, in_path, out_path, device, ar_path, defaults)
     elif mode == "copy":
@@ -697,7 +723,16 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         opts += ["-t", fmt_num(dur)]
 
     vc = REGISTRY["video_codecs"][edit.output.video_codec]
-    opts += ["-c:v", vc["encoder"]]
+    if edit.output.gpu:
+        # GPU encoding (M6): the nvenc coder for the requested codec
+        # (validated above — VP9 and the x264-only options are rejected).
+        v_encoder = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
+        defaults.append(
+            f"GPU encoding: {edit.output.video_codec} via {v_encoder} (NVIDIA)"
+        )
+    else:
+        v_encoder = vc["encoder"]
+    opts += ["-c:v", v_encoder]
     kbps = edit.output.video_bitrate_kbps
     if kbps is not None:
         # CBR-style target overrides the quality preset (registry bitrate_policy):
@@ -709,6 +744,14 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         if edit.output.video_codec in ("h264", "h265"):
             details += f", -bufsize {2 * kbps}k"
         defaults.append(f"target video bitrate {kbps} kbps (CBR-style: {details})")
+    elif edit.output.gpu:
+        # nvenc quality control: -rc vbr -cq N is the GPU form of CRF N
+        crf = vc.get("preset", {}).get("crf")
+        if crf is not None:
+            opts += ["-rc", "vbr", "-cq", str(crf)]
+            defaults.append(
+                f"GPU constant-quality mode: -rc vbr -cq {crf} (the nvenc form of CRF {crf})"
+            )
     else:
         preset = vc.get("preset", {})
         if "crf" in preset:

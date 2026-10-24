@@ -96,6 +96,12 @@ class OutputSpec(BaseModel):
         default=None,
         description="x264 speed/size preset (H.264 in the MVP).",
     )
+    gpu: bool = Field(
+        default=False,
+        description="Encode on an NVIDIA GPU (M6): h264 -> h264_nvenc, "
+                    "h265 -> hevc_nvenc. VP9 is CPU-only; x264 speed "
+                    "presets and the 'baseline' profile do not apply.",
+    )
 
 # ---------------------------------------------------------------- operations
 

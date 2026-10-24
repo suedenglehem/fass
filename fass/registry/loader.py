@@ -137,6 +137,12 @@ def video_presets_for(video_codec: str) -> list[str]:
     return list(REGISTRY["video_presets"].get(video_codec, []))
 
 
+def gpu_coder(video_codec: str) -> dict | None:
+    """The nvenc coder for a codec when GPU encoding is requested (M6);
+    None when the codec has no GPU form (VP9 is CPU-only)."""
+    return REGISTRY["gpu"]["coders"].get(video_codec)
+
+
 def sample_rates() -> list[int]:
     return list(REGISTRY["audio_resample"]["sample_rates"])
 

@@ -38,7 +38,8 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             extra += f", {out.video_preset} preset"
         if out.pixel_format:
             extra += f", {out.pixel_format}"
-        lines.append(f"Encode: {out.video_codec} ({vc['encoder']}{quality}{extra}) in {out.container.upper()}")
+        where = " on the GPU" if out.gpu else ""
+        lines.append(f"Encode: {out.video_codec} ({vc['encoder']}{quality}{extra}{where}) in {out.container.upper()}")
 
     if edit.output_destination:
         lines.append(

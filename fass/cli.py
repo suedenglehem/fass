@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -169,7 +170,7 @@ def _subcommand(argv: list[str]) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd in ("--help", "-h"):
         print(__doc__)
-        print("\nSubcommands: generate (default), probe FILE, env, serve, feedback, examples")
+        print("\nSubcommands: generate (default), probe FILE, env, serve, worker, feedback, examples")
         return 0
     if cmd == "--version":
         print(f"fass {__version__}")
@@ -219,9 +220,30 @@ def _subcommand(argv: list[str]) -> int:
             return 1
         from fass.api import app
         bind = "0.0.0.0" if a.host == "0.0.0.0" else a.host
+        exec_mode = "execution ENABLED (FASS_ALLOW_EXECUTE)" if os.environ.get(
+            "FASS_ALLOW_EXECUTE", "") not in ("", "0", "false", "no") \
+            else "the service never executes generated commands"
         print(f"fass API on http://{bind}:{a.port} — open <this host's IP>:{a.port} "
-              f"for the web UI; the service never executes generated commands")
+              f"for the web UI; {exec_mode}")
         uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
+        return 0
+    if cmd == "worker":
+        p = argparse.ArgumentParser(prog="fass worker")
+        p.add_argument("--host", default="0.0.0.0")
+        p.add_argument("--port", type=int, default=8001)
+        a = p.parse_args(rest)
+        from fass import dockerctl
+        try:
+            import uvicorn
+        except ImportError:
+            print("error: uvicorn is required for worker (pip install uvicorn)",
+                  file=sys.stderr)
+            return 1
+        print(f"fass-worker on http://{a.host}:{a.port} — orchestrates the "
+              f"fass container swap (Apply); container name: "
+              f"{dockerctl.container_name()}")
+        uvicorn.run(dockerctl.worker_app(), host=a.host, port=a.port,
+                    log_level="warning")
         return 0
     if cmd == "feedback":
         p = argparse.ArgumentParser(prog="fass feedback")
@@ -260,6 +282,6 @@ def dataclasses_asdict(obj) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv and argv[0] in ("probe", "env", "serve", "feedback", "examples", "--help", "-h", "--version"):
+    if argv and argv[0] in ("probe", "env", "serve", "worker", "feedback", "examples", "--help", "-h", "--version"):
         return _subcommand(argv)
     return _generate_cli(argv)

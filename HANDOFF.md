@@ -16,7 +16,78 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-23)
+## Current state (2026-10-24, M6 COMPLETE — commit pending)
+**M6 (docker packaging) — code, tests, i7 deploy, Apply E2E, docs all DONE.**
+User request: package fass+ffmpeg in docker (jrottenberg/ffmpeg:9.0-nvidia2404),
+config tab (volume + stream-port mapping), streams in/out, GPU transcoding,
+LLM config (strata on i7 for testing), execution of generated commands,
+everything in a `docker/` folder. Delivered:
+- `fass/config.py` — FassConfig pydantic model (llm/gpu/streaming/volumes,
+  extra=forbid), $FASS_CONFIG → /config/config.json → ./.fass-config.json,
+  reloaded per request.
+- `fass/execute.py` — FASS_ALLOW_EXECUTE gate; argv-only (shell=False);
+  validate_argv whitelist vs the builder's flag vocabulary; volume path
+  resolution (bare name → /input or /output, subtitle filter re-escape);
+  runs as sidecar JSON + .log in FASS_RUN_DIR; process-group kill;
+  traversal-guarded /media/output.
+- `fass/dockerctl.py` — raw Docker Engine API over the unix socket
+  (FASS_DOCKER_MANAGE gate); recreate() with rollback; compose preview.
+- `fass/ui.py` — 3 tabs: Command / Runs / Config (volumes, stream ports,
+  GPU, LLM provider+host+port+key+model with Test button, Apply).
+- `docker/` — Dockerfile (FROM jrottenberg/ffmpeg:9.0-nvidia2404, venv,
+  FASS_ALLOW_EXECUTE=1 baked in), entrypoint.sh (seeds strata-default
+  config.json on first boot), compose.yaml (volumes, 8000, nvidia device
+  reservation, commented socket + stream ports), README.md (setup +
+  streams + GPU + execution security model).
+- GPU: `OutputSpec.gpu`; h264_nvenc/hevc_nvenc, `-rc vbr -cq` quality,
+  bitrate → CBR-style; planner rejects VP9+GPU, x264 preset+GPU,
+  baseline+GPU; copy+GPU → warning. LLM: openai-compatible provider
+  (strata/vLLM/llama.cpp), thinking-model retry (max_tokens 2048→16384).
+- Stream host rewrite (pipeline._apply_stream_hosts): placeholder `host`
+  → 0.0.0.0 (udp/rtp listen) or bridge gateway (pull/push), only when
+  streaming.enabled.
+- Tests: 7 new files (test_m6_{config,gpu,stream,execute,llm,api,worker}.py,
+  78 tests; real ffmpeg runs incl. stop-kill). **Full suite 530 passed.**
+- Bugs the new tests caught (all fixed): execute.py `_KNOWN_FLAGS` typo
+  (NameError on every run), llm.py `self.timeout` never stored,
+  LLMConfig.port `ge=1` vs default 0 (saved config silently dropped on
+  reload → port now `int | None = None`), rules.py UNSUPPORTED_PATTERNS
+  still flagged "gpu" (MVP-era), `gpu is None` in the no-op check let a
+  bare "use the gpu" return a no-op copy plan (removed — gpu alone
+  clarifies), execute `_watch` marked a self-killed run "error" (now
+  "stopped" via a _STOPPING set).
+- i7 deploy DONE (2026-10-24): rsync → re-sed the compose opt-ins
+  (socket mount + FASS_DOCKER_MANAGE=1 on BOTH services — the repo file
+  keeps them commented as an opt-in) → `docker compose -f
+  docker/compose.yaml up -d --build` on 192.168.0.33. E2E verified:
+  healthz, config tab (docker{manage,worker,version,container}),
+  strata LLM (qwen3.8-27b via 172.17.0.1:8080) → ready h264_nvenc plan,
+  real GPU run on titan.mp4 → success (5.2 MB out), execution validation
+  gate live (hand-rolled argv with `-y`/`-c` → 422 refusing to run).
+- **Apply (container self-recreate) — sidecar architecture, E2E ×2.**
+  Self-swap is impossible: the process answering Apply runs inside the
+  container being stopped (uvicorn graceful-shutdown ↔ stop deadlock →
+  Docker SIGKILL 137). So `fass-worker` (same image, `command: ["worker",
+  "--port", "8001"]`) owns the swap: fass forwards POST /v1/config/apply
+  to the worker's /swap → worker acks immediately (202, background
+  thread) → stop-old → delete → create+start → 60 s running-poll →
+  outcome in /config/last-apply.json → UI polls /v1/config/apply-result.
+  Rollback: on failure the old container is re-created from the spec
+  captured pre-swap (best effort). Without the sidecar: 409, compose
+  preview applied by hand.
+- Bugs found+fixed during this window: (1) `import json` missing in the
+  api.py apply route; (2) `worker` missing from cli.py main() dispatch
+  tuple → worker crashed on i7 with "unrecognized arguments: --port";
+  (3) rsync clobbers i7's sed opt-ins — re-sed after EVERY rsync;
+  (4) socket bind lost after the first Apply — recreate() rebuilt Binds
+  from config only; fixed with `_unmanaged_binds()` (carries over the
+  socket + any user-added mounts; regression test added).
+- Current i7 containers: fass **2f5be4a87f2a** (post-2nd-apply),
+  fass-worker up; both healthy; docker status manage/worker true,
+  engine 29.7.2. Apply result: ports {8000/tcp, 5000/udp}, 4 managed
+  volumes + socket bind, gpu true.
+
+## Prior state (2026-10-23)
 - Pipeline, schema, registry, planner, builder, rules+LLM adapters, CLI,
   probe, feedback: COMPLETE and smoke-verified.
 - API (new): fass/api.py — create_app() + module-level app; POST /v1/commands
@@ -252,23 +323,28 @@ smoke-tested live (healthz, /v1/commands, UI).
   Byte-size targets ("5 MB") remain needs_clarification; bit-rate targets
   ("10 Mbps") are honored.
 
-## Changed files (milestone 1 + 2 + M3a + M3b + M4)
-fass/{__init__,__main__,cli,pipeline,explain,feedback,api}.py,
+## Changed files (milestones 1–2, M3, M4, M5, M6)
+fass/{__init__,__main__,cli,pipeline,explain,feedback,api,ui,config,
+dockerctl,execute}.py,
 fass/schema/plan.py, fass/registry/, fass/probe/ffprobe.py,
 fass/planner/, fass/builder/, fass/nlu/{rules,llm}.py,
 tests/{conftest,test_schema,test_rules,test_planner_builder,
 test_render_adversarial,test_cli,test_api}.py,
 tests/benchmark/{requests.json}, tests/test_benchmark.py,
 tests/test_media.py, tests/test_titan.py, tests/test_bsf.py,
-tests/test_subtitles.py (M5), serve.sh (launch script),
+tests/test_subtitles.py (M5),
+tests/test_m6_{config,gpu,stream,execute,llm,api,worker}.py (M6),
+docker/{Dockerfile,entrypoint.sh,compose.yaml,README.md}, .dockerignore
+(M6), serve.sh (launch script),
 media/titan.mp4, pyproject.toml,
 .gitignore, README.md, docs/DEVELOPMENT.md, ffmpeg-assistant-prd.md,
 HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **452 passed** in ~62 s, no failures
-(2026-10-24, M5: 364 pre-M5 + 86 test_subtitles.py + 2 new benchmark
-entries; bench-063/067 re-expected for the new subtitle capability).
+`./.venv/bin/python -m pytest -q` → **530 passed** in ~67 s, no failures
+(2026-10-24, M6: 452 pre-M6 + 78 test_m6_*.py incl. the worker sidecar
+suite + the `_unmanaged_binds` regression; bench-063/067 re-expected for
+the new subtitle capability since M5).
 364 at M4 (2026-10-23; 265 at M3b: +56 M4 core suite 515d443, +30 M4 NLU
 tests in 43251a0, +13 bsf tests in 645f903). 91 benchmark entries, 28
 API tests.
@@ -281,16 +357,20 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
+**NEXT: commit M6** (no push unless asked) — the working tree holds the
+whole milestone (modified core files + untracked docker/, fass/config.py,
+fass/dockerctl.py, fass/execute.py, fass/ui.py, tests/test_m6_*.py,
+.dockerignore, .resume). After the commit: nothing outstanding.
 Milestones 1+2+3, M4 (core + NLU + audio bsf + docs), and M5
-(subtitles) all done and committed. The 8-component build goal is
-code-complete AND documented for all 8 components (1-3, 7, 8 since M4
-core; 4 now both directions after 645f903; 5+6 since M3b). Both
-delegated jobs (j_893e3a47a6, j_bf063ade65) integrated, accepted, no
-jobs in flight. 452 tests green (2026-10-24, post-M5). **Everything pushed:
-origin/main = d7c895c** (5fe47f1 M5 + d7c895c HANDOFF follow-up;
-working tree clean apart from untracked `.resume`). Both machines now
-launch the server via `serve.sh` (item 3). Nothing outstanding unless
-the user asks.
+(subtitles) all done and committed. M6 (docker deployment: packaging,
+Config tab, streams, GPU/nvenc, LLM config, execution, Apply sidecar)
+done + deployed to i7 + E2E-verified (including Apply twice). The
+8-component build goal is code-complete AND documented. Both delegated
+jobs (j_893e3a47a6, j_bf063ade65) integrated, accepted, no jobs in
+flight. 530 tests green (2026-10-24). **origin/main = d7c895c** (M5 +
+HANDOFF); M6 not yet pushed. Both machines launch the dev server via
+`serve.sh`; i7 additionally runs the docker deployment (compose project
+"docker"). Nothing outstanding unless the user asks.
 
 1. **i7 redeploy DONE (2026-10-23, on request).** The old pre-M4 server
    (PID 660597) had already died — port 8000 was free, nothing to kill.

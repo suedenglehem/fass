@@ -71,12 +71,34 @@ CLI flags, the web API (`POST /v1/commands` + minimal UI), the security
 model, validation levels, tests, and the roadmap live in
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+## Docker deployment
+
+fass packaged with FFmpeg 9.0 + NVIDIA hardware acceleration, in a single
+container (`jrottenberg/ffmpeg:9.0-nvidia2404` base):
+
+```bash
+docker compose -f docker/compose.yaml up -d --build   # → http://<host>:8000
+```
+
+The web UI gets a **Config tab**: host-folder mappings for `/input`,
+`/output`, `/log`, stream port mappings (in: `udp://host:port` binds to
+`0.0.0.0` inside; out: `srt/rtmp://host:port` rewrites to the docker
+gateway), GPU on/off (H.264/H.265 → nvenc), and the LLM provider
+(Anthropic, or any OpenAI-compatible endpoint). Runs start FFmpeg inside
+the container and the results are playable from the UI. The Config tab's
+**Apply** button recreates the container from the saved config via a
+`fass-worker` sidecar (a container cannot recreate itself). Full details:
+[docker/README.md](docker/README.md).
+
 ## Safety
 
 - argv arrays only — model output is schema-validated, the builder emits
   flags from a fixed vocabulary; no shell, no eval
 - the service never executes the commands it generates — a human reviews and
-  runs them
+  runs them. Exception: the docker image is a deployment build that opts in
+  per-environment (`FASS_ALLOW_EXECUTE=1`), and even there only argv-validated
+  commands from the builder's own vocabulary can run (see
+  [docker/README.md](docker/README.md#execution))
 - asset URLs are limited to an allowlist of streaming schemes (`file://`,
   `ftp://`, … are rejected)
 - output never overwrites the input; `-y` is never emitted

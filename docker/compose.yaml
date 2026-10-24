@@ -1,0 +1,64 @@
+# fass deployment (M6). From the repo root:
+#
+#   docker compose -f docker/compose.yaml up -d --build
+#
+# The web UI's Apply button recreates the fass container via the
+# fass-worker sidecar (same image, different command). For it to work:
+#   - the docker socket must be mounted on BOTH services (uncommented
+#     below), with FASS_DOCKER_MANAGE=1
+#   - FASS_DOCKER_WORKER points fass at the sidecar (compose service DNS)
+# The sidecar stops fass, creates+starts the replacement, and records the
+# outcome in /config/last-apply.json (shared volume), which the UI reads.
+# Stream port mappings below must mirror the Config tab's port list.
+
+services:
+  fass:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fass:latest
+    container_name: fass
+    ports:
+      - "8000:8000"
+      # --- stream ports: "host:container/proto", one per Config-tab mapping.
+      # Receive (camera in):  the camera pushes to <this host's IP>:5000
+      #   and the command uses udp://host:5000
+      # Send (pull out):      the command uses srt://host:9000/stream
+      # - "5000:5000/udp"
+      # - "9000:9000/tcp"
+    volumes:
+      - /dd2/andrei/fass/docker-data/input:/input
+      - /dd2/andrei/fass/docker-data/output:/output
+      - /dd2/andrei/fass/docker-data/log:/log
+      - /dd2/andrei/fass/docker-data/config:/config
+      # Config-tab Apply button (container self-management):
+      # - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - FASS_ALLOW_EXECUTE=1
+      - FASS_CONFIG=/config/config.json
+      - FASS_RUN_DIR=/log/runs
+      - FASS_CONTAINER_NAME=fass
+      - FASS_DOCKER_WORKER=fass-worker:8001
+      # - FASS_DOCKER_MANAGE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  fass-worker:
+    # The Apply sidecar: owns the container swap (a container cannot
+    # recreate itself — see docker/README.md). Same image, no GPU.
+    image: fass:latest
+    container_name: fass-worker
+    command: ["worker", "--port", "8001"]
+    volumes:
+      - /dd2/andrei/fass/docker-data/config:/config
+      # - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - FASS_CONTAINER_NAME=fass
+      - FASS_DOCKER_MANAGE=1
+      - FASS_CONFIG=/config/config.json
+    restart: unless-stopped

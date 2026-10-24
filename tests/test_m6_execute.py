@@ -1,0 +1,191 @@
+"""M6 execution: argv validation against the builder's vocabulary,
+volume path resolution, the FASS_ALLOW_EXECUTE gate, and (when ffmpeg is
+on PATH) a real lavfi run with stop/log/list."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import time
+from pathlib import Path
+
+import pytest
+
+from fass import execute
+
+FFMPEG = shutil.which("ffmpeg")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_dirs(tmp_path, monkeypatch):
+    monkeypatch.setenv(execute.INPUT_DIR_ENV, str(tmp_path / "in"))
+    monkeypatch.setenv(execute.OUTPUT_DIR_ENV, str(tmp_path / "out"))
+    monkeypatch.setenv(execute.RUN_DIR_ENV, str(tmp_path / "runs"))
+    for d in ("in", "out", "runs"):
+        (tmp_path / d).mkdir(exist_ok=True)
+    monkeypatch.delenv(execute.ALLOW_EXECUTE_ENV, raising=False)
+    yield
+
+
+def _valid():
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "clip.mp4",
+            "-vf", "scale=-2:480", "-c:v", "libx264", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "out.mp4"]
+
+
+# ------------------------------------------------------------ validation
+
+def test_valid_argv_passes():
+    assert execute.validate_argv(_valid()) == []
+
+
+def test_unknown_flag_rejected():
+    p = execute.validate_argv(
+        ["ffmpeg", "-totally", "bogus", "-i", "a.mp4", "o.mp4"])
+    assert any("unknown flag" in x for x in p)
+
+
+def test_non_final_bare_token_rejected():
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "extra.mp4", "o.mp4"])
+    assert any("bare token" in x for x in p)
+
+
+def test_trailing_flag_without_value_rejected():
+    p = execute.validate_argv(["ffmpeg", "-i", "a.mp4", "-crf"])
+    assert any("no value" in x for x in p)
+
+
+def test_unknown_codec_rejected():
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "not_a_codec", "o.mp4"])
+    assert any("not a known encoder" in x for x in p)
+
+
+def test_nvenc_coders_accepted():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "h264_nvenc", "-rc", "vbr",
+         "-cq", "23", "o.mp4"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "hevc_nvenc", "o.mp4"]) == []
+
+
+def test_bad_bitrate_rejected():
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-b:v", "8000x", "o.mp4"])
+    assert p
+
+
+def test_map_values_checked():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-map", "0:v", "o.mp4"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-map", "0:xyz", "o.mp4"])
+
+
+def test_crf_range_checked():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-crf", "23", "o.mp4"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-crf", "70", "o.mp4"])
+
+
+def test_unknown_format_rejected():
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-f", "not_a_format", "o.mp4"])
+    assert any("not a known FFmpeg format" in x for x in p)
+
+
+def test_non_ffmpeg_binary_rejected():
+    assert execute.validate_argv(["rm", "-rf", "/"])
+
+
+# ------------------------------------------------------------ paths
+
+def test_resolve_paths_uses_volume_mounts():
+    in_dir = Path(os.environ[execute.INPUT_DIR_ENV])
+    out_dir = Path(os.environ[execute.OUTPUT_DIR_ENV])
+    (in_dir / "clip.mp4").write_bytes(b"0")
+    argv, notes = execute.resolve_paths(_valid())
+    assert str(in_dir / "clip.mp4") in argv
+    assert argv[-1] == str(out_dir / "out.mp4")
+    assert any("/input" in n for n in notes)
+
+
+def test_resolve_paths_leaves_streams_and_abs_paths():
+    argv, notes = execute.resolve_paths(
+        ["ffmpeg", "-i", "udp://0.0.0.0:5000", "-c:v", "libx264",
+         "/abs/out.mp4"])
+    assert "udp://0.0.0.0:5000" in argv
+    assert argv[-1] == "/abs/out.mp4"
+    assert notes == []
+
+
+def test_output_file_guard():
+    out_dir = Path(os.environ[execute.OUTPUT_DIR_ENV])
+    (out_dir / "x.mp4").write_bytes(b"0")
+    assert execute.output_file("x.mp4") == out_dir / "x.mp4"
+    assert execute.output_file("missing.mp4") is None
+    assert execute.output_file("../config.json") is None
+    assert execute.output_file("a/b.mp4") is None
+
+
+# ------------------------------------------------------------ gate
+
+def test_execution_disabled_raises_permission():
+    with pytest.raises(PermissionError):
+        execute.start_run(_valid())
+
+
+def test_enabled_but_invalid_argv_raises_value(monkeypatch):
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    with pytest.raises(ValueError):
+        execute.start_run(["rm", "-rf", "/"])
+
+
+# ------------------------------------------------------------ real runs
+
+def _lavfi_argv(duration: str, size: str = "320x240") -> list[str]:
+    out = Path(os.environ[execute.OUTPUT_DIR_ENV])
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi",
+            "-i", f"testsrc=duration={duration}:size={size}:rate=10",
+            "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-f", "mp4", str(out / f"demo{duration}.mp4")]
+
+
+def _wait(run_id: str, timeout: float = 30.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = execute.get_run(run_id)
+        if st["status"] != "running":
+            return st
+        time.sleep(0.2)
+    raise AssertionError(f"run {run_id} still running after {timeout}s")
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_real_lavfi_run(tmp_path, monkeypatch):
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    out = Path(os.environ[execute.OUTPUT_DIR_ENV])
+    run = execute.start_run(_lavfi_argv("1"))
+    assert run.status == "running"
+    st = _wait(run.id)
+    assert st["status"] == "success", st
+    assert st["exit_code"] == 0
+    assert (out / "demo1.mp4").exists()
+    assert any(r["id"] == run.id for r in execute.list_runs())
+    assert isinstance(execute.log_tail(run.id), str)
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_stop_run_kills_process(monkeypatch):
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    # 720p x 300s of content (3000 frames) is a real multi-second encode —
+    # the 320x240 testsrc finishes faster than we can react to it
+    run = execute.start_run(_lavfi_argv("300", size="1280x720"))
+    time.sleep(0.7)
+    assert execute.stop_run(run.id) is True
+    st = _wait(run.id, timeout=15.0)
+    assert st["status"] == "stopped"
+    assert st["exit_code"] is None

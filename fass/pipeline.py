@@ -10,8 +10,10 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from fass.builder import build_argv, render_posix
+from fass.config import load_config
 from fass.explain import summarize
 from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
@@ -108,6 +110,62 @@ def _reconcile_output_destination(
         )
 
 
+def _rewrite_stream_host(url: str, host_address: str, listen: bool) -> str:
+    """Rewrite the stream host placeholder 'host' (M6, docker deployment).
+
+    'host' means "the docker host", and the right address depends on the
+    direction: a udp/rtp *listen* input binds 0.0.0.0 so docker's port
+    forwarding can deliver the datagrams; every other pull or push address
+    becomes the configured host address (the docker bridge gateway by
+    default). URLs with any other hostname pass through untouched."""
+    if stream_scheme(url) is None:
+        return url
+    parts = urlsplit(url)
+    if parts.hostname != "host":
+        return url
+    target = "0.0.0.0" if (listen and parts.scheme in ("udp", "rtp")) else host_address
+    netloc = target if not parts.port else f"{target}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _apply_stream_hosts(assets, output_filename, edit, resp) -> str | None:
+    """Apply the deployment's stream-host rewrite to every stream URL the
+    request carries. No-op unless streaming is enabled in the config."""
+    cfg = load_config()
+    sc = cfg.streaming
+    if not sc.enabled or not sc.host_address:
+        return output_filename
+    ha = sc.host_address
+    for a in assets.values():
+        new = _rewrite_stream_host(a.path, ha, listen=True)
+        if new != a.path:
+            a.path = new
+            if new.startswith("udp://0.0.0.0") or new.startswith("rtp://0.0.0.0"):
+                resp.defaults.append(
+                    f"input stream 'host' binds to {new} (the container listens on "
+                    "all interfaces; forward the host port in the config's port mappings)"
+                )
+            else:
+                resp.defaults.append(
+                    f"input stream 'host' resolved to {new} (the configured docker host address)"
+                )
+    if output_filename:
+        new = _rewrite_stream_host(output_filename, ha, listen=False)
+        if new != output_filename:
+            resp.defaults.append(
+                f"output stream 'host' resolved to {new} (the configured docker host address)"
+            )
+            output_filename = new
+    if edit.output_destination:
+        new = _rewrite_stream_host(edit.output_destination, ha, listen=False)
+        if new != edit.output_destination:
+            edit.output_destination = new
+            resp.defaults.append(
+                f"output stream 'host' resolved to {new} (the configured docker host address)"
+            )
+    return output_filename
+
+
 def generate(
     instruction: str,
     assets: AssetMap,
@@ -141,6 +199,10 @@ def generate(
         resp.status = result.status.value
         return resp
     edit = result.plan
+
+    # Stream-host rewrite (M6): the docker deployment's 'host' placeholder
+    # becomes the configured docker host address / 0.0.0.0 bind.
+    output_filename = _apply_stream_hosts(assets, output_filename, edit, resp)
 
     # Optional local inspection (plan0.md section 2): only for files that
     # exist on this machine — the MVP never uploads media.
@@ -181,7 +243,13 @@ def generate(
     if (preflight_check or media is not None) and ffmpeg_available():
         ff = probe_ffmpeg()
         if ff is not None:
-            encoders = [REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]]
+            if edit.output.gpu:
+                # GPU plan (M6): the nvenc coder (the planner already
+                # rejected codecs without a GPU form)
+                enc = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
+            else:
+                enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
+            encoders = [enc]
             if edit.output.audio_mode.value == "encode":
                 encoders.append(REGISTRY["audio_codecs"][REGISTRY["matrix"][edit.output.container]["audio_codec"]]["encoder"])
             for op in edit.operations:

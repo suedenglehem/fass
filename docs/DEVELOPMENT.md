@@ -80,14 +80,22 @@ endpoints the UI uses:
 | `GET /v1/support` | what the MVP understands + registry version |
 | `GET /v1/env` | local FFmpeg build capability report (same as `fass env`) |
 | `GET /healthz` | liveness |
+| `POST /v1/runs` | `{arguments}` → start a generated command in a process group (only when execution is enabled — see Security model); `409` otherwise |
+| `GET /v1/runs` · `GET /v1/runs/{id}` | run list / one run: status, exit code, log tail, output file (playable from `/output`) |
+| `POST /v1/runs/{id}/stop` | SIGTERM the run's exact process group (SIGKILL after 5 s) |
+| `GET` / `PUT /v1/config` | deployment config (volumes, streaming ports, GPU, LLM) as a raw `FassConfig`; `PUT` persists and the next request uses it — no restart |
+| `POST /v1/config/llm-test` | one-word probe through the real LLM request path |
+| `POST /v1/config/apply` | forward to the `fass-worker` sidecar's `/swap` — recreates the fass container from the saved config |
+| `GET /v1/config/apply-result` | the sidecar's `last-apply.json` (applied / failed + what changed) |
 
 Contract notes: every **domain** outcome (`ready` / `needs_clarification` /
 `unsupported` / `error`) is a structured **200**; **422** is reserved for
 malformed requests (missing `main` asset, non-POSIX `target_shell` — other
 shells are deferred, never rendered best-effort — unknown fields, asset
 URLs with a non-allowlisted scheme). The service never executes generated
-commands (PRD §10) and has no media upload endpoints: assets are local paths
-or allowlisted stream URLs the client binds.
+commands by default (PRD §10); the docker image is the one place that opts
+in, and only validated argv runs there. There are no media upload endpoints:
+assets are local paths or allowlisted stream URLs the client binds.
 
 ## What the MVP understands
 
@@ -221,6 +229,15 @@ validated" never claims "tested against this build".
   destination is then disclosed in the response.
 - Feedback stores the instruction text **only** with a separate `--consent`
   flag.
+- Execution is **off unless `FASS_ALLOW_EXECUTE` is set** (the docker
+  deployment image sets it — an explicit per-deployment choice). Even there,
+  a run request must be an argv array (`shell=False`), and every token is
+  validated against the builder's own flag vocabulary — flags from the
+  registry only, codec/format/pix-fmt/preset values from the registry,
+  pattern-checked numbers and filter graphs — before any process spawns.
+  Runs are process groups; Stop kills the exact group. Records + logs live
+  in the run directory and a run left `running` by a crash is marked
+  `interrupted` on next read.
 
 ## Layout
 
@@ -234,8 +251,14 @@ fass/
   builder/           argv construction + POSIX renderer
   probe/ffprobe.py   local ffprobe/ffmpeg capability probing
   pipeline.py        generate(): the whole flow + GenerationResponse
-  api.py             FastAPI layer + minimal UI (PRD §9 contract)
-  cli.py             CLI + subcommands
+  api.py             FastAPI layer (PRD §9 contract) + runs/config endpoints
+  ui.py              the web UI (form, runs tab, Config tab)
+  config.py          FassConfig (volumes/streaming/GPU/LLM) load/save
+  dockerctl.py       Docker Engine control + fass-worker sidecar app
+  execute.py         argv-validated run records (the FASS_ALLOW_EXECUTE path)
+  cli.py             CLI + subcommands (probe, env, serve, worker, feedback)
+docker/
+  Dockerfile, entrypoint.sh, compose.yaml, README.md
 tests/
   test_schema.py, test_rules.py, test_planner_builder.py,
   test_render_adversarial.py (hostile filenames + injection payloads),
@@ -280,7 +303,11 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] subtitles (burn + soft track) — `SubtitleOp`, libass `subtitles=` /
   `ass=` burn-in, `-c:s mov_text` / `srt` soft mux with stream-copy support
   (registry `subtitles`)
+- [x] docker deployment — FFmpeg 9.0 + nvenc image, Config tab (volumes,
+  stream ports, GPU, LLM), in-container execution (argv-validated,
+  `FASS_ALLOW_EXECUTE`-gated) with run records, and the `fass-worker`
+  sidecar that recreates the container on Apply
 - [ ] deferred (PRD §5): concatenation, transitions, audio
-  mixing, HDR, hardware acceleration, batch processing
+  mixing, HDR, batch processing
 
 Spec: `ffmpeg-assistant-prd.md` · Implementation guide: `plan0.md`

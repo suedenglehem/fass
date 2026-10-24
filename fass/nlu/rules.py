@@ -461,6 +461,22 @@ def _detect_preset(t: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------- gpu
+
+_GPU_ON = re.compile(r"\bgpu\b|\bnvenc\b|\bnvidia\b|\bhardware\s+accelerat\w*", re.I)
+_GPU_OFF = re.compile(r"\bno\s+gpu\b|without\s+gpu\b|\bon\s+cpu\b|\bcpu\s+encod\w*\b|\bno\s+nvidia\b", re.I)
+
+
+def _detect_gpu(t: str) -> bool | None:
+    """'use the gpu' / 'nvenc' / 'nvidia' -> True; 'no gpu' / 'on cpu' ->
+    False; nothing said -> None (the plan keeps its current value)."""
+    if _GPU_OFF.search(t):
+        return False
+    if _GPU_ON.search(t):
+        return True
+    return None
+
+
 # ---------------------------------------------------------------- codecs / containers
 
 def _detect_codec(t: str) -> str | None:
@@ -690,7 +706,9 @@ UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bsharpen\w*\b|\bdenois\w*\b|\bstabil(?:is|iz)\w*\b", re.I), "stabilization, sharpening, denoising"),
     (re.compile(r"add\s+(?:some\s+|the\s+|a\s+)?text\b|\btext\s+overlay\b|\btitle\s+card\b|\btimestamp\b", re.I), "text overlays"),
     (re.compile(r"\bhdr\b|\btone[\s-]?map\w*\b", re.I), "HDR workflows"),
-    (re.compile(r"\bgpu\b|\bnvenc\b|\bcuda\b|\bvideotoolbox\b|\bqsv\b|\bhardware\s+accelerat\w*", re.I), "hardware acceleration"),
+    # gpu/nvenc/hardware acceleration are supported (M6, NVIDIA nvenc);
+    # the other hardware-encoding stacks stay out
+    (re.compile(r"\bcuda\b|\bvideotoolbox\b|\bqsv\b", re.I), "CUDA / VideoToolbox / QSV hardware acceleration"),
     (re.compile(r"\bextract\s+(?:the\s+)?audio\b", re.I), "extracting audio to a separate file"),
 ]
 
@@ -822,6 +840,7 @@ class RulesAdapter:
         pixel_format = _detect_pixel_format(t)
         video_profile = _detect_profile(t)
         video_preset = _detect_preset(t)
+        gpu = _detect_gpu(t)
         audio = _detect_audio(t)
         watermark, wm_clar, wm_note = _detect_watermark(t, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
@@ -919,7 +938,7 @@ class RulesAdapter:
             plan, changed = _merge_revision(
                 previous_plan, t, trim, resize, audio, watermark, grayscale,
                 audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
-                audio_resample=audio_resample, subtitle=subtitle,
+                audio_resample=audio_resample, subtitle=subtitle, gpu=gpu,
             )
             if not changed:
                 return ParseResult(
@@ -970,6 +989,8 @@ class RulesAdapter:
             notes.append(sub_note)
 
         # 6. resolve output defaults — visible, never hidden
+        # (gpu alone is not an edit — it only matters when an encode
+        # happens, so it is deliberately NOT part of the no-op check below)
         if previous_plan is None:
             if trim is None and resize is None and crop is None and speed is None \
                     and rotate is None and audio_resample is None and watermark is None \
@@ -1016,6 +1037,9 @@ class RulesAdapter:
                 notes.append(
                     f"targeting a {bitrate_kbps / 1000:g} Mbps video bitrate (CBR-style target)"
                 )
+            if gpu:
+                plan.output.gpu = True
+                notes.append("encoding on GPU (NVIDIA nvenc)")
         else:
             # revision: keep previously resolved container/codec unless the
             # instruction changed them (already applied in _merge_revision)
@@ -1037,12 +1061,15 @@ class RulesAdapter:
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
-                    audio_resample=None, subtitle=None):
+                    audio_resample=None, subtitle=None, gpu=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
     changed: list[str] = []
 
+    if gpu is not None and plan.output.gpu != gpu:
+        plan.output.gpu = gpu
+        changed.append("gpu -> on (nvenc)" if gpu else "gpu -> off (cpu)")
     codec = _detect_codec(t)
     if codec and plan.output.video_codec != codec:
         plan.output.video_codec = codec

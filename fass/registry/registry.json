@@ -1,5 +1,5 @@
 {
-  "registry_version": "1.6.0",
+  "registry_version": "1.7.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1",
@@ -37,6 +37,20 @@
       "preset": { "crf": 32, "bitrate": "0" },
       "requires": "libvpx — built into FFmpeg",
       "note": "The standard WebM video codec."
+    }
+  },
+  "gpu": {
+    "description": "NVIDIA GPU encoding (M6). When plan.output.gpu is true the video encoder switches to the nvenc coder for the requested codec: h264 -> h264_nvenc, h265 -> hevc_nvenc. VP9 has no nvenc coder and is rejected. Audio is always CPU-encoded (aac/opus) — nvenc carries video only. The deployment must expose a GPU (docker --gpus / compose device reservation; see the gpu block of the deployment config).",
+    "coders": {
+      "h264": { "encoder": "h264_nvenc", "profiles": ["main", "high"] },
+      "h265": { "encoder": "hevc_nvenc", "profiles": ["main", "high"] }
+    },
+    "constraints": {
+      "vp9": "VP9 encoding is CPU-only (libvpx-vp9) — GPU is not available for it",
+      "video_preset": "x264 speed presets (ultrafast..veryslow) are x264-specific and do not apply to nvenc",
+      "video_profile": "nvenc supports the 'main' and 'high' profiles only; 'baseline' has no nvenc form",
+      "bitrate": "a target video bitrate works unchanged: -b:v/-maxrate (nvenc's CBR-style target)",
+      "pixel_format": "yuv420p and yuv420p10le are supported by both nvenc coders"
     }
   },
   "audio_codecs": {
@@ -193,7 +207,7 @@
     "hue_filter": "https://ffmpeg.org/ffmpeg-filters.html#hue_2",
     "overlay_filter": "https://ffmpeg.org/ffmpeg-filters.html#overlay_2",
     "pad_filter": "https://ffmpeg.org/ffmpeg-filters.html#pad",
-    "encoders": "https://ffmpeg.org/ffmpeg-all.html (libx264, libhevc, libvpx-vp9, aac, libopus)",
+    "encoders": "https://ffmpeg.org/ffmpeg-all.html (libx264, libhevc, libvpx-vp9, aac, libopus, h264_nvenc, hevc_nvenc)",
     "formats": "https://ffmpeg.org/ffmpeg-formats.html (mp4, mov, matroska, webm)",
     "scaler": "https://ffmpeg.org/ffmpeg-scaler.html (pixel-format conversion, -pix_fmt)",
     "resampler": "https://ffmpeg.org/ffmpeg-resampler.html (-ar, -ac)",
