@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-25, M8 IN PROGRESS — codec options)
+## Current state (2026-10-25, M8 COMPLETE — codec options)
 **M8 — per-encoder private codec options, core DONE, uncommitted.** Trigger:
 user: "add all options of encoders / decoders: NVENC, QSV, ProRes, dvbsub,
 png, libx265, libvvenc, libfdk_aac, flac, opus, ac3, rawvideo" (link to
@@ -56,14 +56,31 @@ ffmpeg-codecs.html#Codec-Options).
   dual-build driver on a 10s titan clip: generation (status + exact argv
   tokens) + real execution. Local 6.1.1: **10/10** (QSV executes clean
   here — host has the device; fdk_aac skipped with the preflight warning).
-  Docker 9.0.1 mode: not yet run (needs the i7 container on M8).
+  Docker 9.0.1 (i7): **10/10** (fdk_aac EXECUTED there — 9.0.1 has
+  libfdk_aac; QSV cases SKIP, no QSV device in the container — expected).
 - **Known accepted gaps:** 'rc cbr 10000k' space form not parsed
   (key=value works); vvenc/png/rv60 are reference-only tables (not
   selectable matrix codecs); libvvenc absent from both builds.
 
-Next unfinished task: commit M8 core (Co-Authored-By), then dispatch
-verification (i7: rsync + docker rebuild + `scripts/m8_battery.sh docker`
-+ live API; tr4-secondary: local battery) + i7 redeploy.
+M8 core committed as **133a189**. Dual-build verification (2026-10-25)
+**COMPLETE — both jobs succeeded, VERIFIED**:
+- **j_69d3f78ec0 (i7, docker 9.0.1) = VERIFIED.** rsync local→i7 (exit 0,
+  fass/tests/scripts md5 46fe02a485f4afaa5113fccc5e35d7f0 both sides);
+  compose docker-mgmt lines uncommented; `launcher.sh rebuild` exit 0,
+  containers Up; healthz ok; battery **10/10 (docker)** — fdk_vbr4
+  EXECUTED (9.0.1 has libfdk_aac), QSV cases SKIP (no device in container);
+  /v1/support = exactly 16 codec_options encoders; /v1/env 9.0.1 +
+  libfdk_aac present. i7 is now running M8 (independently re-checked live).
+- **j_c7320e8dfe (tr4-secondary, local 6.1.1) = VERIFIED.** battery
+  **10/10 (local)** — 9× PASS (QSV executes, host has device) + fdk SKIP
+  (no encoder, preflight warning); full suite **627 passed** in its
+  worktree.
+No integration needed: both jobs verification-only (commit null, no
+changed files, worktrees pristine). Pre-rsync i7 reconciliation (kept for
+the record): its M2-era .git commits ccc7066/8d00a22 were verified
+functionally already ported locally (cli.py:212, ui.py:272); its tree =
+local M7 exactly; backup incl. .git at
+i7:/dd2/andrei/fass-backup-pre-m8-20261025.tar.gz.
 
 ## Prior state (2026-10-24, M7 IN PROGRESS — capability expansion)
 **M7 — broad FFmpeg capability expansion, half done.** Trigger: user report
@@ -661,15 +678,12 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
-**M8 (2026-10-25) — in flight.** Core complete: 627 tests green, local
-battery 10/10. Next: (1) commit M8 core + battery (Co-Authored-By; no
-push unless asked); (2) dispatch verification per standing directive
-"delegate to dispatcher's backends / use i7 first": i7 job = rsync +
-compose sed (docker.sock + FASS_DOCKER_MANAGE) + `./docker/launcher.sh
-rebuild` + `scripts/m8_battery.sh docker` + live API checks on 9.0.1;
-tr4-secondary job = local battery on the new base commit (bootstrap
-.venv in its worktree); (3) i7 redeploy of the python serve path if the
-user wants the live site on M8. Don't touch the 7 blocked jobs.
+**M8 COMPLETE + DUAL-BUILD VERIFIED (2026-10-25).** Committed 133a189.
+j_69d3f78ec0 (i7/9.0.1) and j_c7320e8dfe (tr4-secondary/6.1.1) both
+succeeded, all acceptance criteria met, neither committed anything → no
+dispatch_integrate. i7 redeployed to M8 and live-verified (16
+codec_options tables, fdk executed). Remaining: nothing for M8 — main is
+8 commits ahead of origin/main, no push unless asked.
 
 **M7 VERIFICATION COMPLETE (2026-10-24)** — NLU rewrite committed
 (4c0a0ed), worker job **j_41200a56f4** INTEGRATED (merge 43b1182,
