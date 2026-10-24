@@ -33,6 +33,8 @@ from pathlib import Path
 from fass.registry import (
     REGISTRY,
     all_muxers,
+    codec_option_errors,
+    codec_option_specs,
     container_from_extension,
     filtergraph_problems,
     format_option_errors,
@@ -59,6 +61,17 @@ _FORMAT_OPTION_KEYS = {
     for key in opts
 }
 
+# Every '-<key> value' private codec option the registry lets an encoder
+# carry (M8: crf, x264-params, dialnorm, …). A flag that is not in the
+# builder's generic vocabulary is accepted only when it is a documented
+# option of the plan's resolved video/audio encoder.
+_CODEC_OPTION_KEYS = {
+    key
+    for enc, opts in REGISTRY["codec_options"].items()
+    if enc != "description" and isinstance(opts, dict)
+    for key in opts
+}
+
 _BOOL_FLAGS = {"-hide_banner", "-an", "-shortest"}
 _VALUE_FLAGS = {
     "-loglevel", "-ss", "-t", "-i", "-f",
@@ -75,6 +88,7 @@ _CODECS = (
     {spec["encoder"] for spec in REGISTRY["video_codecs"].values()}
     | {spec["encoder"] for spec in REGISTRY["audio_codecs"].values()}
     | {c for coder in REGISTRY["gpu"]["coders"].values() for c in (coder["encoder"],)}
+    | {c for coder in REGISTRY["qsv"]["coders"].values() for c in (coder["encoder"],)}
     | set(REGISTRY["subtitles"]["soft_codecs"].values())
     | {"pcm_s16le", "copy"}
 )
@@ -123,6 +137,33 @@ def _output_container(argv: list[str]) -> str | None:
     return container_from_extension(name.rsplit(".", 1)[-1])
 
 
+def _codec_option_encoder(key: str, video: str | None,
+                          audio: str | None) -> str | None:
+    """The encoder that owns a private codec option: the resolved -c:v
+    encoder when it documents the key, else the -c:a encoder. Video wins
+    for keys both tables share (a bare 'preset' targets the video
+    encoder). None when neither resolved encoder knows the option."""
+    if key not in _CODEC_OPTION_KEYS:
+        return None
+    for enc in (video, audio):
+        if enc and key in codec_option_specs(enc):
+            return enc
+    return None
+
+
+def _codec_option_value(flag: str, value: str, prefix: str,
+                        video: str | None,
+                        audio: str | None) -> list[str] | None:
+    """Registry-kind validation for a flag that overlaps the private
+    codec-option vocabulary (-crf, -preset, -rc, …). None when the
+    resolved encoder doesn't document the option — the caller falls back
+    to its generic check."""
+    enc = _codec_option_encoder(flag[1:], video, audio)
+    if enc is None:
+        return None
+    return [f"{prefix}: {msg}" for msg in codec_option_errors(enc, {flag[1:]: value})]
+
+
 def validate_argv(argv: list[str]) -> list[str]:
     """Return a list of problems (empty = valid)."""
     problems: list[str] = []
@@ -130,10 +171,18 @@ def validate_argv(argv: list[str]) -> list[str]:
         return ["argv must start with 'ffmpeg'"]
     container = _output_container(argv)
     expect_value: str | None = None
+    video_encoder: str | None = None
+    audio_encoder: str | None = None
     positionals = 0
     for i, tok in enumerate(argv[1:], start=1):
         if expect_value is not None:
-            problems.extend(_check_value(expect_value, tok, i, container))
+            if expect_value == "-c:v":
+                video_encoder = tok
+            elif expect_value == "-c:a":
+                audio_encoder = tok
+            problems.extend(
+                _check_value(expect_value, tok, i, container,
+                             video_encoder, audio_encoder))
             expect_value = None
             continue
         if tok in _BOOL_FLAGS:
@@ -146,7 +195,14 @@ def validate_argv(argv: list[str]) -> list[str]:
         if tok in KNOWN_FLAGS:
             continue
         if tok.startswith("-"):
-            problems.append(f"unknown flag '{tok}' (not in the builder's vocabulary)")
+            if _codec_option_encoder(tok[1:], video_encoder, audio_encoder):
+                # a private codec option of the resolved encoder
+                # (-x264-params, -dialnorm, …) — value flag
+                expect_value = tok
+                if i == len(argv) - 1:
+                    problems.append(f"flag '{tok}' at the end has no value")
+            else:
+                problems.append(f"unknown flag '{tok}' (not in the builder's vocabulary)")
             continue
         # positional: inputs are always consumed after -i; the only free
         # positional is the single final output path
@@ -168,7 +224,9 @@ def validate_argv(argv: list[str]) -> list[str]:
 
 
 def _check_value(flag: str, value: str, index: int,
-                 container: str | None = None) -> list[str]:
+                 container: str | None = None,
+                 video: str | None = None,
+                 audio: str | None = None) -> list[str]:
     p = f"value for '{flag}'"
     if not _PATH_RE.match(value):
         return [f"{p} contains control characters"]
@@ -197,6 +255,9 @@ def _check_value(flag: str, value: str, index: int,
             return [f"{p} '{value}' is not a supported pixel format"]
         return []
     if flag == "-preset":
+        issues = _codec_option_value(flag, value, p, video, audio)
+        if issues is not None:
+            return issues
         if value not in _PRESETS:
             return [f"{p} '{value}' is not a supported x264 preset"]
         return []
@@ -205,10 +266,16 @@ def _check_value(flag: str, value: str, index: int,
             return [f"{p} '{value}' is not a supported profile"]
         return []
     if flag in ("-crf", "-cq"):
+        issues = _codec_option_value(flag, value, p, video, audio)
+        if issues is not None:
+            return issues
         if not re.match(r"^\d{1,2}$", value) or int(value) > 69:
             return [f"{p} must be an integer 0-69"]
         return []
     if flag == "-rc":
+        issues = _codec_option_value(flag, value, p, video, audio)
+        if issues is not None:
+            return issues
         if value not in ("cbr", "vbr", "constqp", "lossless"):
             return [f"{p} '{value}' is not a known rate-control mode"]
         return []
@@ -241,6 +308,11 @@ def _check_value(flag: str, value: str, index: int,
             return []
         return [f"{p}: {msg}"
                 for msg in format_option_errors(container, {key: value})]
+    owner = _codec_option_encoder(key, video, audio)
+    if owner is not None:
+        # '-<key> value' private codec option (x264-params, dialnorm, …):
+        # validated per its registry kind against the resolved encoder
+        return [f"{p}: {msg}" for msg in codec_option_errors(owner, {key: value})]
     return []
 
 

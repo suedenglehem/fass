@@ -26,6 +26,7 @@ from fass.registry import (
     output_device_for,
     output_device_parts,
     output_schemes,
+    qsv_coder,
     soft_subtitle_codec,
     source_spec_parts,
     stream_output_info,
@@ -332,6 +333,12 @@ def _matrix_flags(container: str, format_options: dict[str, str]) -> list[str]:
     return out
 
 
+def _codec_option_tokens(options: dict[str, str]) -> list[str]:
+    """'-<key> <value>' argv tokens for a codec-options dict (M8), sorted
+    by key so the argv is deterministic."""
+    return [tok for k, v in sorted(options.items()) for tok in (f"-{k}", str(v))]
+
+
 def plan_execution(
     edit: EditPlan,
     assets: dict,
@@ -380,6 +387,28 @@ def plan_execution(
                     f"GPU {out.video_codec.upper()} supports the "
                     f"{' and '.join(coder['profiles'])} profiles — "
                     f"'{out.video_profile}' has no GPU form"
+                )
+    if out.qsv:
+        coder = qsv_coder(out.video_codec)
+        if coder is None:
+            errors.append(
+                f"QSV encoding is not available for {out.video_codec.upper()} — "
+                "it is CPU-only; use H.264 or H.265 with QSV"
+            )
+        else:
+            if out.video_preset is not None:
+                errors.append(
+                    f"the x264 speed preset '{out.video_preset}' does not apply "
+                    f"to QSV encoding ({coder['encoder']}) — drop the preset "
+                    "(QSV has its own 'preset' codec option: 0-7, "
+                    "veryfast..veryslow)"
+                )
+            if out.video_profile is not None \
+                    and out.video_profile not in coder["profiles"]:
+                errors.append(
+                    f"QSV {out.video_codec.upper()} supports the "
+                    f"{' and '.join(coder['profiles'])} profiles — "
+                    f"'{out.video_profile}' has no QSV form"
                 )
     resample = edit.ops_of("audio_resample")
     if resample and not audio_survives:
@@ -645,7 +674,8 @@ def plan_execution(
         # re-encode (stream copy cannot honor a bitrate the input lacks);
         # any operation (atempo/resample/filter/replace) needs decoding.
         needs_reencode = (has_trim or bool(forced_ops)
-                          or out.audio_bitrate_kbps is not None)
+                          or out.audio_bitrate_kbps is not None
+                          or bool(out.audio_codec_options))
         if not needs_reencode:
             if metadata and metadata.audio_codec == out.audio_codec:
                 mode = "copy"
@@ -677,9 +707,19 @@ def plan_execution(
         # an encoded master and rejects stream-copied h264) re-encodes too.
         force_reencode = bool(
             REGISTRY["containers"].get(out.container, {}).get("reencode"))
+        # Encoder-specific parameters cannot be honored by a stream copy:
+        # codec options, profile/preset and pixel format each name an
+        # encoder setting a remuxed stream would silently ignore (M8).
+        encoder_params = (bool(edit.output.video_codec_options)
+                          or (bool(edit.output.audio_codec_options)
+                              and edit.output.audio_mode == AudioMode.ENCODE)
+                          or edit.output.video_profile is not None
+                          or edit.output.video_preset is not None
+                          or edit.output.pixel_format is not None)
         needs_reencode = (has_trim or bool(forced_ops)
                           or bool(edit.filtergraph)
                           or edit.output.video_bitrate_kbps is not None
+                          or encoder_params
                           or force_reencode)
         if force_reencode and not (has_trim or bool(forced_ops)
                                    or bool(edit.filtergraph)
@@ -727,6 +767,11 @@ def plan_execution(
         warnings.append(
             "the GPU was requested, but this output is a stream copy "
             "(no re-encode) — the GPU will not be used"
+        )
+    if edit.output.qsv and mode == "copy":
+        warnings.append(
+            "Quick Sync (QSV) was requested, but this output is a stream copy "
+            "(no re-encode) — QSV will not be used"
         )
     if device is not None:
         ep = _build_device_plan(edit, in_path, out_path, device, ar_path, defaults)
@@ -925,6 +970,7 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         opts += ["-t", fmt_num(dur)]
 
     vc = REGISTRY["video_codecs"][edit.output.video_codec]
+    vco = edit.output.video_codec_options
     if edit.output.gpu:
         # GPU encoding (M6): the nvenc coder for the requested codec
         # (validated above — VP9 and the x264-only options are rejected).
@@ -932,9 +978,23 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         defaults.append(
             f"GPU encoding: {edit.output.video_codec} via {v_encoder} (NVIDIA)"
         )
+    elif edit.output.qsv:
+        # QSV encoding (M8): the Quick Sync coder (validated above).
+        v_encoder = REGISTRY["qsv"]["coders"][edit.output.video_codec]["encoder"]
+        defaults.append(
+            f"QSV encoding: {edit.output.video_codec} via {v_encoder} (Intel Quick Sync)"
+        )
     else:
         v_encoder = vc["encoder"]
     opts += ["-c:v", v_encoder]
+    # Per-encoder private codec options (M8): -<key> <value> right after -c:v
+    # (registry codec_options table; validated in the plan schema).
+    if vco:
+        opts += _codec_option_tokens(vco)
+        defaults.append(
+            f"video codec options for {v_encoder}: "
+            + ", ".join(f"-{k} {v}" for k, v in sorted(vco.items()))
+        )
     kbps = edit.output.video_bitrate_kbps
     if kbps is not None:
         # CBR-style target overrides the quality preset (registry bitrate_policy):
@@ -947,17 +1007,41 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
             details += f", -bufsize {2 * kbps}k"
         defaults.append(f"target video bitrate {kbps} kbps (CBR-style: {details})")
     elif edit.output.gpu:
-        # nvenc quality control: -rc vbr -cq N is the GPU form of CRF N
+        # nvenc quality control: -rc vbr -cq N is the GPU form of CRF N.
+        # User rate-control codec options (cq/rc) win: the registry default
+        # is suppressed and noted.
         crf = vc.get("preset", {}).get("crf")
-        if crf is not None:
+        user_rc = any(k in vco for k in ("cq", "rc"))
+        if crf is not None and not user_rc:
             opts += ["-rc", "vbr", "-cq", str(crf)]
             defaults.append(
                 f"GPU constant-quality mode: -rc vbr -cq {crf} (the nvenc form of CRF {crf})"
             )
+        elif user_rc:
+            defaults.append(
+                "GPU rate control from the codec options (cq/rc) — the "
+                f"registry default -rc vbr -cq {crf} is not emitted"
+            )
+    elif edit.output.qsv:
+        # QSV has no CRF/CQ-style quality option in its private table;
+        # without a target bitrate the encoder falls back to a built-in
+        # default far below fass's quality targets, so a 5 Mbps CBR-style
+        # target is applied and noted.
+        opts += ["-b:v", "5000k", "-maxrate", "5000k"]
+        defaults.append(
+            "QSV default target bitrate 5000k (CBR-style: -b:v/-maxrate) — "
+            "no target bitrate was given and QSV has no CRF-style knob"
+        )
     else:
         preset = vc.get("preset", {})
         if "crf" in preset:
-            opts += ["-crf", str(preset["crf"])]
+            if "crf" in vco:
+                defaults.append(
+                    "constant quality from the crf codec option — the "
+                    f"registry default CRF {preset['crf']} is not emitted"
+                )
+            else:
+                opts += ["-crf", str(preset["crf"])]
         if "bitrate" in preset:
             opts += ["-b:v", preset["bitrate"]]
     if edit.output.video_profile is not None:
@@ -969,10 +1053,11 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     # MXF (master wrapper): ffmpeg 9.x's mxf muxer index table requires
     # frame offsets within ±127, so the container caps the GOP below that —
     # x264's default of 250 fails at the trailer on newer builds (6.1.1
-    # tolerated it). Only h264 is capped: mpeg2's default GOP is already
-    # small and prores takes no GOP option.
+    # tolerated it). Only CPU h264 is capped: mpeg2's default GOP is already
+    # small, prores takes no GOP option, and nvenc/QSV default GOPs are
+    # already under 127.
     gop_cap = REGISTRY["containers"].get(edit.output.container, {}).get("gop")
-    if gop_cap is not None and not edit.output.gpu \
+    if gop_cap is not None and not edit.output.gpu and not edit.output.qsv \
             and edit.output.video_codec == "h264":
         opts += ["-g", str(gop_cap)]
         defaults.append(
@@ -995,6 +1080,13 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         # video and the replacement audio ends.
         ac = REGISTRY["audio_codecs"][audio_for(edit.output.container)]
         opts += ["-c:a", ac["encoder"]]
+        if edit.output.audio_codec_options:
+            opts += _codec_option_tokens(edit.output.audio_codec_options)
+            defaults.append(
+                f"audio codec options for {ac['encoder']}: "
+                + ", ".join(f"-{k} {v}" for k, v in
+                            sorted(edit.output.audio_codec_options.items()))
+            )
         if ac.get("bitrate_kbps") is not None:
             opts += ["-b:a", f"{ac['bitrate_kbps']}k"]
         opts.append("-shortest")
@@ -1011,6 +1103,13 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         acodec = edit.output.audio_codec or audio_for(edit.output.container)
         ac = REGISTRY["audio_codecs"][acodec]
         opts += ["-c:a", ac["encoder"]]
+        if edit.output.audio_codec_options:
+            opts += _codec_option_tokens(edit.output.audio_codec_options)
+            defaults.append(
+                f"audio codec options for {ac['encoder']}: "
+                + ", ".join(f"-{k} {v}" for k, v in
+                            sorted(edit.output.audio_codec_options.items()))
+            )
         kbps = edit.output.audio_bitrate_kbps or ac.get("bitrate_kbps")
         if kbps is not None:
             opts += ["-b:a", f"{kbps}k"]
@@ -1099,6 +1198,13 @@ def _build_audio_plan(edit: EditPlan, in_path: str, out_path: str,
     else:
         ac = REGISTRY["audio_codecs"][edit.output.audio_codec]
         opts += ["-c:a", ac["encoder"]]
+        if edit.output.audio_codec_options:
+            opts += _codec_option_tokens(edit.output.audio_codec_options)
+            defaults.append(
+                f"audio codec options for {ac['encoder']}: "
+                + ", ".join(f"-{k} {v}" for k, v in
+                            sorted(edit.output.audio_codec_options.items()))
+            )
         kbps = edit.output.audio_bitrate_kbps or ac.get("bitrate_kbps")
         if kbps is not None:
             opts += ["-b:a", f"{kbps}k"]

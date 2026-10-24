@@ -79,7 +79,11 @@ allowlist below). Output extras (set on "output", only when the user asks):
 "pixel_format" ("yuv420p", "yuv420p10le", "yuv444p" — yuv444p is VP9-only),
 "video_profile" ("baseline"|"main"|"high" — H.264; on the GPU only "main"/"high")
 and "video_preset" ("ultrafast" through "veryslow" — H.264 CPU only),
-"gpu" (bool, default false). Output containers: {containers}. Video codecs: {codecs}.
+"gpu" (bool, default false) and "qsv" (bool, default false — Intel Quick Sync;
+mutually exclusive with "gpu"), plus per-encoder private options
+"video_codec_options" / "audio_codec_options" (each {{"<key>": "<value>"}} —
+only when the user names one, e.g. crf, preset, dialnorm). Output containers:
+{containers}. Video codecs: {codecs}.
 Codec/container matrix (anything else is unsupported): {matrix}
 Output modes ("output.mode"): "video" (default — video + audio), "audio"
 (audio track only — set an audio container (mp3, mp2, m4a, aac, ogg, flac,
@@ -99,6 +103,15 @@ comma-joined; never invent a key or a value outside the table.
 GPU encoding (M6): set "gpu": true on "output" when the user asks to encode on the
 GPU / with nvenc / with an NVIDIA card. The GPU covers h264 (h264_nvenc) and h265
 (hevc_nvenc) only — VP9 is CPU-only, and x264 speed presets do not apply on the GPU.
+QSV encoding (M8): set "qsv": true when the user asks for Quick Sync / Intel
+hardware encoding — h264 -> h264_qsv, h265 -> hevc_qsv. "gpu" and "qsv" are
+mutually exclusive, and the x264 speed preset field does not apply on QSV
+(QSV has its own "preset" codec option, 0-7 or veryfast..veryslow).
+Codec options (M8): when the user names an encoder-private option ("crf 18",
+"preset 4", "dialnorm -27", "x264-params keyint=24"), set it in
+"video_codec_options" (video encoder) or "audio_codec_options" (audio encoder)
+as {{"<key>": "<value>"}}. Only keys the encoder documents are valid — when
+uncertain about a key or a value, return "unsupported" naming the fragment.
 Target bitrate: an explicit video bitrate ("cbr 10 Mbps", "5 mbps", "2000 kbps") is set as
 "video_bitrate_kbps" on the output (integer kbps, e.g. 10000 for 10 Mbps) — a CBR-style
 target that overrides the quality preset. A *file size* target ("5 MB file") is NOT a
@@ -140,7 +153,7 @@ Rules:
 - Times are numbers of seconds. "720p" means resize height 720 with aspect_ratio "preserve" (no padding to 1280x720).
 - An input asset may have kind "source" (a local capture source such as lavfi:/v4l2:/
   alsa:/x11grab:) — reference it by id exactly like any other input.
-- If any part of the request is beyond the supported set (e.g. concatenation/merging/stitching, splitting into segments, sepia/vintage/retro looks, denoising, stabilization, HDR, CUDA/VideoToolbox/QSV, an out-of-range factor or bitrate), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
+- If any part of the request is beyond the supported set (e.g. concatenation/merging/stitching, splitting into segments, sepia/vintage/retro looks, denoising, stabilization, HDR, CUDA/VideoToolbox, an out-of-range factor or bitrate), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
 - If a detail is missing or ambiguous in a way that materially changes the edit (e.g. "make it smaller" without a target, missing watermark file, exact file size), set status "needs_clarification" with exactly one focused question.
 - Use documented defaults for low-risk choices and record them in "defaults".
 - For revisions: start from the previous plan, change only what the instruction changes, preserve everything else, and return the complete updated plan.

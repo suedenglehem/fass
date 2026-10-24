@@ -20,10 +20,12 @@ from fass.registry import (
     REGISTRY,
     all_filter_names,
     audio_codec_for,
+    audio_codec_option_keys,
     audio_codecs_for,
     audio_container_for_codec,
     audio_for,
     capability_errors,
+    codec_option_specs,
     default_codec,
     filter_expr_problems,
     filter_names,
@@ -34,7 +36,9 @@ from fass.registry import (
     sample_rates,
     speed_limits,
     stream_output_info,
+    video_codec_option_keys,
     video_codecs_for,
+    video_encoder_name,
 )
 from fass.schema import (
     Asset,
@@ -79,7 +83,10 @@ SUPPORTED_SUMMARY = (
     "H.265, VP9, ProRes, MPEG-2, MPEG-4, MJPEG) at quality presets or a "
     "target bitrate (video: 'cbr 10 Mbps'; audio: 'mp2 128k'), pixel "
     "format, encoder profile (H.264 baseline/high, ProRes 422/4444) and "
-    "speed preset for H.264, and container format options ('faststart', "
+    "speed preset for H.264, Quick Sync encoding ('re-encode with quick "
+    "sync', 'qsv preset=fast'), and per-encoder private options ('with crf "
+    "18', 'x264-params keyint=24', 'dialnorm -27', 'vbr 4'); container "
+    "format options ('faststart', "
     "'hls_time=6', 'mpegts_flags=resend_headers'); one image watermark "
     "(position, margin, scale), subtitles from an srt/ass/ssa/vtt file "
     "('add subtitles from subs.srt' — burned in by default, or soft/"
@@ -512,6 +519,20 @@ def _detect_gpu(t: str) -> bool | None:
     return None
 
 
+_QSV_ON = re.compile(r"\bqsv\b|\bquick\s?sync\b|\bintel\s+gpu\b|\bonevpl\b", re.I)
+_QSV_OFF = re.compile(r"\bno\s+qsv\b|\bwithout\s+qsv\b|\bno\s+quick\s?sync\b", re.I)
+
+
+def _detect_qsv(t: str) -> bool | None:
+    """'use qsv' / 'quick sync' / 'intel gpu' -> True; 'no qsv' -> False;
+    nothing said -> None (the plan keeps its current value)."""
+    if _QSV_OFF.search(t):
+        return False
+    if _QSV_ON.search(t):
+        return True
+    return None
+
+
 # ---------------------------------------------------------------- codecs / containers
 
 def _detect_codec(t: str) -> str | None:
@@ -644,6 +665,8 @@ def _detect_audio_codec(t: str) -> str | None:
         return "eac3"
     if re.search(rx + r"ac3\b", t, re.I):
         return "ac3"
+    if re.search(rx + r"(?:libfdk[-_ ]?aac|fdk[-_ ]?aac)\b", t, re.I):
+        return "fdk_aac"
     if re.search(rx + r"aac\b", t, re.I):
         return "aac"
     if re.search(rx + r"(?:alac|apple\s+lossless)\b", t, re.I):
@@ -889,6 +912,91 @@ def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
     return out
 
 
+# ---------------------------------------------------------------- codec options
+
+# explicit 'key=value' encoder options (M8) — the key class needs the
+# hyphen for x264-params / x265-params / vvenc-params
+_CODEC_OPT_TOKEN = re.compile(r"\b([a-z][a-z0-9_\-]*)=([^\s,;]+)", re.I)
+# the *-params options also come in the space form ('x264-params
+# keyint=24') — restricted to that family so ordinary words ('tune the
+# color', 'set a profile') are never mistaken for option values
+_CODEC_PARAMS_TOKEN = re.compile(
+    r"\b((?:x264|x265|vvenc)[-_ ]?params)\s+([^\s,;]+)", re.I)
+
+
+def _detect_codec_options(t: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Explicit key=value tokens whose key is a private encoder option in
+    the registry (per-encoder tables), plus the space form of the
+    *-params options. Split into (video, audio) by the key unions;
+    dvbsub's min_bpp is excluded — there is no subtitle encoder path
+    yet. Strict per-encoder validation happens at the final gate (an
+    unknown key for the resolved encoder is rejected there)."""
+    video_keys = video_codec_option_keys() - {"min_bpp"}
+    audio_keys = audio_codec_option_keys()
+    v: dict[str, str] = {}
+    a: dict[str, str] = {}
+    for rx in (_CODEC_OPT_TOKEN, _CODEC_PARAMS_TOKEN):
+        for m in rx.finditer(t):
+            key, value = m.group(1).lower().replace(" ", "-"), m.group(2).rstrip(".")
+            if key in video_keys and key not in v:
+                v[key] = value
+            elif key in audio_keys and key not in a:
+                a[key] = value
+    return v, a
+
+
+def _video_codec_option_defaults(t: str, opts: dict[str, str],
+                                 encoder: str | None) -> list[str]:
+    """Natural-language forms that map onto the resolved video encoder's
+    private options: 'crf 18' (crf on x264/x265, cq on nvenc, noted and
+    skipped where the encoder has no constant-quality knob) and an
+    extended 'profile main10' the profile field does not cover."""
+    notes: list[str] = []
+    if encoder and "crf" not in opts:
+        m = re.search(r"\bcrf\s+(\d{1,2})\b", t, re.I)
+        if m:
+            crf = m.group(1)
+            specs = codec_option_specs(encoder)
+            if "crf" in specs:
+                opts["crf"] = crf
+                notes.append(f"CRF set to {crf}")
+            elif "cq" in specs:
+                opts["cq"] = crf
+                notes.append(f"CRF {crf} given as the {encoder} "
+                             f"constant-quality knob (cq {crf})")
+            else:
+                notes.append(f"{encoder} has no CRF-style knob — "
+                             f"CRF {crf} ignored (set a video bitrate instead)")
+    if encoder and "profile" not in opts and _detect_profile(t) is None:
+        m = re.search(r"\bprofile\s+([a-z][a-z0-9_]*)\b", t, re.I)
+        if m:
+            name = m.group(1).lower()
+            if name not in ("baseline", "main", "high"):
+                spec = codec_option_specs(encoder).get("profile")
+                if spec and (spec.get("kind") != "choice"
+                             or name in spec.get("values", [])):
+                    opts["profile"] = name
+                    notes.append(f"encoder profile set to {name}")
+    return notes
+
+
+def _audio_codec_option_defaults(t: str, opts: dict[str, str]) -> list[str]:
+    """'dialnorm -27' -> the ac3/eac3/fdk dialogue-level option;
+    'vbr 4' -> the libfdk-aac VBR mode."""
+    notes: list[str] = []
+    if "dialnorm" not in opts:
+        m = re.search(r"\bdialnorm\s*(-?\d+)\b", t, re.I)
+        if m:
+            opts["dialnorm"] = m.group(1)
+            notes.append(f"dialnorm set to {m.group(1)} dB")
+    if "vbr" not in opts:
+        m = re.search(r"\bvbr\s+(\d)\b", t, re.I)
+        if m:
+            opts["vbr"] = m.group(1)
+            notes.append(f"VBR mode set to {m.group(1)}")
+    return notes
+
+
 # ---------------------------------------------------------------- grayscale / audio / watermark
 
 GRAYSCALE_RE = re.compile(r"black\s+and\s+white|\bb&w\b|gr(?:a|e)y\s*scale|desaturat\w*|monochrome", re.I)
@@ -1081,9 +1189,9 @@ UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bsepia\b|\bvintage\b|\bretro\b", re.I), "additional color effects"),
     (re.compile(r"\bdenois\w*\b|\bstabil(?:is|iz)\w*\b", re.I), "stabilization and denoising"),
     (re.compile(r"\bhdr\b|\btone[\s-]?map\w*\b", re.I), "HDR workflows"),
-    # gpu/nvenc/hardware acceleration are supported (M6, NVIDIA nvenc);
-    # the other hardware-encoding stacks stay out
-    (re.compile(r"\bcuda\b|\bvideotoolbox\b|\bqsv\b", re.I), "CUDA / VideoToolbox / QSV hardware acceleration"),
+    # gpu/nvenc (M6) and qsv/quick sync (M8) are supported; the other
+    # hardware-encoding stacks stay out
+    (re.compile(r"\bcuda\b|\bvideotoolbox\b", re.I), "CUDA / VideoToolbox hardware acceleration"),
 ]
 
 
@@ -1225,9 +1333,15 @@ class RulesAdapter:
         rotate, rotate_clar, rotate_frag, rotate_note = _detect_rotate(t)
         audio_resample, rs_clar, rs_frag = _detect_resample(t)
         pixel_format = _detect_pixel_format(t)
-        video_profile = _detect_profile(t)
-        video_preset = _detect_preset(t)
         gpu = _detect_gpu(t)
+        qsv = _detect_qsv(t)
+        video_codec_opts, audio_codec_opts = _detect_codec_options(t)
+        # an explicit 'preset=X' / 'profile=X' token is a codec option —
+        # the NL field detectors must not also claim the same word
+        video_profile = None if "profile" in video_codec_opts \
+            else _detect_profile(t)
+        video_preset = None if "preset" in video_codec_opts \
+            else _detect_preset(t)
         audio = _detect_audio(t)
         watermark, wm_clar, wm_note = _detect_watermark(t, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
@@ -1404,10 +1518,12 @@ class RulesAdapter:
                 previous_plan, t, trim, resize, audio, watermark, grayscale,
                 audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
                 audio_resample=audio_resample, subtitle=subtitle, gpu=gpu,
-                codec=codec, container=container, audio_codec=audio_codec,
+                qsv=qsv, codec=codec, container=container, audio_codec=audio_codec,
                 audio_container=audio_container, audio_bitrate=audio_bitrate,
                 video_bitrate=video_bitrate, mode=mode, sub_dump=sub_dump,
                 filters=filters, filtergraph=filtergraph, input_ext=input_ext,
+                video_codec_options=video_codec_opts,
+                audio_codec_options=audio_codec_opts,
             )
             if not changed:
                 return ParseResult(
@@ -1486,6 +1602,7 @@ class RulesAdapter:
                     and audio_codec is None and sub_dump is None and not audio_wanted \
                     and video_bitrate is None and audio_bitrate is None \
                     and dest is None \
+                    and not video_codec_opts and not audio_codec_opts \
                     and not filters and filtergraph is None \
                     and not _detect_format_options(t, container) \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b|\bextract\w*", t):
@@ -1539,6 +1656,16 @@ class RulesAdapter:
                 if audio_bitrate is not None:
                     plan.output.audio_bitrate_kbps = audio_bitrate
                     notes.append(f"targeting a {audio_bitrate} kbps audio bitrate")
+                # named video options cannot be applied here — the final
+                # gate reports them (an audio output has no video encoder)
+                if video_codec_opts:
+                    plan.output.video_codec_options = video_codec_opts
+                aopts = dict(audio_codec_opts)
+                _audio_codec_option_defaults(t, aopts)
+                if aopts:
+                    plan.output.audio_codec_options = aopts
+                    notes.append("audio codec options: "
+                                 + ", ".join(f"{k}={v}" for k, v in sorted(aopts.items())))
             elif mode == "subtitles":
                 plan.output.mode = "subtitles"
                 plan.output.container = sub_dump
@@ -1551,6 +1678,12 @@ class RulesAdapter:
                 plan.output.video_bitrate_kbps = None
                 plan.output.audio_mode = AudioMode.ENCODE
                 notes.append(f"subtitle dump format: {sub_dump}")
+                # a dump encodes nothing — named codec options are reported
+                # by the final gate instead of being applied
+                if video_codec_opts:
+                    plan.output.video_codec_options = video_codec_opts
+                if audio_codec_opts:
+                    plan.output.audio_codec_options = audio_codec_opts
             else:  # video
                 # an explicit codec with no named container lands in the
                 # codec's natural home ('prores' is a .mov file)
@@ -1595,6 +1728,24 @@ class RulesAdapter:
                 if gpu:
                     plan.output.gpu = True
                     notes.append("encoding on GPU (NVIDIA nvenc)")
+                if qsv:
+                    plan.output.qsv = True
+                    notes.append("encoding on Intel QSV (Quick Sync)")
+                # private encoder options: explicit key=value tokens plus
+                # the NL forms ('crf 18', 'profile main10') mapped onto the
+                # resolved encoder
+                vencoder = video_encoder_name(
+                    codec, plan.output.gpu, plan.output.qsv)
+                notes += _video_codec_option_defaults(t, video_codec_opts, vencoder)
+                if video_codec_opts:
+                    plan.output.video_codec_options = video_codec_opts
+                    notes.append("video codec options: "
+                                 + ", ".join(f"{k}={v}" for k, v in sorted(video_codec_opts.items())))
+                notes += _audio_codec_option_defaults(t, audio_codec_opts)
+                if audio_codec_opts:
+                    plan.output.audio_codec_options = audio_codec_opts
+                    notes.append("audio codec options: "
+                                 + ", ".join(f"{k}={v}" for k, v in sorted(audio_codec_opts.items())))
             format_options = _detect_format_options(t, plan.output.container)
             if format_options:
                 plan.output.format_options = format_options
@@ -1606,9 +1757,18 @@ class RulesAdapter:
 
         # final capability gate — the registry is the single source of truth.
         # (Field mutations above bypass the model validators, so the check
-        # must run explicitly here.)
+        # must run explicitly here — both the model's _capability/_mode
+        # consistency rules and the container codec-option tables.)
         errors = capability_errors(plan.output) + format_option_errors(
             plan.output.container, plan.output.format_options)
+        try:
+            OutputSpec.model_validate(plan.output.model_dump())
+        except ValueError as exc:
+            msgs = [e["msg"] for e in getattr(exc, "errors", lambda: [{}])()]
+            for msg in msgs:
+                errors.append(msg.removeprefix("Value error, ").strip())
+            if not msgs:
+                errors.append(str(exc))
         if errors:
             return ParseResult(
                 status=ParseStatus.UNSUPPORTED,
@@ -1623,10 +1783,11 @@ class RulesAdapter:
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
-                    audio_resample=None, subtitle=None, gpu=None, codec=None,
+                    audio_resample=None, subtitle=None, gpu=None, qsv=None, codec=None,
                     container=None, audio_codec=None, audio_container=None,
                     audio_bitrate=None, video_bitrate=None, mode=None,
-                    sub_dump=None, filters=None, filtergraph=None, input_ext=None):
+                    sub_dump=None, filters=None, filtergraph=None, input_ext=None,
+                    video_codec_options=None, audio_codec_options=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
@@ -1644,6 +1805,9 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
             plan.output.video_profile = None
             plan.output.video_preset = None
             plan.output.gpu = False
+            plan.output.qsv = False
+            plan.output.video_codec_options = {}
+            plan.output.audio_codec_options = {}
             plan.output.audio_mode = AudioMode.ENCODE
             plan.filtergraph = None
             if plan.output_destination is not None:
@@ -1661,6 +1825,8 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
             plan.output.video_profile = None
             plan.output.video_preset = None
             plan.output.gpu = False
+            plan.output.qsv = False
+            plan.output.video_codec_options = {}
             plan.filtergraph = None
             if plan.output_destination is not None:
                 plan.output_destination = None
@@ -1708,6 +1874,9 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
         if gpu is not None and plan.output.gpu != gpu:
             plan.output.gpu = gpu
             changed.append("gpu -> on (nvenc)" if gpu else "gpu -> off (cpu)")
+        if qsv is not None and plan.output.qsv != qsv:
+            plan.output.qsv = qsv
+            changed.append("qsv -> on (intel quick sync)" if qsv else "qsv -> off")
         if container is not None and plan.output.container != container:
             plan.output.container = container
             changed.append(f"container -> {container}")
@@ -1734,14 +1903,33 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
         if pixel_format and plan.output.pixel_format != pixel_format:
             plan.output.pixel_format = pixel_format
             changed.append(f"pixel format -> {pixel_format}")
-        profile = _detect_profile(t)
+        # an explicit 'profile=X' / 'preset=X' token is a codec option —
+        # the NL field detectors must not also claim the same word
+        profile = None if "profile" in (video_codec_options or {}) \
+            else _detect_profile(t)
         if profile and plan.output.video_profile != profile:
             plan.output.video_profile = profile
             changed.append(f"video profile -> {profile}")
-        preset = _detect_preset(t)
+        preset = None if "preset" in (video_codec_options or {}) \
+            else _detect_preset(t)
         if preset and plan.output.video_preset != preset:
             plan.output.video_preset = preset
             changed.append(f"video preset -> {preset}")
+        # per-encoder options: this instruction's tokens plus the NL forms
+        # ('crf 18') mapped onto the encoder the plan now resolves to — a
+        # named option always wins over the plan's previous value
+        vencoder = video_encoder_name(plan.output.video_codec,
+                                      plan.output.gpu, plan.output.qsv)
+        vopts = dict(video_codec_options or {})
+        for note in _video_codec_option_defaults(t, vopts, vencoder):
+            changed.append(note)
+        if vopts:
+            merged = {**plan.output.video_codec_options, **vopts}
+            if merged != plan.output.video_codec_options:
+                plan.output.video_codec_options = merged
+                changed.append("video codec options: "
+                               + ", ".join(f"{k}={v}" for k, v in
+                                           sorted(vopts.items())))
     else:
         # audio / subtitle outputs: drop video-only fields this instruction
         # may have named (parse() already clarified the intent)
@@ -1749,8 +1937,12 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
                       "video_preset"):
             if getattr(plan.output, field) is not None:
                 setattr(plan.output, field, None)
+        if plan.output.video_codec_options:
+            plan.output.video_codec_options = {}
         if plan.output.gpu:
             plan.output.gpu = False
+        if plan.output.qsv:
+            plan.output.qsv = False
 
     if audio_codec is not None and plan.output.mode != "subtitles" \
             and plan.output.audio_codec != audio_codec:
@@ -1765,6 +1957,17 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if audio_bitrate is not None and plan.output.audio_bitrate_kbps != audio_bitrate:
         plan.output.audio_bitrate_kbps = audio_bitrate
         changed.append(f"audio bitrate -> {audio_bitrate} kbps")
+    # per-encoder audio options: this instruction's tokens plus the NL form
+    # ('dialnorm -27'); a named option wins over the plan's previous value
+    aopts = dict(audio_codec_options or {})
+    _audio_codec_option_defaults(t, aopts)
+    if aopts:
+        merged = {**plan.output.audio_codec_options, **aopts}
+        if merged != plan.output.audio_codec_options:
+            plan.output.audio_codec_options = merged
+            changed.append("audio codec options: "
+                           + ", ".join(f"{k}={v}" for k, v in
+                                       sorted(aopts.items())))
 
     # A newly named destination always wins over the previous one; the scheme
     # fixes the container, so switch it when they disagree.

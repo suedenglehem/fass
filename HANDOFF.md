@@ -17,7 +17,55 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-24, M7 IN PROGRESS — capability expansion)
+## Current state (2026-10-25, M8 IN PROGRESS — codec options)
+**M8 — per-encoder private codec options, core DONE, uncommitted.** Trigger:
+user: "add all options of encoders / decoders: NVENC, QSV, ProRes, dvbsub,
+png, libx265, libvvenc, libfdk_aac, flac, opus, ac3, rawvideo" (link to
+ffmpeg-codecs.html#Codec-Options).
+
+- **Registry:** `codec_options` table in registry.json — 16 encoders, 344
+  options (h264_nvenc 50, hevc_nvenc 54, h264_qsv 45, hevc_qsv 44, libx264
+  48, libx265 11, prores_ks 6, png 3, dvbsub 1, libvvenc 10, ac3 20, eac3
+  18, libfdk_aac 13, flac 11, libopus 8, opus 2). Kinds int/float+range,
+  choice(values, optional numeric range), string; `builds` tag for
+  build-gated options (libfdk_aac* 9.0.1-only, dvbsub.min_bpp 9.0.1).
+  rawvideo intentionally has NO table (no private options).
+- **Loader:** codec_option_specs / codec_option_errors (unknown key, range,
+  type, choice), video_/audio_codec_option_keys families.
+- **Plan model:** OutputSpec._capability validates video/audio
+  codec_options against the resolved encoder; conflict messages:
+  gpu×qsv, rc=cbr* needs bitrate, bitrate×constant-quality (crf/cq/qp),
+  video_preset×'preset' option, video_profile×'profile' option;
+  audio options validated vs explicit audio_codec or the container
+  default codec.
+- **Planner:** emits options for their encoder (forces re-encode when a
+  stream copy would drop them — the M6 copy-mode discipline); QSV CBR
+  default 5000k; QSV copy-mode warning; QSV has no CRF → honest "no
+  CRF-style knob" default note.
+- **NLU (rules + llm):** phrasings 'with crf 18', 'preset=fast',
+  'x264-params keyint=24' (space + key=value forms, restricted param
+  family — no false positives), 'dialnorm -27', 'vbr 4', fdk_aac
+  phrasings; invalid values → unsupported with the loader's message.
+- **execute.py:** codec options accepted by the argv validator only for
+  the encoder named in the same argv; wrong-encoder/off-range → error.
+- **API:** /v1/support exposes codec_options + qsv.coders; /v1/env rows
+  for the QSV coders.
+- **Tests:** tests/test_codec_options.py — 39 new tests, all green.
+  **Suite: 627 passed (~78 s).**
+- **Battery:** scripts/m8_battery.py (+m8_battery.sh wrapper) — 10-case
+  dual-build driver on a 10s titan clip: generation (status + exact argv
+  tokens) + real execution. Local 6.1.1: **10/10** (QSV executes clean
+  here — host has the device; fdk_aac skipped with the preflight warning).
+  Docker 9.0.1 mode: not yet run (needs the i7 container on M8).
+- **Known accepted gaps:** 'rc cbr 10000k' space form not parsed
+  (key=value works); vvenc/png/rv60 are reference-only tables (not
+  selectable matrix codecs); libvvenc absent from both builds.
+
+Next unfinished task: commit M8 core (Co-Authored-By), then dispatch
+verification (i7: rsync + docker rebuild + `scripts/m8_battery.sh docker`
++ live API; tr4-secondary: local battery) + i7 redeploy.
+
+## Prior state (2026-10-24, M7 IN PROGRESS — capability expansion)
 **M7 — broad FFmpeg capability expansion, half done.** Trigger: user report
 "'extract audio track and transcode it to mp2 audio 128kbps' returns 2 errors
 (audio-only not supported; mp2 not in the matrix) + mxf unsupported → why can't
@@ -589,9 +637,11 @@ media/titan.mp4, pyproject.toml,
 HANDOFF.md
 
 ## Test results
-`./.venv/bin/python -m pytest -q` → **588 passed** in ~71 s (2026-10-24,
-M7: 555 at merge 43b1182 = 534 + 21 worker tests; +30 new M7 NLU test
-cases + planner/registry fixes + mxf -g 120 assertion, all uncommitted).
+`./.venv/bin/python -m pytest -q` → **627 passed** in ~78 s (2026-10-25,
+M8: 588 baseline + 39 tests/test_codec_options.py; M8 changes uncommitted).
+M7: **588 passed** in ~71 s (2026-10-24, M7: 555 at merge 43b1182 = 534 +
+21 worker tests; +30 new M7 NLU test cases + planner/registry fixes +
+mxf -g 120 assertion).
 Earlier: 534 at 5afac91 (2026-10-24, M7 in progress, suite green at
 commit 5afac91; baseline 533 + 7 capability-widening failures fixed:
 bench-077, test_planner_builder ×4,
@@ -611,6 +661,16 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
+**M8 (2026-10-25) — in flight.** Core complete: 627 tests green, local
+battery 10/10. Next: (1) commit M8 core + battery (Co-Authored-By; no
+push unless asked); (2) dispatch verification per standing directive
+"delegate to dispatcher's backends / use i7 first": i7 job = rsync +
+compose sed (docker.sock + FASS_DOCKER_MANAGE) + `./docker/launcher.sh
+rebuild` + `scripts/m8_battery.sh docker` + live API checks on 9.0.1;
+tr4-secondary job = local battery on the new base commit (bootstrap
+.venv in its worktree); (3) i7 redeploy of the python serve path if the
+user wants the live site on M8. Don't touch the 7 blocked jobs.
+
 **M7 VERIFICATION COMPLETE (2026-10-24)** — NLU rewrite committed
 (4c0a0ed), worker job **j_41200a56f4** INTEGRATED (merge 43b1182,
 dispatch_integrate accepted), 30-case M7 test battery + filtergraph fix +

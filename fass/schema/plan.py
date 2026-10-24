@@ -16,7 +16,10 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fass.registry import (
+    audio_encoder_name,
+    audio_for,
     capability_errors,
+    codec_option_errors,
     filter_expr_problems,
     filtergraph_problems,
     format_option_errors,
@@ -27,6 +30,7 @@ from fass.registry import (
     stream_output_info,
     stream_scheme,
     subtitle_dump_codec,
+    video_encoder_name,
     video_profiles_for,
 )
 
@@ -94,8 +98,8 @@ class OutputSpec(BaseModel):
         "dv", "gif", "webp",
     ] | None = None
     audio_codec: Literal[
-        "aac", "opus", "mp2", "mp3", "ac3", "eac3", "alac", "flac",
-        "vorbis", "pcm_s16le", "pcm_s24le", "pcm_f32le",
+        "aac", "fdk_aac", "opus", "mp2", "mp3", "ac3", "eac3", "alac",
+        "flac", "vorbis", "pcm_s16le", "pcm_s24le", "pcm_f32le",
     ] | None = None
     audio_mode: AudioMode = AudioMode.ENCODE
     video_bitrate_kbps: int | None = Field(
@@ -141,6 +145,38 @@ class OutputSpec(BaseModel):
                     "x264 speed presets and the 'baseline' profile do not "
                     "apply.",
     )
+    qsv: bool = Field(
+        default=False,
+        description="Encode on Intel Quick Sync (M8): h264 -> h264_qsv, "
+                    "h265 -> hevc_qsv (profiles baseline/main/high; "
+                    "hevc main/main10). Mutually exclusive with gpu. The "
+                    "local FFmpeg build has QSV; the docker build does "
+                    "not (preflight reports it).",
+    )
+    video_codec_options: dict[str, str] = Field(
+        default_factory=dict,
+        description="Private codec options for the video encoder "
+                    "(registry codec_options table for the selected "
+                    "encoder), e.g. {'crf': '18'} for libx264, "
+                    "{'preset': 'hq', 'tune': 'll'} for h264_nvenc, "
+                    "{'profile': '4444', 'quant_mat': 'hq'} for "
+                    "prores_ks, {'x265-params': 'rdoq=2'} for libx265. "
+                    "Emitted as -<key> <value> right after -c:v. Do not "
+                    "put 'preset'/'profile' here when video_preset / "
+                    "video_profile are set, and not a constant-quality "
+                    "option (crf/cq/qp, rc=constqp) together with a "
+                    "target video bitrate.",
+    )
+    audio_codec_options: dict[str, str] = Field(
+        default_factory=dict,
+        description="Private codec options for the audio encoder "
+                    "(registry codec_options table for the selected "
+                    "encoder), e.g. {'dialnorm': '-27'} for ac3/eac3, "
+                    "{'ch_mode': 'mid_side'} for flac, "
+                    "{'vbr': 'constrained', 'fec': '1'} for libopus, "
+                    "{'vbr': '4'} for libfdk_aac. Emitted as "
+                    "-<key> <value> right after -c:a.",
+    )
     format_options: dict[str, str] = Field(
         default_factory=dict,
         description="Output container/format options from the registry "
@@ -154,12 +190,18 @@ class OutputSpec(BaseModel):
     @model_validator(mode="after")
     def _mode_consistency(self) -> "OutputSpec":
         out = self
+        if out.gpu and out.qsv:
+            raise ValueError(
+                "gpu and qsv are mutually exclusive — pick one hardware path"
+            )
         video_only_fields = (
             ("video_bitrate_kbps", out.video_bitrate_kbps),
             ("pixel_format", out.pixel_format),
             ("video_profile", out.video_profile),
             ("video_preset", out.video_preset),
             ("gpu", out.gpu),
+            ("qsv", out.qsv),
+            ("video_codec_options", out.video_codec_options or None),
         )
         if out.mode == "video":
             if out.video_codec is None:
@@ -192,6 +234,11 @@ class OutputSpec(BaseModel):
                     raise ValueError(
                         f"{name} does not apply to a subtitle dump output"
                     )
+            if out.audio_codec_options:
+                raise ValueError(
+                    "audio_codec_options does not apply to a subtitle dump "
+                    "output"
+                )
         return self
 
     @model_validator(mode="after")
@@ -210,6 +257,50 @@ class OutputSpec(BaseModel):
             pf_err = pixel_format_error(self.video_codec, self.pixel_format)
             if pf_err:
                 raise ValueError(pf_err)
+        if self.video_codec_options and self.mode == "video":
+            enc = video_encoder_name(self.video_codec, self.gpu, self.qsv)
+            for err in codec_option_errors(enc, self.video_codec_options):
+                raise ValueError(err)
+            if self.video_preset and "preset" in self.video_codec_options:
+                raise ValueError(
+                    "video_preset and the 'preset' codec option are both "
+                    "set — use video_preset for x264 speed presets, and "
+                    "the 'preset' codec option only for the selected "
+                    "encoder's own presets (nvenc, QSV, prores …)"
+                )
+            if self.video_profile and "profile" in self.video_codec_options:
+                raise ValueError(
+                    "video_profile and the 'profile' codec option are both "
+                    "set — use video_profile for baseline/main/high (and "
+                    "ProRes profiles), the 'profile' codec option for "
+                    "extended values (high444p, main10 …)"
+                )
+            # A target bitrate conflicts with constant-quality rate control
+            # (crf/cq/qp, rc=constqp) — but not with cbr/vbr modes, which
+            # take the bitrate as their rate.
+            rc_val = self.video_codec_options.get("rc")
+            if self.video_bitrate_kbps is not None and (
+                {"crf", "cq", "qp"} & self.video_codec_options.keys()
+                or rc_val == "constqp"
+            ):
+                raise ValueError(
+                    "a target video bitrate and a constant-quality codec "
+                    "option (crf/cq/qp, or rc=constqp) conflict — pick one"
+                )
+            if self.gpu and self.video_bitrate_kbps is None:
+                if rc_val is not None and rc_val.startswith("cbr") \
+                        and "cq" not in self.video_codec_options:
+                    raise ValueError(
+                        "rc=cbr* on the GPU needs a target video bitrate "
+                        "(video_bitrate_kbps) — cbr has no quality fallback"
+                    )
+        if self.audio_codec_options:
+            # with no explicit audio codec, the container default applies
+            # (e.g. aac in mp4) — its options must validate too
+            acodec = self.audio_codec or audio_for(self.container)
+            enc = audio_encoder_name(acodec)
+            for err in codec_option_errors(enc, self.audio_codec_options):
+                raise ValueError(err)
         for err in format_option_errors(self.container, self.format_options):
             raise ValueError(err)
         return self

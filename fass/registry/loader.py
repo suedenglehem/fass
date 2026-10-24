@@ -540,6 +540,127 @@ def format_option_errors(container: str, options: dict[str, str]) -> list[str]:
     return errors
 
 
+# ------------------------------------------------------- codec options (M8)
+
+_VIDEO_CODEC_OPTION_ENCODERS = (
+    "h264_nvenc", "hevc_nvenc", "h264_qsv", "hevc_qsv",
+    "libx264", "libx265", "libvvenc", "prores_ks", "png",
+)
+_AUDIO_CODEC_OPTION_ENCODERS = (
+    "ac3", "eac3", "flac", "libopus", "opus", "libfdk_aac",
+)
+
+
+def qsv_coder(video_codec: str) -> dict | None:
+    """The QSV coder for a codec when QSV encoding is requested (M8);
+    None when the codec has no QSV form (like the gpu coders)."""
+    return REGISTRY["qsv"]["coders"].get(video_codec)
+
+
+def video_encoder_name(video_codec: str, gpu: bool = False,
+                       qsv: bool = False) -> str | None:
+    """The FFmpeg encoder a video plan will use: the nvenc coder when gpu,
+    the QSV coder when qsv, else the CPU encoder from video_codecs."""
+    if gpu:
+        coder = REGISTRY["gpu"]["coders"].get(video_codec)
+    elif qsv:
+        coder = REGISTRY["qsv"]["coders"].get(video_codec)
+    else:
+        coder = REGISTRY["video_codecs"].get(video_codec)
+    return coder["encoder"] if coder else None
+
+
+def audio_encoder_name(audio_codec: str) -> str | None:
+    """The FFmpeg encoder an audio plan will use (audio_codecs table)."""
+    coder = REGISTRY["audio_codecs"].get(audio_codec)
+    return coder["encoder"] if coder else None
+
+
+def codec_option_specs(encoder: str) -> dict[str, dict]:
+    """{key: spec} of one encoder's private codec options
+    (registry codec_options table)."""
+    return dict(REGISTRY["codec_options"].get(encoder, {}))
+
+
+def _codec_option_value_error(key: str, spec: dict, value: str) -> str | None:
+    kind = spec["kind"]
+    lo, hi = spec.get("range", (None, None))
+    if kind == "int":
+        if not _INT.match(value):
+            return f"{key}: '{value}' is not an integer"
+        v = int(value)
+    elif kind == "float":
+        if not _NUMBER.match(value):
+            return f"{key}: '{value}' is not a number"
+        v = float(value)
+    elif kind == "bool":
+        if value not in ("0", "1"):
+            return f"{key}: expected 0 or 1, got '{value}'"
+        return None
+    elif kind == "choice":
+        if value in spec["values"]:
+            return None
+        # the numeric form is accepted when the option carries a range
+        if spec.get("range") and _NUMBER.match(value):
+            v = float(value)
+            if (lo is None or v >= lo) and (hi is None or v <= hi):
+                return None
+        tail = " or a number in its range" if spec.get("range") else ""
+        return (
+            f"{key}: '{value}' is not one of "
+            f"{', '.join(spec['values'])}{tail}"
+        )
+    else:  # string — single token (params options are :-separated, no spaces)
+        if not value or " " in value:
+            return f"{key}: '{value}' must be a non-empty single token (no spaces)"
+        return None
+    if lo is not None and v < lo:
+        return f"{key}: {v} is below the minimum {lo}"
+    if hi is not None and v > hi:
+        return f"{key}: {v} is above the maximum {hi}"
+    return None
+
+
+def codec_option_errors(encoder: str, options: dict[str, str]) -> list[str]:
+    """Validate {key: value} against one encoder's codec_options table.
+    Every key must exist for the encoder and every value must match its kind."""
+    if not options:
+        return []
+    specs = codec_option_specs(encoder)
+    if not specs:
+        return [f"{encoder} has no private codec options in the registry"]
+    errors = []
+    for key in sorted(options):
+        spec = specs.get(key)
+        if spec is None:
+            allowed = ", ".join(sorted(specs))
+            errors.append(
+                f"codec option '{key}' is not a valid option for "
+                f"{encoder} (valid: {allowed})"
+            )
+            continue
+        err = _codec_option_value_error(key, spec, str(options[key]))
+        if err:
+            errors.append(err)
+    return errors
+
+
+def _codec_option_key_union(encoder_names: tuple[str, ...]) -> set[str]:
+    return set().union(*(codec_option_specs(e) for e in encoder_names))
+
+
+def video_codec_option_keys() -> set[str]:
+    """Option names reachable as video codec options (union over the video
+    encoder tables: cpu, nvenc, qsv, prores, png, vvenc)."""
+    return _codec_option_key_union(_VIDEO_CODEC_OPTION_ENCODERS)
+
+
+def audio_codec_option_keys() -> set[str]:
+    """Option names reachable as audio codec options (union over the audio
+    encoder tables). dvbsub is a subtitle-domain table and is not included."""
+    return _codec_option_key_union(_AUDIO_CODEC_OPTION_ENCODERS)
+
+
 # ------------------------------------------------------- filters (M7)
 
 def filter_names(domain: str) -> set[str]:

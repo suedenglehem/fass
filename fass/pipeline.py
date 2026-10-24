@@ -306,6 +306,10 @@ def generate(
                     # GPU plan (M6): the nvenc coder (the planner already
                     # rejected codecs without a GPU form)
                     enc = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
+                elif edit.output.qsv:
+                    # QSV plan (M8): the Quick Sync coder (the capability
+                    # gate already rejected codecs without a QSV form)
+                    enc = REGISTRY["qsv"]["coders"][edit.output.video_codec]["encoder"]
                 else:
                     enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
                 encoders.append(enc)

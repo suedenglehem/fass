@@ -218,6 +218,15 @@ def create_app() -> FastAPI:
             "speed": {"min": speed_min, "max": speed_max},
             "gpu": {"enabled": load_config().gpu.enabled,
                     "coders": {k: v["encoder"] for k, v in REGISTRY["gpu"]["coders"].items()}},
+            "qsv": {"coders": {k: v["encoder"] for k, v in REGISTRY["qsv"]["coders"].items()}},
+            # M8: the private codec options each encoder accepts
+            # (-crf, -preset, -dialnorm, …) — the same table the NLU and
+            # the argv validator enforce
+            "codec_options": {
+                enc: sorted(opts)
+                for enc, opts in REGISTRY["codec_options"].items()
+                if enc != "description" and isinstance(opts, dict)
+            },
         }
 
     @app.get("/v1/env")
@@ -233,6 +242,10 @@ def create_app() -> FastAPI:
             }
         for name, coder in REGISTRY["gpu"]["coders"].items():
             encoders[f"video:{name}_gpu"] = {
+                "encoder": coder["encoder"], "present": coder["encoder"] in ff.encoders,
+            }
+        for name, coder in REGISTRY["qsv"]["coders"].items():
+            encoders[f"video:{name}_qsv"] = {
                 "encoder": coder["encoder"], "present": coder["encoder"] in ff.encoders,
             }
         for name, spec in REGISTRY["audio_codecs"].items():
