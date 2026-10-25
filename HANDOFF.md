@@ -76,7 +76,9 @@ docs/DEVELOPMENT.md (coverage row + checklist).
   dual-verified as well (live chain E2E + host suite).
 
 **Next unfinished tasks:**
-1. Commit M9+BSF (Co-Authored-By) + push only when asked.
+1. ~~Commit M9+BSF~~ — DONE: **7ad1d2e** "M9+BSF: chained processings
+   (/input/) + user-named bitstream filters" (17 files, +1493/-91).
+   Push only when asked (main is 1 commit ahead of origin).
 
 ## Prior state (2026-10-25, M9 — /input/ output chaining, DUAL-VERIFIED)
 **M9 — output-into-input-folder for chained processings.** Trigger: user:
