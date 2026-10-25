@@ -33,6 +33,7 @@ from pathlib import Path
 from fass.registry import (
     REGISTRY,
     all_muxers,
+    bsf_errors,
     codec_option_errors,
     codec_option_specs,
     container_from_extension,
@@ -76,10 +77,11 @@ _BOOL_FLAGS = {"-hide_banner", "-an", "-shortest"}
 _VALUE_FLAGS = {
     "-loglevel", "-ss", "-t", "-i", "-f",
     "-filter_complex", "-vf", "-af", "-map",
-    "-c:v", "-c:a", "-c:s", "-acodec",
+    "-c", "-c:v", "-c:a", "-c:s", "-acodec",
     "-b:v", "-b:a", "-maxrate", "-bufsize",
     "-crf", "-rc", "-cq", "-profile:v", "-preset", "-pix_fmt",
     "-ar", "-ac", "-movflags",
+    "-bsf:v", "-bsf:a",
 } | {f"-{key}" for key in _FORMAT_OPTION_KEYS}
 KNOWN_FLAGS = _BOOL_FLAGS | _VALUE_FLAGS
 
@@ -242,7 +244,7 @@ def _check_value(flag: str, value: str, index: int,
         if value not in _MUXERS:
             return [f"{p} '{value}' is not a known FFmpeg format"]
         return []
-    if flag in ("-c:v", "-c:a", "-c:s", "-acodec"):
+    if flag in ("-c", "-c:v", "-c:a", "-c:s", "-acodec"):
         if value not in _CODECS:
             return [f"{p} '{value}' is not a known encoder (registry)"]
         return []
@@ -250,6 +252,26 @@ def _check_value(flag: str, value: str, index: int,
         if not _MAP_RE.match(value):
             return [f"{p} '{value}' is not a valid stream specifier"]
         return []
+    if flag in ("-bsf:v", "-bsf:a"):
+        # 'name' or 'name=k=v:k2=v2' — options are colon-joined inside the
+        # argument. The name must be a registered bitstream filter and
+        # every option key/value must match its registry kind.
+        name, sep, opts = value.partition("=")
+        if not name:
+            return [f"{p} '{value}' is malformed (expected name or name=k=v)"]
+        if name == "trim":
+            return [
+                f"{p}: 'trim' is not an FFmpeg bitstream filter — a "
+                "stream-copy cut comes from the trim start/duration with -c copy"
+            ]
+        options: dict[str, str] = {}
+        if sep:
+            for pair in opts.split(":"):
+                key, eq, val = pair.partition("=")
+                if not eq or not key:
+                    return [f"{p} '{value}' is malformed (options are k=v pairs)"]
+                options[key] = val
+        return [f"{p}: {msg}" for msg in bsf_errors(name, options)]
     if flag == "-pix_fmt":
         if value not in _PIX_FMTS:
             return [f"{p} '{value}' is not a supported pixel format"]
@@ -350,7 +372,9 @@ def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
     """Resolve bare filenames against the volume mounts.
 
     Returns (argv, notes): inputs after -i resolve to $FASS_INPUT_DIR when
-    the file is there; the final output path resolves to $FASS_OUTPUT_DIR;
+    the file is there; the final output path resolves to $FASS_OUTPUT_DIR,
+    and a '/input/<name>' destination resolves to the input folder (chained
+    processings — the next run picks the file up by bare name);
     burned-subtitle paths inside filter tokens are rewritten with the same
     double-escaping the builder used, so the filter graph stays valid."""
     in_dir = _input_dir()
@@ -382,6 +406,21 @@ def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
         ):
             out[-1] = os.path.join(out_dir, dest)
             notes.append(f"output '{dest}' resolved to /output volume: {out[-1]}")
+        elif (
+            in_dir
+            and stream_scheme(dest) is None
+            and dest.startswith("/input/")
+        ):
+            # '/input/<name>' means "write into the deployment's input
+            # folder" ($FASS_INPUT_DIR — /input itself inside the container),
+            # so the next run can pick the file up by bare name: chained
+            # processings. Inside the container the rewrite is a no-op.
+            name = dest[len("/input/"):]
+            if name and not name.startswith("/"):
+                target = os.path.join(in_dir, name)
+                if target != dest:
+                    out[-1] = target
+                    notes.append(f"output '{dest}' resolves to the input folder: {out[-1]}")
     for i, tok in enumerate(out):
         if tok in _FILTER_FLAGS and i + 1 < len(out):
             fval = out[i + 1]
@@ -617,3 +656,31 @@ def output_file(filename: str) -> Path | None:
     if not p.is_file():
         return None
     return p
+
+
+def run_output_file(run_id: str) -> Path | None:
+    """The recorded output file of a run, whichever volume it landed in —
+    the /output volume, or the input folder for a chained processing
+    (a '/input/<name>' destination). The output path is ours (resolve_paths),
+    but it is still guarded: it must be a real file inside one of the volume
+    directories, never an arbitrary path."""
+    rec = get_run(run_id)
+    if rec is None:
+        return None
+    dest = rec.get("output")
+    if not dest or stream_scheme(dest) is not None:
+        return None
+    p = Path(dest)
+    if not p.is_file():
+        return None
+    try:
+        rp = p.resolve()
+    except OSError:
+        return None
+    for vol in (_input_dir(), _output_dir()):
+        if not vol:
+            continue
+        v = Path(vol).resolve()
+        if rp == v or v in rp.parents:
+            return p
+    return None

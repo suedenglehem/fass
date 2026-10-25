@@ -9,15 +9,17 @@ or inside the rendered command.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 
-from fass.probe.ffprobe import MediaInfo
+from fass.probe.ffprobe import MediaInfo, ffmpeg_available, probe_ffmpeg
 from fass.registry import (
     REGISTRY,
     audio_bsf_for_copy,
     audio_for,
     atempo_limits,
     bsf_for_copy,
+    bsf_spec,
     capability_errors,
     extension_for,
     filtergraph_output_labels,
@@ -104,6 +106,45 @@ def even(n: int) -> int:
 
 def fmt_num(x: float) -> str:
     return str(int(x)) if float(x).is_integer() else f"{x:g}"
+
+
+_ffmpeg_version_cache: tuple[int, ...] | None = None
+_ffmpeg_version_probed = False
+
+
+def local_ffmpeg_version() -> tuple[int, ...] | None:
+    """Numeric version of the local FFmpeg build (e.g. (9, 0, 1)), probed
+    once per process. None when FFmpeg is not on PATH or the version line
+    cannot be parsed."""
+    global _ffmpeg_version_cache, _ffmpeg_version_probed
+    if _ffmpeg_version_probed:
+        return _ffmpeg_version_cache
+    _ffmpeg_version_probed = True
+    if not ffmpeg_available():
+        return None
+    m = re.search(r"ffmpeg version (\d+(?:\.\d+)+)",
+                  probe_ffmpeg().version or "")
+    _ffmpeg_version_cache = (
+        tuple(int(p) for p in m.group(1).split(".")) if m else None
+    )
+    return _ffmpeg_version_cache
+
+
+def _version_note(subject: str, min_version: str) -> str | None:
+    """Warning text when the local build predates a min_version feature —
+    or its availability is unverified (no local FFmpeg). None when the
+    probed build is at least min_version: no warning on 9.0.1 for a
+    7.1-gated feature."""
+    ver = local_ffmpeg_version()
+    if ver is None:
+        return (f"{subject} requires FFmpeg {min_version}+ — the local "
+                "FFmpeg build could not be probed, so its availability "
+                "is unverified")
+    need = tuple(int(p) for p in min_version.split("."))
+    if ver >= need:
+        return None
+    return (f"{subject} requires FFmpeg {min_version}+ — the local build "
+            f"is {'.'.join(map(str, ver))}, which predates it")
 
 
 # ---------------------------------------------------------------- filters
@@ -653,9 +694,19 @@ def plan_execution(
             raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
         if sub_path and real_out == os.path.realpath(sub_path):
             raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
+        if out_path and out_path.startswith("/input/"):
+            warnings.append(
+                f"output '{out_path}' lands in the input folder — later "
+                "commands can reference it by bare name (chained processings)"
+            )
 
     # -- remux vs re-encode ------------------------------------------------
     has_trim = edit.trim is not None
+    # A stream-copy cut (TrimSpec.stream_copy) does not re-encode: it is
+    # -ss/-t on the compressed stream (video keyframe-accurate). FFmpeg has
+    # no 'trim' bitstream filter — this is how a 'trim' request is served
+    # in a copy context.
+    copy_trim = has_trim and edit.trim.stream_copy
     # Soft subtitles only mux a track — they touch no frame, so they do not
     # force a re-encode (M5). Burning is a filter chain and does. Any other
     # operation (filters, resample, replace, ...) touches a stream and does.
@@ -670,10 +721,12 @@ def plan_execution(
     elif out.mode == "audio":
         if metadata is not None and not metadata.has_audio and not ar_assets:
             raise PlanError(["the input has no audio stream to extract"])
-        # PRD FR-4: trimming re-encodes; an explicit target bitrate forces a
-        # re-encode (stream copy cannot honor a bitrate the input lacks);
-        # any operation (atempo/resample/filter/replace) needs decoding.
-        needs_reencode = (has_trim or bool(forced_ops)
+        # PRD FR-4: trimming re-encodes — except a stream-copy cut
+        # (TrimSpec.stream_copy), which is -ss/-t on the compressed stream;
+        # an explicit target bitrate forces a re-encode (stream copy cannot
+        # honor a bitrate the input lacks); any operation
+        # (atempo/resample/filter/replace) needs decoding.
+        needs_reencode = (has_trim and not copy_trim or bool(forced_ops)
                           or out.audio_bitrate_kbps is not None
                           or bool(out.audio_codec_options))
         if not needs_reencode:
@@ -716,7 +769,7 @@ def plan_execution(
                           or edit.output.video_profile is not None
                           or edit.output.video_preset is not None
                           or edit.output.pixel_format is not None)
-        needs_reencode = (has_trim or bool(forced_ops)
+        needs_reencode = (has_trim and not copy_trim or bool(forced_ops)
                           or bool(edit.filtergraph)
                           or edit.output.video_bitrate_kbps is not None
                           or encoder_params
@@ -762,6 +815,103 @@ def plan_execution(
                     )
         else:
             mode = "reencode"
+
+    # -- bitstream filters + stream-copy trim ------------------------------
+    # Bitstream filters run on the COMPRESSED stream: they force a stream
+    # copy and cannot coexist with a re-encode. ('trim' is not an FFmpeg
+    # bitstream filter — the schema normalized it to TrimSpec.stream_copy.)
+    user_bsfs = edit.bitstream_filters or []
+    vbsfs = [b for b in user_bsfs
+             if (bsf_spec(b.name) or {}).get("kind") in ("video", "both")]
+    abufs = [b for b in user_bsfs
+             if (bsf_spec(b.name) or {}).get("kind") == "audio"]
+    if user_bsfs and out.mode == "subtitles":
+        raise PlanError([
+            "bitstream filters cannot apply to a subtitle dump — the dump "
+            "decodes the subtitle stream itself"
+        ])
+    if user_bsfs and device is not None:
+        raise PlanError([
+            f"bitstream filters run on the compressed stream, but output to "
+            f"audio device '{device}' always decodes and re-encodes to "
+            "pcm_s16le — the filter would have nothing to run on"
+        ])
+    if vbsfs and out.mode != "video":
+        raise PlanError([
+            "bitstream filter(s) " + ", ".join(b.name for b in vbsfs)
+            + " need a video stream, but this output is audio-only"
+        ])
+    if vbsfs and out.mode == "video" and mode == "reencode":
+        raise PlanError([
+            "bitstream filter(s) " + ", ".join(b.name for b in vbsfs)
+            + " run on the compressed video stream and force a stream copy, "
+            "but this plan re-encodes the video — drop the re-encoding edit "
+            "(or the filter)"
+        ])
+    if copy_trim and out.mode in ("video", "audio") and mode == "reencode":
+        raise PlanError([
+            "a stream-copy trim requires the input codec to survive the "
+            "remux, but this plan re-encodes — drop the re-encoding edit "
+            "(or ask for a normal, re-encoding trim)"
+        ])
+    audio_removed = out.audio_mode == AudioMode.REMOVE
+    if abufs:
+        if out.mode == "video" and (audio_removed or mode == "reencode"):
+            raise PlanError([
+                "bitstream filter(s) " + ", ".join(b.name for b in abufs)
+                + " run on the input's compressed audio stream, but this "
+                "plan " + ("removes the audio" if audio_removed
+                           else "re-encodes the audio")
+            ])
+        elif out.mode == "audio" and (ar_path is not None or mode == "reencode"):
+            raise PlanError([
+                "bitstream filter(s) " + ", ".join(b.name for b in abufs)
+                + " run on the input's compressed audio stream, but this "
+                "plan " + ("replaces the audio" if ar_path is not None
+                           else "re-encodes the audio")
+            ])
+    # Codec match (bsfs are codec-specific) and availability disclosure.
+    # Spec codecs are FFmpeg names; ffprobe reports "h265" for "hevc".
+    for b in user_bsfs:
+        spec = bsf_spec(b.name) or {}
+        kind = spec.get("kind")
+        stream = "audio" if kind == "audio" else "video"
+        codecs = spec.get("codecs")
+        if codecs:
+            probed = None
+            if metadata is not None:
+                probed = (metadata.audio_codec if stream == "audio"
+                          else metadata.video_codec)
+            if probed is None:
+                warnings.append(
+                    f"bitstream filter '{b.name}' requires a "
+                    + " / ".join(codecs)
+                    + f" {stream} stream — the input could not be probed, "
+                    "so the codec is not verified"
+                )
+            elif {v: k for k, v in _FFPROBE_CODEC.items()}.get(
+                    probed, probed) not in codecs and probed not in codecs:
+                raise PlanError([
+                    f"bitstream filter '{b.name}' works on "
+                    + " / ".join(codecs)
+                    + f" streams, but the input {stream} is {probed}"
+                ])
+        if spec.get("min_version"):
+            note = _version_note(f"bitstream filter '{b.name}'",
+                                 spec["min_version"])
+            if note:
+                warnings.append(note)
+        for k, opt in (spec.get("options") or {}).items():
+            if k in b.options and opt.get("min_version"):
+                note = _version_note(f"option '{k}' for '{b.name}'",
+                                     opt["min_version"])
+                if note:
+                    warnings.append(note)
+        if spec.get("diagnostic"):
+            warnings.append(
+                f"bitstream filter '{b.name}' is diagnostic — it only writes "
+                "to the log; the output stream is unchanged"
+            )
 
     if edit.output.gpu and mode == "copy":
         warnings.append(
@@ -824,6 +974,15 @@ def _container_from_path(path: str) -> str | None:
 _FFPROBE_CODEC = {"hevc": "h265"}  # ffprobe name -> fass codec name
 
 
+def _bsf_arg(b) -> str:
+    """One -bsf:v/-bsf:a argument: the filter name, or name=k=v:k2=v2 —
+    FFmpeg joins bitstream-filter options with colons inside the argument
+    (multiple filters = repeated -bsf flags, chain order = argument order)."""
+    if not b.options:
+        return b.name
+    return b.name + "=" + ":".join(f"{k}={b.options[k]}" for k in sorted(b.options))
+
+
 def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
                      metadata: MediaInfo | None, sub_path: str | None = None,
                      sub_enc: str | None = None) -> ExecutionPlan:
@@ -831,6 +990,13 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
     inputs = [_main_input(in_path)]
     maps = ["0:v:0"]
     opts: list[str] = []
+    if edit.trim is not None:
+        # Stream-copy cut (TrimSpec.stream_copy): -ss before the input is
+        # keyframe-accurate for video (nothing is decoded) and sample-accurate
+        # for audio; -t bounds the output.
+        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    if edit.trim is not None and edit.trim.is_bounded:
+        opts += ["-t", fmt_num(edit.trim.duration_seconds)]
     if audio_remove:
         opts.append("-an")
     if not audio_remove:
@@ -843,35 +1009,63 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
         inputs.append(InputSpec(sub_path))
         maps.append(f"{len(inputs) - 1}:s:0")
         opts += ["-c:s", sub_enc]
-    # Bitstream filter (no re-encode): remuxing MP4/MOV into MPEG-TS requires
-    # H.264/HEVC to be re-stamped into Annex-B form. The source codec comes
-    # from the probe when one exists, else from the plan.
+    # Bitstream filters (no re-encode). The auto filter a container pair
+    # needs runs first, then the user-requested filters, chained in request
+    # order; a user filter identical to the auto one is not duplicated.
+    # The source codec comes from the probe when one exists, else from the
+    # plan.
     if metadata is not None and metadata.video_codec:
         codec = _FFPROBE_CODEC.get(metadata.video_codec, metadata.video_codec)
     else:
         codec = edit.output.video_codec
-    bsf = bsf_for_copy(_container_from_path(in_path) or "", edit.output.container, codec)
-    defaults: list[str] = []
-    if bsf:
-        opts += ["-bsf:v", bsf]
-        defaults.append(
-            f"remuxing to MPEG-TS needs bitstream filter '{bsf}' — the compressed "
-            "stream is re-stamped to Annex-B without re-encoding"
-        )
+    auto_v = bsf_for_copy(_container_from_path(in_path) or "",
+                          edit.output.container, codec)
+    auto_a = None
     # Audio direction: AAC in MPEG-TS is ADTS-framed; MP4/MOV need the ADTS
     # header stripped. The codec name only comes from the probe.
     if not audio_remove and metadata is not None and metadata.audio_codec:
-        absf = audio_bsf_for_copy(
+        auto_a = audio_bsf_for_copy(
             _container_from_path(in_path) or "",
             edit.output.container,
             metadata.audio_codec,
         )
-        if absf:
-            opts += ["-bsf:a", absf]
+    defaults: list[str] = []
+    user_bsfs = edit.bitstream_filters or []
+    vchain: list[str] = []
+    if auto_v:
+        vchain.append(auto_v)
+        defaults.append(
+            f"remuxing to MPEG-TS needs bitstream filter '{auto_v}' — the compressed "
+            "stream is re-stamped to Annex-B without re-encoding"
+        )
+    for b in user_bsfs:
+        if (bsf_spec(b.name) or {}).get("kind") in ("video", "both") \
+                and b.name not in vchain:
+            vchain.append(_bsf_arg(b))
             defaults.append(
-                f"remuxing AAC to MP4/MOV needs bitstream filter '{absf}' — the "
+                f"bitstream filter '{b.name}' applied to the compressed video "
+                "stream (no re-encode)"
+            )
+    for name in vchain:
+        opts += ["-bsf:v", name]
+    if not audio_remove:
+        achain: list[str] = []
+        if auto_a:
+            achain.append(auto_a)
+            defaults.append(
+                f"remuxing AAC to MP4/MOV needs bitstream filter '{auto_a}' — the "
                 "ADTS header is stripped from the compressed stream without re-encoding"
             )
+        for b in user_bsfs:
+            if (bsf_spec(b.name) or {}).get("kind") == "audio" \
+                    and b.name not in achain:
+                achain.append(_bsf_arg(b))
+                defaults.append(
+                    f"bitstream filter '{b.name}' applied to the compressed audio "
+                    "stream (no re-encode)"
+                )
+        for name in achain:
+            opts += ["-bsf:a", name]
     if sub_path:
         defaults.append(
             f"subtitles muxed as a selectable {sub_enc} track from '{sub_path}' "
@@ -1188,13 +1382,24 @@ def _build_audio_plan(edit: EditPlan, in_path: str, out_path: str,
             edit.output.container,
             codec,
         )
+        achain: list[str] = []
         if absf:
-            opts += ["-bsf:a", absf]
+            achain.append(absf)
             defaults.append(
                 f"remuxing {codec} to {edit.output.container} needs bitstream "
                 f"filter '{absf}' — the compressed stream is re-stamped without "
                 "re-encoding"
             )
+        for b in edit.bitstream_filters or []:
+            if (bsf_spec(b.name) or {}).get("kind") == "audio" \
+                    and b.name not in achain:
+                achain.append(_bsf_arg(b))
+                defaults.append(
+                    f"bitstream filter '{b.name}' applied to the compressed audio "
+                    "stream (no re-encode)"
+                )
+        for name in achain:
+            opts += ["-bsf:a", name]
     else:
         ac = REGISTRY["audio_codecs"][edit.output.audio_codec]
         opts += ["-c:a", ac["encoder"]]

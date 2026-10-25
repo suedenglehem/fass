@@ -28,6 +28,8 @@ _FILTER_FLAG = re.compile(r"^[TSC.-]+$")
 # is built from [D.E]; the legend rows (" D. = Demuxing supported") carry "="
 # as the name column.
 _MUX_FLAG = re.compile(r"^[DE.]+$")
+_BSF_FLAG = re.compile(r"^[VAS.]+$")
+_BSF_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass
@@ -54,6 +56,7 @@ class FfmpegInfo:
     encoders: set[str] = field(default_factory=set)
     filters: set[str] = field(default_factory=set)
     muxers: set[str] = field(default_factory=set)
+    bsfs: set[str] = field(default_factory=set)
 
 
 def ffprobe_available() -> bool:
@@ -164,10 +167,11 @@ def probe_media(path: str) -> MediaInfo | None:
 
 
 def probe_ffmpeg() -> FfmpegInfo | None:
-    """Inspect the local FFmpeg build for encoders, filters and muxers.
+    """Inspect the local FFmpeg build for encoders, filters, muxers and
+    bitstream filters.
 
-    Muxer availability is build-specific (e.g. the ADTS ``aac`` muxer is
-    absent from some builds), so it is probed, never assumed."""
+    Muxer and bsf availability is build-specific (e.g. the ``showinfo``
+    bsf only exists from FFmpeg 7.1), so it is probed, never assumed."""
     if not ffmpeg_available():
         return None
     info = FfmpegInfo()
@@ -195,6 +199,19 @@ def probe_ffmpeg() -> FfmpegInfo | None:
             if len(parts) >= 2 and _MUX_FLAG.match(parts[0]) and parts[1] != "=":
                 names.add(parts[1])
         info.muxers = names
+    bsf = _run(["ffmpeg", "-hide_banner", "-bsfs"])
+    if bsf:
+        names = set()
+        for line in bsf.splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            # 6.1 prints bare names; other builds use a flag column
+            # ("  V name   description") — take the second token then.
+            name = parts[1] if (len(parts) >= 2 and _BSF_FLAG.match(parts[0])) else parts[0]
+            if _BSF_NAME.match(name):
+                names.add(name)
+        info.bsfs = names
     return info
 
 

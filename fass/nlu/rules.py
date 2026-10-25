@@ -20,6 +20,7 @@ from fass.registry import (
     REGISTRY,
     all_filter_names,
     audio_codec_for,
+    bsf_specs,
     audio_codec_option_keys,
     audio_codecs_for,
     audio_container_for_codec,
@@ -46,6 +47,7 @@ from fass.schema import (
     AudioMode,
     AudioReplaceOp,
     AudioResampleOp,
+    BitstreamFilterSpec,
     Clarification,
     CropOp,
     EditPlan,
@@ -87,7 +89,11 @@ SUPPORTED_SUMMARY = (
     "sync', 'qsv preset=fast'), and per-encoder private options ('with crf "
     "18', 'x264-params keyint=24', 'dialnorm -27', 'vbr 4'); container "
     "format options ('faststart', "
-    "'hls_time=6', 'mpegts_flags=resend_headers'); one image watermark "
+    "'hls_time=6', 'mpegts_flags=resend_headers'); bitstream filters on the "
+    "compressed stream without re-encoding ('apply the h264_metadata filter "
+    "level=4.1', 'remux with trace_headers'), and stream-copy trim ('copy "
+    "trim from 00:10 to 00:30' — no re-encode, video keyframe-accurate); one "
+    "image watermark "
     "(position, margin, scale), subtitles from an srt/ass/ssa/vtt file "
     "('add subtitles from subs.srt' — burned in by default, or soft/"
     "selectable on request). Inputs may also be remote streams (http(s)://, "
@@ -912,6 +918,63 @@ def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
     return out
 
 
+# ---------------------------------------------------------------- bitstream filters
+
+# FFmpeg has NO 'trim' bitstream filter ('trim' is a decode-time video
+# filter): a copy-cut phrasing switches the trim to stream-copy mode
+# (-ss/-t with -c copy, keyframe-accurate video, sample-accurate audio).
+_COPY_TRIM_RX = re.compile(
+    r"\bstream[\s-]?copy\s+(?:trim|cut)\b"
+    r"|\bcopy\s+(?:trim|cut)\b"
+    r"|\bfast\s+(?:trim|cut)\b"
+    r"|\b(?:trim|cut)\w*[^\n.!?]{0,48}\bwithout\s+re-?encod\w+\b"
+    r"|\bno\s+re-?encod\w+[^\n.!?]{0,48}\b(?:trim|cut)\b",
+    re.I,
+)
+
+
+def _copy_trim_requested(t: str) -> bool:
+    """True when the instruction asks for a stream-copy cut (see
+    _COPY_TRIM_RX)."""
+    return bool(_COPY_TRIM_RX.search(t))
+
+
+def _detect_bitstream_filters(t: str) -> list[dict]:
+    """Bitstream filters named in the instruction (registry-driven): a
+    known filter name anywhere in the text, plus key=value option tokens
+    whose key is valid for that filter. Returns
+    [{'name': ..., 'options': {...}}] ordered by first mention. 'trim' is
+    not a filter — copy-cut phrasings go through _copy_trim_requested.
+    Each option token is claimed by the first (in text order) filter whose
+    spec has that key, so 'h264_metadata level=4.1 aud=insert' is unambiguous."""
+    specs = bsf_specs()
+    positions: dict[str, int] = {}
+    for name in specs:
+        if name == "trim":
+            continue
+        m = re.search(rf"\b{re.escape(name)}\b", t, re.I)
+        if m:
+            positions[name] = m.start()
+    found = [
+        {"name": name, "options": {}}
+        for name in sorted(positions, key=positions.get)
+    ]
+    if not found:
+        return found
+    claimed: set[str] = set()
+    for m in re.finditer(r"\b([a-z][a-z0-9_]+)=([^\s,;]+)\b", t):
+        key, value = m.group(1), m.group(2)
+        if key in claimed:
+            continue
+        for f in found:
+            opts = specs[f["name"]].get("options", {})
+            if key in opts and key not in f["options"]:
+                f["options"][key] = value
+                claimed.add(key)
+                break
+    return found
+
+
 # ---------------------------------------------------------------- codec options
 
 # explicit 'key=value' encoder options (M8) — the key class needs the
@@ -1326,42 +1389,65 @@ class RulesAdapter:
             return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
 
         # 2. detect
-        trim, trim_note, trim_clar = _resolve_trim(t, media.duration if media else None)
-        crop, crop_clar, crop_frag, crop_spans = _detect_crop(t)
-        resize, resize_clar = _detect_resize(t, exclude=crop_spans)
-        speed, speed_clar, speed_frag = _detect_speed(t)
-        rotate, rotate_clar, rotate_frag, rotate_note = _detect_rotate(t)
-        audio_resample, rs_clar, rs_frag = _detect_resample(t)
-        pixel_format = _detect_pixel_format(t)
-        gpu = _detect_gpu(t)
-        qsv = _detect_qsv(t)
-        video_codec_opts, audio_codec_opts = _detect_codec_options(t)
+        # Bitstream filters claim their name and option tokens up front
+        # (e.g. 'flip=horizontal' for h264_metadata), so the keyword
+        # detectors (flip, rotate, width/height, encoder level) cannot
+        # double-read them. The mask is length-preserving, so every span
+        # and index computed on it stays valid for the original text.
+        bsfs = _detect_bitstream_filters(t)
+        if bsfs:
+            t_det = t
+            for f in bsfs:
+                t_det = re.sub(rf"\b{re.escape(f['name'])}\b",
+                               lambda m: " " * len(m.group(0)), t_det)
+                for k, v in f["options"].items():
+                    t_det = t_det.replace(f"{k}={v}", " " * (len(k) + len(v) + 1))
+        else:
+            t_det = t
+        trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
+        crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
+        resize, resize_clar = _detect_resize(t_det, exclude=crop_spans)
+        speed, speed_clar, speed_frag = _detect_speed(t_det)
+        rotate, rotate_clar, rotate_frag, rotate_note = _detect_rotate(t_det)
+        audio_resample, rs_clar, rs_frag = _detect_resample(t_det)
+        pixel_format = _detect_pixel_format(t_det)
+        gpu = _detect_gpu(t_det)
+        qsv = _detect_qsv(t_det)
+        video_codec_opts, audio_codec_opts = _detect_codec_options(t_det)
+        # bitstream filters claimed their own option tokens (e.g. a 'level'
+        # for h264_metadata must not double-land as an encoder level)
+        bsf_keys = {k for f in bsfs for k in f["options"]}
+        if bsf_keys:
+            video_codec_opts = {k: v for k, v in video_codec_opts.items()
+                                if k not in bsf_keys}
+            audio_codec_opts = {k: v for k, v in audio_codec_opts.items()
+                                if k not in bsf_keys}
         # an explicit 'preset=X' / 'profile=X' token is a codec option —
         # the NL field detectors must not also claim the same word
         video_profile = None if "profile" in video_codec_opts \
-            else _detect_profile(t)
+            else _detect_profile(t_det)
         video_preset = None if "preset" in video_codec_opts \
-            else _detect_preset(t)
-        audio = _detect_audio(t)
-        watermark, wm_clar, wm_note = _detect_watermark(t, assets)
-        audio_replace, ar_clar, ar_note = _detect_audio_replace(t, assets)
+            else _detect_preset(t_det)
+        audio = _detect_audio(t_det)
+        watermark, wm_clar, wm_note = _detect_watermark(t_det, assets)
+        audio_replace, ar_clar, ar_note = _detect_audio_replace(t_det, assets)
         # a subtitle DUMP must win over the burn/soft subtitle detector,
         # which would ask for a subtitle file the user never intends to give
-        sub_dump = _detect_subtitle_dump(t)
+        sub_dump = _detect_subtitle_dump(t_det)
         subtitle, sub_clar, sub_note = (
-            (None, None, None) if sub_dump else _detect_subtitles(t, assets))
+            (None, None, None) if sub_dump else _detect_subtitles(t_det, assets))
         if audio_replace is not None and audio in ("remove", "conflict"):
             audio = None  # a replacement wins over remove / keep+remove
-        grayscale = GRAYSCALE_RE.search(t) is not None
-        codec = _detect_codec(t)
-        container, unsupported_container = _detect_container(t)
-        audio_codec = _detect_audio_codec(t)
-        audio_container = _detect_audio_container(t)
+        grayscale = GRAYSCALE_RE.search(t_det) is not None
+        codec = _detect_codec(t_det)
+        container, unsupported_container = _detect_container(t_det)
+        audio_codec = _detect_audio_codec(t_det)
+        audio_container = _detect_audio_container(t_det)
         # 'lossless' resolves to a real codec instead of a question: FLAC
         # for an audio output, ProRes for a video one (visible as a note)
         lossless_note: str | None = None
-        if _LOSSLESS.search(t) and codec is None and audio_codec is None:
-            if audio_container is not None or re.search(r"\b(?:audio|sound|music)\b", t, re.I):
+        if _LOSSLESS.search(t_det) and codec is None and audio_codec is None:
+            if audio_container is not None or re.search(r"\b(?:audio|sound|music)\b", t_det, re.I):
                 audio_codec = "flac"
                 lossless_note = "lossless interpreted as FLAC (lossless audio codec)"
             else:
@@ -1370,16 +1456,16 @@ class RulesAdapter:
         # the output MODE: subtitle dump > audio-only > video. An audio
         # container/codec word alone implies audio mode, but only when it
         # is not the audio of a named video ('h264 with aac audio').
-        audio_wanted = _AUDIO_ONLY.search(t) is not None
+        audio_wanted = _AUDIO_ONLY.search(t_det) is not None
         mode = ("subtitles" if sub_dump else
                 "audio" if (audio_wanted or (
                     audio_container is not None and container is None and codec is None))
                 else "video")
-        bitrate_is_audio = _bitrate_is_audio(t, mode)
-        audio_bitrate = _detect_bitrate(t, True) if bitrate_is_audio else None
-        video_bitrate = _detect_bitrate(t, False) if not bitrate_is_audio else None
+        bitrate_is_audio = _bitrate_is_audio(t_det, mode)
+        audio_bitrate = _detect_bitrate(t_det, True) if bitrate_is_audio else None
+        video_bitrate = _detect_bitrate(t_det, False) if not bitrate_is_audio else None
         filters, filtergraph, filter_note, filter_clar, filter_frag = \
-            _detect_filters(t, media.duration if media else None)
+            _detect_filters(t_det, media.duration if media else None)
         if unsupported_container:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
@@ -1422,7 +1508,7 @@ class RulesAdapter:
                 defaults=[trim_note] if trim_note else [],
             )
 
-        ambiguous = _scan_ambiguous(t, resize)
+        ambiguous = _scan_ambiguous(t_det, resize)
 
         # 3. revision: keep the previous watermark's image when the follow-up
         #    only repositions it (the new text may not name the file again)
@@ -1534,6 +1620,8 @@ class RulesAdapter:
         else:
             plan = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
             plan.trim = trim
+            if trim is not None and _copy_trim_requested(t_det):
+                trim.stream_copy = True
             ops = []
             if resize is not None:
                 ops.append(resize)
@@ -1577,6 +1665,12 @@ class RulesAdapter:
         notes: list[str] = []
         if trim_note:
             notes.append(trim_note)
+        if plan.trim is not None and plan.trim.stream_copy:
+            notes.append(
+                "stream-copy cut (no re-encode): -ss/-t with -c copy — video "
+                "starts at the first keyframe at/after the requested start "
+                "(keyframe-accurate), audio is sample-accurate"
+            )
         if rotate_note:
             notes.append(rotate_note)
         if wm_note:
@@ -1605,6 +1699,7 @@ class RulesAdapter:
                     and not video_codec_opts and not audio_codec_opts \
                     and not filters and filtergraph is None \
                     and not _detect_format_options(t, container) \
+                    and not bsfs \
                     and not re.search(r"\bconvert\w*|\btranscod\w*|\bexport\w*|\bsave\w*|\brender\w*|\bturn\b|\bextract\w*", t):
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -1751,6 +1846,15 @@ class RulesAdapter:
                 plan.output.format_options = format_options
                 notes.append("format options: "
                              + ", ".join(f"{k}={v}" for k, v in format_options.items()))
+            if bsfs:
+                plan.bitstream_filters = [
+                    BitstreamFilterSpec(name=f["name"], options=f["options"])
+                    for f in bsfs
+                ]
+                notes.append("bitstream filter(s): " + ", ".join(
+                    f["name"] + ("" if not f["options"] else
+                                 " (" + ", ".join(f"{k}={v}" for k, v in f["options"].items()) + ")")
+                    for f in bsfs))
             if filtergraph is not None:
                 plan.filtergraph = filtergraph
                 notes.append("custom filtergraph set")
@@ -1792,6 +1896,10 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     everything the instruction does not mention (FR-6)."""
     plan = previous.model_copy(deep=True)
     changed: list[str] = []
+    # a stream-copy cut phrasing ('copy trim ...') applies to this
+    # revision's trim, before it is merged below
+    if trim is not None and _copy_trim_requested(t):
+        trim.stream_copy = True
 
     # --- a mode switch resets the fields the new mode forbids ------------
     if mode is not None and mode != plan.output.mode:
@@ -2079,5 +2187,26 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
         plan.output.format_options = {**plan.output.format_options, **fo}
         changed.append("format options: "
                        + ", ".join(f"{k}={v}" for k, v in fo.items()))
+
+    # bitstream filters: a named filter replaces the current list (a new
+    # 'h264_metadata level=5.1' means 'set it to 5.1')
+    bsfs = _detect_bitstream_filters(t)
+    if bsfs:
+        plan.bitstream_filters = [
+            BitstreamFilterSpec(name=f["name"], options=f["options"])
+            for f in bsfs
+        ]
+        changed.append("bitstream filter(s): "
+                       + ", ".join(f["name"] for f in bsfs))
+    elif re.search(r"\bremove\s+(?:the\s+)?(?:bitstream\s+filters?|bsfs?)\b", t, re.I) \
+            and plan.bitstream_filters:
+        plan.bitstream_filters = None
+        changed.append("bitstream filters removed")
+    # 'frame-accurate' / 're-encode the trim' switches a copy cut back to
+    # a re-encoding trim
+    if plan.trim is not None and plan.trim.stream_copy and re.search(
+            r"\bframe[\s-]?accurate\b|\bre-?encode\s+(?:the\s+)?trim\b", t, re.I):
+        plan.trim.stream_copy = False
+        changed.append("trim switched back to re-encoding (frame-accurate)")
 
     return plan, changed

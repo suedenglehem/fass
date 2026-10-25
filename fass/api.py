@@ -75,7 +75,10 @@ class CommandRequest(BaseModel):
         description="output filename, or a stream URL to send the output to "
                     "(rtmp://, rtmps://, rtsp://, rtsps://, srt://, udp://, rtp://, "
                     "tcp://, http://, https:// — http(s) derive the container from "
-                    "the URL path extension, defaulting to mpegts)"
+                    "the URL path extension, defaulting to mpegts); a name "
+                    "starting with '/input/' is written into the input folder "
+                    "instead of the output folder, so a later command can "
+                    "reference it by bare name (chained ffmpeg processings)"
     )
     target_shell: Literal["posix"] = "posix"
     previous_plan: EditPlan | None = None
@@ -227,6 +230,22 @@ def create_app() -> FastAPI:
                 for enc, opts in REGISTRY["codec_options"].items()
                 if enc != "description" and isinstance(opts, dict)
             },
+            # bitstream filters addressable by name (-bsf:v/-bsf:a), with
+            # their options, codec constraints and min_version — the same
+            # table the NLU and the argv validator enforce
+            "bitstream_filters": {
+                name: {
+                    "kind": spec.get("kind"),
+                    "codecs": spec.get("codecs"),
+                    "min_version": spec.get("min_version"),
+                    "diagnostic": bool(spec.get("diagnostic")),
+                    "copy_cut": bool(spec.get("copy_cut")),
+                    "options": sorted(spec["options"]) if spec.get("options") else [],
+                    "description": spec.get("description"),
+                }
+                for name, spec in REGISTRY["bitstream_filters"]["specs"].items()
+                if name != "description"
+            },
         }
 
     @app.get("/v1/env")
@@ -252,12 +271,18 @@ def create_app() -> FastAPI:
             encoders[f"audio:{name}"] = {
                 "encoder": spec["encoder"], "present": spec["encoder"] in ff.encoders,
             }
+        bsfs = {}
+        for name, spec in REGISTRY["bitstream_filters"]["specs"].items():
+            if name == "description":
+                continue
+            bsfs[name] = {"present": name in ff.bsfs}
         return {
             "available": True,
             "build": ff.version,
             "registry_version": REGISTRY["registry_version"],
             "encoders": encoders,
             "filters": {n: n in ff.filters for n in ("scale", "pad", "hue", "overlay", "format")},
+            "bsfs": bsfs,
             "execution": execute.execution_enabled(),
             "gpu": load_config().gpu.model_dump(),
         }
@@ -395,6 +420,15 @@ def create_app() -> FastAPI:
         path = execute.output_file(filename)
         if path is None:
             raise HTTPException(404, "file not found in the /output volume")
+        return FileResponse(path, filename=path.name)
+
+    @app.get("/media/run/{run_id}/output")
+    def run_output(run_id: str):
+        """The run's output file, whichever volume it landed in — /output,
+        or the input folder for a chained processing ('/input/<name>')."""
+        path = execute.run_output_file(run_id)
+        if path is None:
+            raise HTTPException(404, "output file not found for this run")
         return FileResponse(path, filename=path.name)
 
     @app.get("/", response_class=HTMLResponse)

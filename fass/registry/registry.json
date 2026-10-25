@@ -741,9 +741,148 @@
     "min": 16, "max": 8192
   },
   "bitstream_filters": {
-    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; when remuxing AAC audio out of MPEG-TS into MP4/MOV, the ADTS header must be stripped. Filters run on the compressed stream only, without re-encoding. For audio-only copy (extracting an audio track), the same AAC rule applies: AAC in MPEG-TS is ADTS-framed, MP4/MOV/M4A need the header stripped.",
+    "description": "Stream-copy (remux) bitstream filters. When remuxing from an MP4/MOV container to MPEG-TS, H.264/HEVC must be restamped into Annex-B form; when remuxing AAC audio out of MPEG-TS into MP4/MOV, the ADTS header must be stripped. Filters run on the compressed stream only, without re-encoding. For audio-only copy (extracting an audio track), the same AAC rule applies: AAC in MPEG-TS is ADTS-framed, MP4/MOV/M4A need the header stripped. 'specs' is the table of user-requestable bitstream filters (plan field bitstream_filters): name + per-filter key=value options. FFmpeg has NO 'trim' bitstream filter ('trim' is a decode-time video filter) — fass maps 'trim' in a copy context to a stream-copy cut (TrimSpec.stream_copy): -ss/-t with -c copy, video keyframe-accurate. Codec names below are FFmpeg/ffprobe names; min_version marks options/filters missing from the older tested build (6.1.1) — the planner warns, it cannot know the deployment's ffmpeg version at plan time.",
     "mp4_mov_to_mpegts": { "h264": "h264_mp4toannexb", "h265": "hevc_mp4toannexb" },
-    "mpegts_to_mp4_mov": { "aac": "aac_adtstoasc" }
+    "mpegts_to_mp4_mov": { "aac": "aac_adtstoasc" },
+    "specs": {
+      "trace_headers": {
+        "kind": "video", "diagnostic": true,
+        "codecs": ["apv", "av1", "h264", "hevc", "lcevc", "mjpeg", "mpeg2video", "vp8", "vp9", "vvc"],
+        "description": "Print every packet's header to the log (diagnostic — output bytes unchanged). apv/lcevc/vp8 recognized from FFmpeg 9.0."
+      },
+      "showinfo": {
+        "kind": "video", "diagnostic": true, "min_version": "7.1",
+        "codecs": null,
+        "description": "Print detailed packet/frame info (sizes, PTS/DTS, dimensions) to the log (diagnostic — output bytes unchanged). FFmpeg 7.1+; NOT present in the 6.1.1 build."
+      },
+      "setts": {
+        "kind": "both",
+        "codecs": null,
+        "description": "Rewrite packet PTS/DTS/duration by expression (e.g. shift timestamps). Works on video and audio streams, any codec.",
+        "options": {
+          "ts": { "kind": "string", "description": "expression for packet PTS and DTS (default TS — unchanged)" },
+          "pts": { "kind": "string", "description": "expression for packet PTS" },
+          "dts": { "kind": "string", "description": "expression for packet DTS" },
+          "duration": { "kind": "string", "description": "expression for packet duration (default DURATION — unchanged)" },
+          "time_base": { "kind": "rational", "range": [0, 2147483647], "description": "output timebase (default 0/1 = unchanged)" },
+          "prescale": { "kind": "bool", "min_version": "9.0", "description": "convert to output timebase before evaluation (FFmpeg 9+)" }
+        }
+      },
+      "prores_metadata": {
+        "kind": "video", "codecs": ["prores"],
+        "description": "Set colour metadata in the ProRes stream (SDR/HDR tags).",
+        "options": {
+          "color_primaries": { "kind": "choice", "values": ["auto", "unknown", "bt709", "bt470bg", "smpte170m", "bt2020", "smpte431", "smpte432"], "description": "select color primaries (default auto — keep)" },
+          "color_trc": { "kind": "choice", "values": ["auto", "unknown", "bt709", "smpte2084", "arib-std-b67"], "description": "select color transfer (default auto — keep)" },
+          "colorspace": { "kind": "choice", "values": ["auto", "unknown", "bt709", "smpte170m", "bt2020nc"], "description": "select colorspace (default auto — keep)" }
+        }
+      },
+      "mpeg2_metadata": {
+        "kind": "video", "codecs": ["mpeg2video"],
+        "description": "Set MPEG-2 sequence header metadata (aspect, rate, colour tags).",
+        "options": {
+          "display_aspect_ratio": { "kind": "rational", "range": [0, 65535], "description": "display aspect ratio (table 6-3)" },
+          "frame_rate": { "kind": "rational", "range": [0, 4294967295], "description": "frame rate (table 6-5)" },
+          "video_format": { "kind": "int", "range": [-1, 7], "description": "video format (table 6-6); -1 keep" },
+          "colour_primaries": { "kind": "int", "range": [-1, 255], "description": "colour primaries (table 6-7); -1 keep" },
+          "transfer_characteristics": { "kind": "int", "range": [-1, 255], "description": "transfer characteristics (table 6-8); -1 keep" },
+          "matrix_coefficients": { "kind": "int", "range": [-1, 255], "description": "matrix coefficients (table 6-9); -1 keep" }
+        }
+      },
+      "h264_mp4toannexb": {
+        "kind": "video", "codecs": ["h264"],
+        "description": "Restamp MP4/MOV-form H.264 to Annex-B byte stream. Also applied automatically when remuxing mp4/mov -> mpegts."
+      },
+      "hevc_mp4toannexb": {
+        "kind": "video", "codecs": ["hevc"],
+        "description": "Restamp MP4/MOV-form H.265 to Annex-B byte stream. Also applied automatically when remuxing mp4/mov -> mpegts."
+      },
+      "hevc_metadata": {
+        "kind": "video", "codecs": ["hevc"],
+        "description": "Set/rewrite H.265 VPS/SPS/PPS metadata (colour, crop, level, VUI).",
+        "options": {
+          "aud": { "kind": "choice", "values": ["pass", "insert", "remove"], "description": "Access Unit Delimiter NAL units (default pass)" },
+          "sample_aspect_ratio": { "kind": "rational", "range": [0, 65535], "description": "sample aspect ratio (table E-1)" },
+          "video_format": { "kind": "int", "range": [-1, 7], "description": "video format (table E-2); -1 keep" },
+          "video_full_range_flag": { "kind": "int", "range": [-1, 1], "description": "video full range flag; -1 keep" },
+          "colour_primaries": { "kind": "int", "range": [-1, 255], "description": "colour primaries (table E-3); -1 keep" },
+          "transfer_characteristics": { "kind": "int", "range": [-1, 255], "description": "transfer characteristics (table E-4); -1 keep" },
+          "matrix_coefficients": { "kind": "int", "range": [-1, 255], "description": "matrix coefficients (table E-5); -1 keep" },
+          "chroma_sample_loc_type": { "kind": "int", "range": [-1, 5], "description": "chroma sample location type (figure E-1); -1 keep" },
+          "tick_rate": { "kind": "rational", "range": [0, 4294967295], "description": "VPS and VUI tick rate (time_scale / num_units_in_tick)" },
+          "num_ticks_poc_diff_one": { "kind": "int", "range": [-1, 2147483647], "description": "ticks per POC increment; -1 keep" },
+          "crop_left": { "kind": "int", "range": [-1, 16888], "description": "left border crop offset; -1 keep" },
+          "crop_right": { "kind": "int", "range": [-1, 16888], "description": "right border crop offset; -1 keep" },
+          "crop_top": { "kind": "int", "range": [-1, 16888], "description": "top border crop offset; -1 keep" },
+          "crop_bottom": { "kind": "int", "range": [-1, 16888], "description": "bottom border crop offset; -1 keep" },
+          "width": { "kind": "int", "range": [-1, 16888], "min_version": "9.0", "description": "width after crop (FFmpeg 9+); -1 keep" },
+          "height": { "kind": "int", "range": [-1, 16888], "min_version": "9.0", "description": "height after crop (FFmpeg 9+); -1 keep" },
+          "level": { "kind": "choice", "values": ["auto", "1", "2", "2.1", "3", "3.1", "4", "4.1", "5", "5.1", "5.2", "6", "6.1", "6.2", "8.5"], "description": "level (tables A.6/A.7); auto guesses from stream properties" }
+        }
+      },
+      "h264_metadata": {
+        "kind": "video", "codecs": ["h264"],
+        "description": "Set/rewrite H.264 SPS/PPS/VUI metadata, SEIs and level.",
+        "options": {
+          "aud": { "kind": "choice", "values": ["pass", "insert", "remove"], "description": "Access Unit Delimiter NAL units (default pass)" },
+          "sample_aspect_ratio": { "kind": "rational", "range": [0, 65535], "description": "sample aspect ratio (table E-1)" },
+          "overscan_appropriate_flag": { "kind": "int", "range": [-1, 1], "description": "VUI overscan appropriate flag; -1 keep" },
+          "video_format": { "kind": "int", "range": [-1, 7], "description": "video format (table E-2); -1 keep" },
+          "video_full_range_flag": { "kind": "int", "range": [-1, 1], "description": "video full range flag; -1 keep" },
+          "colour_primaries": { "kind": "int", "range": [-1, 255], "description": "colour primaries (table E-3); -1 keep" },
+          "transfer_characteristics": { "kind": "int", "range": [-1, 255], "description": "transfer characteristics (table E-4); -1 keep" },
+          "matrix_coefficients": { "kind": "int", "range": [-1, 255], "description": "matrix coefficients (table E-5); -1 keep" },
+          "chroma_sample_loc_type": { "kind": "int", "range": [-1, 5], "description": "chroma sample location type (figure E-1); -1 keep" },
+          "tick_rate": { "kind": "rational", "range": [0, 4294967295], "description": "VUI tick rate (time_scale / num_units_in_tick)" },
+          "fixed_frame_rate_flag": { "kind": "int", "range": [-1, 1], "description": "VUI fixed frame rate flag; -1 keep" },
+          "zero_new_constraint_set_flags": { "kind": "bool", "description": "zero constraint_set4_flag / constraint_set5_flag" },
+          "crop_left": { "kind": "int", "range": [-1, 16880], "description": "left border crop offset; -1 keep" },
+          "crop_right": { "kind": "int", "range": [-1, 16880], "description": "right border crop offset; -1 keep" },
+          "crop_top": { "kind": "int", "range": [-1, 16880], "description": "top border crop offset; -1 keep" },
+          "crop_bottom": { "kind": "int", "range": [-1, 16880], "description": "bottom border crop offset; -1 keep" },
+          "sei_user_data": { "kind": "string", "description": "insert SEI user data (UUID+string)" },
+          "delete_filler": { "kind": "int", "range": [0, 1], "description": "delete all filler (NAL and SEI)" },
+          "display_orientation": { "kind": "choice", "values": ["pass", "insert", "remove", "extract"], "description": "display orientation SEI (default pass)" },
+          "rotate": { "kind": "number", "range": [-360, 360], "description": "rotation in display orientation SEI (anticlockwise degrees)" },
+          "flip": { "kind": "flagset", "values": ["horizontal", "vertical"], "description": "flip in display orientation SEI" },
+          "level": { "kind": "choice", "values": ["auto", "1", "1b", "1.1", "1.2", "1.3", "2", "2.1", "2.2", "3", "3.1", "3.2", "4", "4.1", "4.2", "5", "5.1", "5.2", "6", "6.1", "6.2"], "description": "level (table A-1); auto guesses from stream properties" }
+        }
+      },
+      "filter_units": {
+        "kind": "video",
+        "codecs": ["apv", "av1", "h264", "hevc", "lcevc", "mjpeg", "mpeg2video", "vp8", "vp9", "vvc"],
+        "description": "Pass through, remove or discard selected NAL/AVC unit types. apv/lcevc/vp8 recognized from FFmpeg 9.0.",
+        "options": {
+          "pass_types": { "kind": "string", "description": "comma-separated unit types to pass through (e.g. vcl, sps)" },
+          "remove_types": { "kind": "string", "description": "comma-separated unit types to remove" },
+          "discard": { "kind": "choice", "values": ["none", "default", "nonref", "bidir", "nonintra", "nonkey", "all"], "description": "remove the selected frames (default none)" },
+          "discard_flags": { "kind": "flagset", "values": ["keep_non_vcl"], "description": "flags controlling discard behavior" }
+        }
+      },
+      "av1_metadata": {
+        "kind": "video", "codecs": ["av1"],
+        "description": "Set/rewrite AV1 OBU sequence header metadata (colour, ticks, padding).",
+        "options": {
+          "td": { "kind": "choice", "values": ["pass", "insert", "remove"], "description": "Temporal Delimiter OBU (default pass)" },
+          "color_primaries": { "kind": "int", "range": [-1, 255], "description": "color primaries (section 6.4.2); -1 keep" },
+          "transfer_characteristics": { "kind": "int", "range": [-1, 255], "description": "transfer characteristics (section 6.4.2); -1 keep" },
+          "matrix_coefficients": { "kind": "int", "range": [-1, 255], "description": "matrix coefficients (section 6.4.2); -1 keep" },
+          "color_range": { "kind": "choice", "values": ["tv", "pc"], "description": "color range flag (tv = limited, pc = full); -1 keep" },
+          "chroma_sample_position": { "kind": "choice", "values": ["unknown", "vertical", "colocated"], "description": "chroma sample position (section 6.4.2); -1 keep" },
+          "tick_rate": { "kind": "rational", "range": [0, 4294967295], "description": "display tick rate (time_scale / num_units_in_display_tick)" },
+          "num_ticks_per_picture": { "kind": "int", "range": [-1, 2147483647], "description": "display ticks per picture for CFR streams; -1 keep" },
+          "delete_padding": { "kind": "bool", "description": "delete all Padding OBUs" }
+        }
+      },
+      "aac_adtstoasc": {
+        "kind": "audio", "codecs": ["aac"],
+        "description": "Strip the ADTS header from AAC frames (MPEG-TS -> MP4/MOV). Also applied automatically when remuxing mpegts -> mp4/mov."
+      },
+      "trim": {
+        "copy_cut": true, "kind": "video",
+        "description": "FFmpeg has no 'trim' bitstream filter — 'trim' is a decode-time video filter. fass implements 'trim' in a copy context as a stream-copy cut: -ss/-t with forced -c copy. Video is keyframe-accurate (starts at the first keyframe at/after the requested point), audio sample-accurate. Re-encoding trim (default) stays frame-accurate."
+      }
+    }
   },
   "sources": {
     "description": "Generic ffmpeg input sources (the input/output-devices component). An asset whose path is '<format>:<spec>' with an allowlisted format is a source spec, not a file: it gets -f <format> plus ;key=value options as separate option tokens. Output devices carry audio only (pcm) — a plan that produces video cannot target one.",

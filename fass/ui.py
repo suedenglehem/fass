@@ -80,6 +80,18 @@ th { color: var(--muted); font-weight: 600; }
 .portrow input { width: auto; flex: 1; }
 .portrow select { width: auto; }
 .portrow .name { flex: 2; }
+.tip { display: inline-block; width: 14px; height: 14px; line-height: 12px;
+  text-align: center; font-size: 11px; font-weight: 700; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 999px; cursor: help;
+  position: relative; vertical-align: -2px; }
+.tip:hover::after { content: attr(data-tip); position: absolute; left: 50%;
+  top: 20px; transform: translateX(-50%); width: 280px; white-space: normal;
+  background: var(--text); color: var(--bg); font-size: 12px; font-weight: 400;
+  line-height: 1.45; padding: 8px 10px; border-radius: 6px; z-index: 10;
+  box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.tip:hover::before { content: ""; position: absolute; left: 50%; top: 13px;
+  transform: translateX(-50%); border: 5px solid transparent;
+  border-bottom-color: var(--text); z-index: 11; }
 </style>
 </head>
 <body>
@@ -103,8 +115,8 @@ th { color: var(--muted); font-weight: 600; }
     <div class="row">
       <div><label for="inp">Input video (local path or stream URL)</label>
         <input id="inp" required placeholder="clip.mp4 or rtmp://host:1935/live"></div>
-      <div><label for="out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)</label>
-        <input id="out" placeholder="out.mp4, or rtmp://host:1935/live"></div>
+      <div><label for="out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)<span class="tip" data-tip="To chain ffmpeg processings, start the filename with /input/ — e.g. /input/step1.mp4 — and the result is written into the input folder instead of /output. The next run then picks it up by bare name (step1.mp4).">?</span></label>
+        <input id="out" placeholder="out.mp4, /input/step1.mp4, or rtmp://host:1935/live"></div>
     </div>
     <div class="row">
       <div><label for="wm">Watermark image (optional)</label>
@@ -319,7 +331,7 @@ async function loadRuns() {
   for (const run of rows) {
     const tr = document.createElement('tr');
     const out = run.output
-      ? `<a href="/media/output/${encodeURIComponent(run.output)}" target="_blank">${esc(run.output.split('/').pop())}</a>`
+      ? `<a href="/media/run/${encodeURIComponent(run.id)}/output" target="_blank">${esc(run.output.split('/').pop())}</a>`
       : '<span class="note">—</span>';
     const statusCls = run.status === 'success' ? 'b-ready' :
                       run.status === 'running' ? 'b-run' : 'b-bad';

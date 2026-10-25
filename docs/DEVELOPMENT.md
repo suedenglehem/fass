@@ -195,7 +195,7 @@ truth; availability on the installed build is checked by `fass env` /
 | Video scaling & pixel format | `scale` / `pad` filters (resize, letterbox), `-pix_fmt` (8-bit / 10-bit / 4:4:4) | `pixel_formats`; `planner/` scale math |
 | Audio resampler | `-ar` sample rate, `-ac` channels (1 / 2 / 6) | `audio_resample`; `AudioResampleOp` |
 | Encoders & decoders | Registry-driven codec selection (H.264 / H.265 / VP9, AAC / Opus) validated by the codec/container matrix | `video_codecs`, `audio_codecs`, `matrix` |
-| Bitstream filters | Remux in both directions: `h264_mp4toannexb` / `hevc_mp4toannexb` for stream-copies mp4/mov → mpegts (Annex-B restamp), `aac_adtstoasc` for mpegts → mp4/mov (ADTS header stripped from AAC) | `bitstream_filters`; `planner/` copy plan |
+| Bitstream filters | Auto: `h264_mp4toannexb` / `hevc_mp4toannexb` for stream-copies mp4/mov → mpegts (Annex-B restamp), `aac_adtstoasc` for mpegts → mp4/mov (ADTS strip). User-named: 12 registry-validated bsfs (`trace_headers`, `showinfo` 7.1+, `setts`, `prores_metadata`, `mpeg2_metadata`, `hevc_mp4toannexb`, `hevc_metadata`, `h264_metadata`, `filter_units`, `av1_metadata`, `aac_adtstoasc`) plus the `trim` pseudo-entry (stream-copy cut) — any of them in any stream-copy remux, chained after the auto ones, with per-build presence in `fass env` | `bitstream_filters`; `planner/` copy plan; `execute.validate_argv` |
 | Muxers & demuxers | Container matrix (mp4 / mov / mkv / webm / mpegts / flv; rtsp / srt stream-only) + explicit `-f` for stream destinations | `containers`, `matrix`, `streaming.output` |
 | Protocols | Allowlisted URL schemes in and out (http(s), rtmp(s), rtsp(s), srt, udp, rtp, tcp, tls) | `streaming.input_schemes`, `streaming.output` |
 | Input/output devices | Input sources `lavfi` / `v4l2` / `alsa` / `dshow` / `avfoundation` / `x11grab`; audio-only output devices (`alsa`, `pulse`) | `sources` |
@@ -300,6 +300,11 @@ round-trips of hostile filenames and instruction-injection payloads.
 - [x] remux bitstream filters, both directions — mp4/mov → mpegts
   Annex-B restamp + mpegts → mp4/mov ADTS strip (registry
   `bitstream_filters`)
+- [x] user-named bitstream filters — 12 validated bsfs (metadata writers,
+  `setts`, `filter_units`, diagnostics) + `trim` copy-cut pseudo-entry in
+  stream-copy plans; codec/option-validated in NLU, schema, planner and the
+  argv gate; per-build presence (`showinfo` 7.1+) probed in `fass env`
+  (registry `bitstream_filters`)
 - [x] subtitles (burn + soft track) — `SubtitleOp`, libass `subtitles=` /
   `ass=` burn-in, `-c:s mov_text` / `srt` soft mux with stream-copy support
   (registry `subtitles`)

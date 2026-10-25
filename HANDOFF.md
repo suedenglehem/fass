@@ -17,7 +17,124 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-25, M8 COMPLETE — codec options)
+## Current state (2026-10-25, BSF — user-named bitstream filters, dual-build VERIFIED)
+**BSF — user-named bitstream filters in stream-copy plans.** Trigger: user:
+"next i will need you to work on bitstream filters, i need support of :
+trim, trace_headers, showinfo, setts, prores_metadata, mpeg2_metadata,
+hevc_mp4toannexb, hevc_metadata, h264_metadata, filter_units, av1_metadata,
+aac_adtstoasc" + standing rule: both docker (i7 9.0.1) and python
+(local 6.1.1) builds.
+
+**Design:**
+- `trim` is NOT an FFmpeg bsf — registry pseudo-entry (`copy_cut: true`):
+  switches TrimSpec to stream-copy mode (`-ss`/`-t` + forced `-c copy`,
+  keyframe-accurate video / sample-accurate audio); schema validator
+  drops it from the list; every layer rejects `-bsf:v trim` with an
+  explanatory message.
+- 12 real bsfs registry-validated with per-option kinds (level = 22-value
+  choice, flip = flagset, rotate = number, discard = choice,
+  time_base = rational, …); auto bsfs (h264/hevc_mp4toannexb,
+  aac_adtstoasc) unchanged; user bsfs chain AFTER the auto ones, one
+  `-bsf:v`/`-bsf:a` flag each, options sorted + colon-joined
+  (`h264_metadata=flip=horizontal:level=4.1`); duplicates of the auto
+  bsf dedupe to one flag.
+- Layers: NLU `_detect_bitstream_filters` (name + key=value tokens) →
+  **length-preserving mask** so keyword detectors (flip, rotate,
+  width/height, level) can't double-read bsf option tokens → schema
+  `BitstreamFilterSpec` (+EditPlan max 8) → planner: re-encode conflict,
+  device/subtitles conflict, audio-bsf-on-no-audio, codec match (ffprobe
+  name → FFmpeg name), per-build min_version → execute `validate_argv`
+  (name + option kinds, `-c copy` now accepted — the gate used to reject
+  every copy plan).
+- Per-build availability: `FfmpegInfo.bsfs` probed from
+  `ffmpeg -bsfs`; `/v1/env` reports `bsfs: {name: {present}}`
+  (showinfo = 6.1.1: False / 9.0.1: True); `/v1/support` exposes the full
+  spec table. min_version warnings compare the PROBED local version
+  (`local_ffmpeg_version()`, cached) — 6.1.1 warns "the local build is
+  6.1.1, which predates it", 9.0.1 is silent (fix found by the live E2E).
+
+**Changed (uncommitted, with M9):** fass/registry/{registry.json,
+loader.py,__init__.py}, fass/schema/{plan.py,__init__.py},
+fass/nlu/rules.py, fass/planner/planner.py, fass/execute.py,
+fass/probe/ffprobe.py, fass/api.py, tests/test_bsf.py (13 → 48 tests),
+docs/DEVELOPMENT.md (coverage row + checklist).
+
+**Results:**
+- Local 6.1.1: **670 passed** (635 baseline + 35). E2E: bsf chain
+  `h264_mp4toannexb` + `h264_metadata=level=4.1` → mpegts, SPS level
+  probed back as 41; copy-trim through the execution layer
+  (`start_run`), 5.079 s out of a 20 s input.
+- i7 docker 9.0.1 LIVE-VERIFIED (rsync + `compose up -d --build`):
+  /v1/env showinfo present=True; gen with `showinfo` → NO 7.1 warning on
+  9.0.1; bsf chain + copy-trim EXECUTED (exit 0), level 41 + 5.079 s
+  confirmed by in-container ffprobe; artifacts cleaned.
+- i7 host suite job **j_848d7f8076** (patch /tmp/fass-bsf-final.patch):
+  **succeeded — 670 passed / ffmpeg 6.1.1** (PATCH applied, PYTEST
+  "670 passed, 1 warning in 87.83s", 0 failed). Earlier job
+  j_3c90b56228 (pre-min_version-fix patch) had returned 666.
+- M9 i7 suite job j_cec61c3098: **635 passed / 6.1.1** — M9 now
+  dual-verified as well (live chain E2E + host suite).
+
+**Next unfinished tasks:**
+1. Commit M9+BSF (Co-Authored-By) + push only when asked.
+
+## Prior state (2026-10-25, M9 — /input/ output chaining, DUAL-VERIFIED)
+**M9 — output-into-input-folder for chained processings.** Trigger: user:
+"modify output file field in web interface, if filename is '/input/filename',
+output will go into input folder, this will allow to do several ffmpeg
+processings one after another" + "add help tip about /input convention in
+output form, with mouseover css". Standing rule: both docker and python paths.
+
+**Design:** logical, mode-agnostic — a `/input/<name>` output destination
+means "write into the deployment's input folder": `resolve_paths` rewrites it
+to `$FASS_INPUT_DIR/<name>` at run time. In the container the input folder
+IS `/input` → no-op (literal works); local python maps to `$FASS_INPUT_DIR`;
+no input dir → literal passthrough (ffmpeg errors clearly). Chain closes
+because the next run's bare name already resolves against the input folder
+(existing `resolve_input_name`/input rules — no change needed). Planner's
+realpath collision guards stay (output may not equal the input file).
+
+**Changed (uncommitted):**
+- `fass/execute.py` — `resolve_paths` `/input/<name>` branch (+note); new
+  `run_output_file(run_id)` — serves the recorded output of a run from
+  whichever volume it landed in, guarded: real file, realpath inside the
+  input OR output volume dir.
+- `fass/planner/planner.py` — warning "output … lands in the input folder —
+  later commands can reference it by bare name (chained processings)".
+- `fass/api.py` — `output_filename` Field documents the convention; new
+  `GET /media/run/{run_id}/output` (FileResponse).
+- `fass/ui.py` — `?` badge on the Output label with pure-CSS hover tooltip
+  (`.tip` + `:hover::after`/`::before`, `data-tip` attr, dark-mode aware);
+  placeholder now `out.mp4, /input/step1.mp4, or rtmp://…`; Runs-table
+  output link → run-scoped endpoint (also fixes the latent 404 where a
+  resolved full-path `run.output` was percent-encoded into the
+  basename-guarded `/media/output/{filename}`).
+- Tests: 8 new (resolve_paths ×3: rewrite / no-input-dir / docker no-op;
+  `run_output_file` guard ×5 cases; API media ×3 incl. traversal guard;
+  real-ffmpeg chain e2e: run1 → `/input/step1.mp4`, run2 reads bare
+  `step1.mp4` → `step2.mp4`).
+
+**Results:**
+- Local (6.1.1): **635 passed** (627 baseline + 8).
+- i7 docker (container ffmpeg 9.0.1) LIVE-VERIFIED: files scp'd,
+  `compose up -d --build`, healthz ok; chain test
+  (/tmp/chain_test_i7.py): step1 "scale to 480p" +
+  `output_filename=/input/chain1.mp4` → ready, argv tail `/input/chain1.mp4`,
+  input-folder warning present; run1 success (output recorded
+  `/input/chain1.mp4`); `GET /media/run/<id>/output` → 200, 1 651 686 B;
+  step2 "scale to 240p" + `main=chain1.mp4` (bare) → run2 success,
+  `/output/chain2.mp4`. Host files confirmed in docker-data/{input,output},
+  test artifacts cleaned.
+- i7 suite job `j_cec61c3098` (cc-worker, backend i7, base 3db9a64, patch
+  /tmp/fass-input-chain.patch pre-staged): **succeeded — 635 passed /
+  ffmpeg 6.1.1**.
+
+**Next unfinished tasks:**
+1. ~~QUEUED (user): bitstream filters~~ — DONE, see "Current state" above.
+2. Commit M9+BSF (Co-Authored-By) + push only when asked (see top
+   section's task list — that one governs).
+
+## Prior state (2026-10-25, M8 COMPLETE — codec options)
 **M8 — per-encoder private codec options, core DONE, uncommitted.** Trigger:
 user: "add all options of encoders / decoders: NVENC, QSV, ProRes, dvbsub,
 png, libx265, libvvenc, libfdk_aac, flac, opus, ac3, rawvideo" (link to

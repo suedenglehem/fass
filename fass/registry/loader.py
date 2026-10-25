@@ -315,6 +315,49 @@ def audio_bsf_for_copy(source_container: str, target_container: str,
     return REGISTRY["bitstream_filters"]["mpegts_to_mp4_mov"].get(audio_codec)
 
 
+def bsf_specs() -> dict[str, dict]:
+    """{name: spec} of every user-requestable bitstream filter.
+
+    'trim' is a pseudo-entry (copy_cut): FFmpeg has no trim bsf — it stands
+    for a stream-copy cut (-ss/-t with -c copy)."""
+    return REGISTRY["bitstream_filters"]["specs"]
+
+
+def bsf_spec(name: str) -> dict | None:
+    return REGISTRY["bitstream_filters"]["specs"].get(name)
+
+
+def bsf_errors(name: str, options: dict[str, str]) -> list[str]:
+    """Validate a user-requested bitstream filter name and its options
+    against the registry table: the name must exist, every option key must
+    be valid for that filter and every value must match its kind."""
+    spec = bsf_spec(name)
+    if spec is None:
+        allowed = ", ".join(sorted(bsf_specs()))
+        return [f"unknown bitstream filter '{name}' (valid: {allowed})"]
+    if spec.get("copy_cut"):
+        if options:
+            return [
+                f"bitstream filter '{name}' takes no options — the cut comes "
+                "from the trim start/duration"
+            ]
+        return []
+    errors = []
+    for key in sorted(options):
+        opt = spec.get("options", {}).get(key)
+        if opt is None:
+            allowed = ", ".join(sorted(spec.get("options", {}))) or "(none)"
+            errors.append(
+                f"bitstream filter '{name}': option '{key}' is not valid "
+                f"(valid: {allowed})"
+            )
+            continue
+        err = _validate_option_value(f"{name}.{key}", opt, str(options[key]))
+        if err:
+            errors.append(err)
+    return errors
+
+
 # ---------------------------------------------------------------- source specs
 
 # '<format>:<spec>' plus optional ';key=value' device options. The spec may
@@ -441,6 +484,7 @@ _FORMAT_OPTION_GROUPS = {
 _RATE = re.compile(r"^\d+(\.\d+)?[kKmM]?$")
 _NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
 _INT = re.compile(r"^-?\d+$")
+_RATIONAL = re.compile(r"^-?\d+(/\d+)?$")
 _BRAND = re.compile(r"^[a-z0-9]{4}$")
 _META_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_]*$")
 
@@ -469,9 +513,17 @@ def _validate_option_value(key: str, spec: dict, value: str) -> str | None:
         if not _INT.match(value):
             return f"{key}: '{value}' is not an integer"
         v = int(value)
+    elif kind == "rational":
+        if not _RATIONAL.match(value):
+            return f"{key}: '{value}' is not a rational (e.g. 30000/1001)"
+        num, _, den = value.partition("/")
+        d = int(den) if den else 1
+        if d == 0:
+            return f"{key}: rational denominator must be non-zero"
+        v = int(num) / d
     else:
         v = None
-    if kind in ("number", "int") and v is not None:
+    if kind in ("number", "int", "rational") and v is not None:
         if lo is not None and v < lo:
             return f"{key}: {v} is below the minimum {lo}"
         if hi is not None and v > hi:
@@ -515,6 +567,11 @@ def _validate_option_value(key: str, spec: dict, value: str) -> str | None:
     elif kind == "url":
         if " " in value or not value:
             return f"{key}: '{value}' is not a URL"
+    elif kind == "string":
+        # free text (SEI payloads, setts expressions, unit-type lists):
+        # only non-emptiness is checked
+        if not value.strip():
+            return f"{key}: value must be a non-empty string"
     return None
 
 

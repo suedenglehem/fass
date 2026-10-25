@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from fass.registry import (
     audio_encoder_name,
     audio_for,
+    bsf_errors,
     capability_errors,
     codec_option_errors,
     filter_expr_problems,
@@ -59,6 +60,16 @@ class TrimSpec(BaseModel):
     start_seconds: float = Field(ge=0)
     duration_seconds: float | None = Field(default=None, gt=0)
     end_seconds: float | None = Field(default=None, gt=0)
+    stream_copy: bool = Field(
+        default=False,
+        description="Stream-copy cut (no re-encode): -ss/-t with forced "
+                    "-c copy. Video starts at the first keyframe at/after "
+                    "start_seconds (keyframe-accurate), audio is "
+                    "sample-accurate. Default False = frame-accurate "
+                    "re-encode (PRD FR-4). FFmpeg has no 'trim' "
+                    "bitstream filter — this is how a 'trim' request is "
+                    "served in a copy context.",
+    )
 
     @model_validator(mode="after")
     def _normalize(self) -> "TrimSpec":
@@ -74,6 +85,29 @@ class TrimSpec(BaseModel):
     @property
     def is_bounded(self) -> bool:
         return self.duration_seconds is not None
+
+
+class BitstreamFilterSpec(BaseModel):
+    """A user-requested bitstream filter applied to the COMPRESSED stream
+    without re-encoding (registry 'bitstream_filters.specs' table).
+
+    Applying a bitstream filter forces stream copy for that stream's codec;
+    the filter must match the probed stream codec (planner-checked).
+    Diagnostic filters (trace_headers, showinfo) only write to the log.
+    'trim' is a plan-level pseudo-entry meaning a stream-copy cut — it
+    switches TrimSpec to copy mode and is normalized away at validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    options: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _valid(self) -> "BitstreamFilterSpec":
+        for err in bsf_errors(self.name, self.options):
+            raise ValueError(err)
+        return self
 
 # ---------------------------------------------------------------- output
 
@@ -461,6 +495,15 @@ class EditPlan(BaseModel):
     input_id: str = Field(default="main", min_length=1, max_length=64)
     output: OutputSpec
     trim: TrimSpec | None = None
+    bitstream_filters: list[BitstreamFilterSpec] | None = Field(
+        default=None, max_length=8,
+        description="Bitstream filters to apply to the compressed stream "
+                    "without re-encoding (registry "
+                    "'bitstream_filters.specs' table: name + key=value "
+                    "options). Forces stream copy for the filtered stream; "
+                    "the filter must match the probed stream codec. "
+                    "'trim' means a stream-copy cut (see TrimSpec.copy).",
+    )
     operations: list[Operation] = Field(default_factory=list, max_length=8)
     output_destination: str | None = Field(
         default=None, max_length=1024,
@@ -503,6 +546,25 @@ class EditPlan(BaseModel):
                         "speed", "rotate", "audio_resample"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:
                 raise ValueError(f"the MVP supports at most one {op_type} operation")
+        return self
+
+    @model_validator(mode="after")
+    def _trim_bsf_means_copy(self) -> "EditPlan":
+        # 'trim' is not an FFmpeg bitstream filter (it is a decode-time
+        # video filter): in the plan it stands for a stream-copy cut, so
+        # it switches the trim to copy mode and is dropped from the list.
+        if not self.bitstream_filters or not any(
+                b.name == "trim" for b in self.bitstream_filters):
+            return self
+        if self.trim is None:
+            raise ValueError(
+                "a 'trim' bitstream filter (stream-copy cut) needs a trim "
+                "start point — 'trim' by itself keeps nothing cut"
+            )
+        self.trim.stream_copy = True
+        self.bitstream_filters = (
+            [b for b in self.bitstream_filters if b.name != "trim"] or None
+        )
         return self
 
     @model_validator(mode="after")

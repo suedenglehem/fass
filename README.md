@@ -1,8 +1,9 @@
 # fass — natural language → validated FFmpeg commands
 
 `fass` turns a plain-English editing request into a **validated** FFmpeg
-command — and stops there: **it never executes it**. A parser (deterministic
-rules by default, optional LLM) produces a strict, schema-bound *edit plan*;
+command — and, by default, stops there: it never executes. A parser
+(deterministic rules by default, optional LLM) produces a strict, schema-bound
+*edit plan*;
 a deterministic planner and builder turn the plan into an argv array. The
 model never produces shell — argv is the source of truth, and a POSIX
 rendering is derived from it (`shlex.join`), never parsed back.
@@ -42,15 +43,31 @@ inputs is what makes "replace the audio with song.mp3" work.
 - **Trim / cut** (frame-accurate), **resize** (aspect-preserving, exact
   dims, letterbox), **grayscale**, **crop** (center), **rotate** (quarter
   turns), **speed** (0.25–8×, video and audio together)
-- **Container conversion** — MP4 / MOV / MKV / WebM / MPEG-TS with H.264 /
-  H.265 / VP9, AAC / Opus, codec-matrix validated. When the probes show the
-  input streams already match, it **remuxes** (`-c copy`) instead of
-  re-encoding — with bitstream filters in **both directions**: Annex-B
-  restamp (`h264_mp4toannexb` / `hevc_mp4toannexb`) for mp4/mov → MPEG-TS,
-  ADTS strip (`aac_adtstoasc`) for MPEG-TS → mp4/mov
+- **Filter effects** — brightness / contrast / saturation (`eq`), fade in /
+  out (video and audio), blur & sharpen, **burned-in text or a live
+  timecode** (`drawtext`), volume / loudness normalization, low- / high-pass,
+  bass & treble, echo, limiter, delay, silence padding
+- **Container conversion** — a broad, codec-matrix-validated set: video in
+  MP4 / MOV / MKV / WebM / MPEG-TS / MXF / AVI / FLV / GIF / WebP with H.264 /
+  H.265 / VP9 / MPEG-2 / ProRes / MJPEG, audio in MP3 / AAC / FLAC / Opus /
+  ALAC / AC-3 / E-AC-3 / PCM, HLS, and more (see
+  [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)). When the probes show the input
+  streams already match, it **remuxes** (`-c copy`) instead of re-encoding —
+  with bitstream filters in **both directions**: Annex-B restamp
+  (`h264_mp4toannexb` / `hevc_mp4toannexb`) for mp4/mov → MPEG-TS, ADTS strip
+  (`aac_adtstoasc`) for MPEG-TS → mp4/mov. Remuxes also accept **named
+  bitstream filters** with validated options (`h264_metadata level=4.1`,
+  `setts`, `filter_units`, `trace_headers`, `showinfo` (FFmpeg 7.1+), …) —
+  any of them on top of the automatic ones; "trim" in a copy context is a
+  stream-copy cut (`-ss`/`-t` with `-c copy`)
 - **Encoding options** — target bitrate (`cbr 10 Mbps`), pixel format
-  (8-bit / 10-bit / 4:4:4 for VP9), H.264 profile & preset, audio
-  resampling (sample rate / channels)
+  (8-bit / 10-bit / 4:4:4), H.264 profile & preset, audio resampling (sample
+  rate / channels), and **per-encoder options**: NVENC / QSV rate control,
+  ProRes profile, x264 / x265 / VVC tuning, encoder-specific flags — plus
+  **GPU encoding** (nvenc) when a deployment exposes a GPU
+- **Muxer / format options** — `+faststart`, HLS segment settings
+  (`hls_time`, segment type), MPEG-TS flags, MP3 ID3 tags, …, validated
+  against the plan's actual output container
 - **One static watermark** (preset positions, margin, percent scale),
   **audio replacement** from a second bound input, **audio keep / remove** —
   and compositions of any of the above, in the order stated
@@ -63,13 +80,19 @@ inputs is what makes "replace the audio with song.mp3" work.
   http(s), udp, tcp — allowlisted); a stream destination's scheme fixes the
   container (rtmp→flv, rtsp→rtsp, srt→srt, udp/tcp→mpegts) and is disclosed
   in the response
+- **Chained processings** — name the output `/input/<file>` (e.g.
+  `/input/step1.mp4`) and the result is written into the input folder
+  instead of the output folder, so the next command picks it up by bare
+  name: `scale to 480p` → `/input/step1.mp4`, then `scale to 240p` on
+  `step1.mp4`
 - **Revisions** — pass the previous plan back (`--previous plan.json` on the
   CLI, `previous_plan` in the API) and only what the new instruction changes
   changes
 
-CLI flags, the web API (`POST /v1/commands` + minimal UI), the security
-model, validation levels, tests, and the roadmap live in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+CLI flags, the web API (`POST /v1/commands`, plus `POST /v1/runs` and the
+media endpoints for the execution layer) and the web UI (Command / Runs /
+Config tabs), the security model, validation levels, tests, and the roadmap
+live in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Docker deployment
 
@@ -84,8 +107,11 @@ The web UI gets a **Config tab**: host-folder mappings for `/input`,
 `/output`, `/log`, stream port mappings (in: `udp://host:port` binds to
 `0.0.0.0` inside; out: `srt/rtmp://host:port` rewrites to the docker
 gateway), GPU on/off (H.264/H.265 → nvenc), and the LLM provider
-(Anthropic, or any OpenAI-compatible endpoint). Runs start FFmpeg inside
-the container and the results are playable from the UI. The Config tab's
+(Anthropic, or any OpenAI-compatible endpoint). Execution is enabled in the
+image: the UI's **Runs** tab starts the generated command inside the
+container, follows its log live, stops it, and links the result file; an
+output named `/input/<file>` lands in the input volume so a later run can
+pick it up by bare name (chained processings). The Config tab's
 **Apply** button recreates the container from the saved config via a
 `fass-worker` sidecar (a container cannot recreate itself). Full details:
 [docker/README.md](docker/README.md).
@@ -94,11 +120,15 @@ the container and the results are playable from the UI. The Config tab's
 
 - argv arrays only — model output is schema-validated, the builder emits
   flags from a fixed vocabulary; no shell, no eval
-- the service never executes the commands it generates — a human reviews and
-  runs them. Exception: the docker image is a deployment build that opts in
-  per-environment (`FASS_ALLOW_EXECUTE=1`), and even there only argv-validated
-  commands from the builder's own vocabulary can run (see
-  [docker/README.md](docker/README.md#execution))
+- **no execution by default** — the service only generates, and a human
+  reviews and runs the command. Execution is an opt-in per deployment
+  (`FASS_ALLOW_EXECUTE=1`; the docker image sets it). Even there, only argv
+  from the builder's own fixed vocabulary can run — every flag, codec,
+  format, filter and value is checked against the registry before the
+  process starts, and paths resolve into the deployment's input / output
+  volumes (see [docker/README.md](docker/README.md#execution))
+- run output is served back only when the file lives inside the input or
+  output volume — never a path outside them
 - asset URLs are limited to an allowlist of streaming schemes (`file://`,
   `ftp://`, … are rejected)
 - output never overwrites the input; `-y` is never emitted

@@ -137,6 +137,41 @@ def test_media_missing_404(run_env):
     assert client.get("/media/output/nope.mp4").status_code == 404
 
 
+def _fake_run(run_env, run_id, output):
+    import json
+    rec = {"id": run_id, "argv": ["ffmpeg"], "command": "ffmpeg",
+           "started": "2026-01-01T00:00:00", "status": "success",
+           "exit_code": 0, "output": output, "notes": []}
+    (run_env / "runs" / f"{run_id}.json").write_text(json.dumps(rec))
+
+
+def test_run_output_media_serves_input_folder_file(run_env):
+    # a chained processing: the run's output landed in the input folder
+    p = run_env / "in" / "step1.mp4"
+    p.write_bytes(b"0")
+    _fake_run(run_env, "20260101-000000-aaaaaa", str(p))
+    r = client.get("/media/run/20260101-000000-aaaaaa/output")
+    assert r.status_code == 200
+    assert r.content == b"0"
+
+
+def test_run_output_media_serves_output_volume_file(run_env):
+    p = run_env / "out" / "step2.mp4"
+    p.write_bytes(b"1")
+    _fake_run(run_env, "20260101-000000-bbbbbb", str(p))
+    r = client.get("/media/run/20260101-000000-bbbbbb/output")
+    assert r.status_code == 200
+    assert r.content == b"1"
+
+
+def test_run_output_media_guarded(run_env):
+    outside = run_env / "outside.mp4"
+    outside.write_bytes(b"2")
+    _fake_run(run_env, "20260101-000000-cccccc", str(outside))
+    assert client.get("/media/run/20260101-000000-cccccc/output").status_code == 404
+    assert client.get("/media/run/nope/output").status_code == 404
+
+
 # ------------------------------------------------------------- env
 
 def test_env_reports_execution(monkeypatch):

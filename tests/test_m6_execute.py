@@ -200,6 +200,63 @@ def test_resolve_paths_leaves_streams_and_abs_paths():
     assert notes == []
 
 
+def test_resolve_paths_input_folder_destination():
+    # '/input/<name>' means "write into the deployment's input folder" so
+    # the next run can pick the file up by bare name (chained processings)
+    in_dir = Path(os.environ[execute.INPUT_DIR_ENV])
+    argv, notes = execute.resolve_paths(
+        ["ffmpeg", "-i", "clip.mp4", "-c:v", "libx264", "/input/step1.mp4"])
+    assert argv[-1] == str(in_dir / "step1.mp4")
+    assert any("input folder" in n for n in notes)
+
+
+def test_resolve_paths_input_folder_without_input_dir(monkeypatch):
+    # no input folder configured: the literal path passes through untouched
+    monkeypatch.setattr(execute, "_input_dir", lambda: "")
+    argv, notes = execute.resolve_paths(
+        ["ffmpeg", "-i", "clip.mp4", "-c:v", "libx264", "/input/step1.mp4"])
+    assert argv[-1] == "/input/step1.mp4"
+    assert notes == []
+
+
+def test_resolve_paths_input_folder_noop_in_container(monkeypatch):
+    # inside the container the input folder IS /input: no rewrite, no note
+    monkeypatch.setenv(execute.INPUT_DIR_ENV, "/input")
+    argv, notes = execute.resolve_paths(
+        ["ffmpeg", "-i", "clip.mp4", "-c:v", "libx264", "/input/step1.mp4"])
+    assert argv[-1] == "/input/step1.mp4"
+    assert notes == []
+
+
+def test_run_output_file_guard(tmp_path, monkeypatch):
+    import json
+    in_dir = Path(os.environ[execute.INPUT_DIR_ENV])
+    out_dir = Path(os.environ[execute.OUTPUT_DIR_ENV])
+    (in_dir / "step1.mp4").write_bytes(b"0")
+    (out_dir / "step2.mp4").write_bytes(b"1")
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"2")
+    monkeypatch.setenv(execute.RUN_DIR_ENV, str(tmp_path / "runs"))
+    (tmp_path / "runs").mkdir(exist_ok=True)
+    cases = [
+        ("run-in", str(in_dir / "step1.mp4"), True),
+        ("run-out", str(out_dir / "step2.mp4"), True),
+        ("run-outside", str(outside), False),
+        ("run-missing", str(in_dir / "nope.mp4"), False),
+        ("run-stream", "udp://0.0.0.0:9000", False),
+    ]
+    for run_id, output, expect in cases:
+        rec = {"id": run_id, "argv": ["ffmpeg"], "command": "ffmpeg",
+               "started": "2026-01-01T00:00:00", "status": "success",
+               "exit_code": 0, "output": output, "notes": []}
+        (tmp_path / "runs" / f"{run_id}.json").write_text(json.dumps(rec))
+        got = execute.run_output_file(run_id)
+        assert (got is not None) is expect, run_id
+        if expect:
+            assert got == Path(output)
+    assert execute.run_output_file("no-such-run") is None
+
+
 def test_resolve_input_name_matches_run_time_rule():
     # The pipeline's inspection shares this exact rule, so a bare name that
     # exists in the input volume is probed and not reported "not found".
@@ -267,6 +324,31 @@ def test_real_lavfi_run(tmp_path, monkeypatch):
     assert (out / "demo1.mp4").exists()
     assert any(r["id"] == run.id for r in execute.list_runs())
     assert isinstance(execute.log_tail(run.id), str)
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_chained_processings_share_input_folder(monkeypatch):
+    # The chaining flow: the first processing writes into the input folder
+    # ('/input/step1.mp4'), the second picks the result up by bare name.
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    in_dir = Path(os.environ[execute.INPUT_DIR_ENV])
+    out_dir = Path(os.environ[execute.OUTPUT_DIR_ENV])
+    run1 = execute.start_run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error",
+         "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
+         "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
+         "-f", "mp4", "/input/step1.mp4"])
+    st1 = _wait(run1.id)
+    assert st1["status"] == "success", st1
+    assert (in_dir / "step1.mp4").is_file()
+    run2 = execute.start_run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error",
+         "-i", "step1.mp4", "-vf", "scale=-2:120",
+         "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
+         "-f", "mp4", "step2.mp4"])
+    st2 = _wait(run2.id)
+    assert st2["status"] == "success", st2
+    assert (out_dir / "step2.mp4").is_file()
 
 
 @pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
