@@ -77,8 +77,8 @@ docs/DEVELOPMENT.md (coverage row + checklist).
 
 **Next unfinished tasks:**
 1. ~~Commit M9+BSF~~ — DONE: **7ad1d2e** "M9+BSF: chained processings
-   (/input/) + user-named bitstream filters" (17 files, +1493/-91).
-   Push only when asked (main is 1 commit ahead of origin).
+   (/input/) + user-named bitstream filters" (17 files, +1493/-91),
+   PUSHED on request: origin/main = **bdfb592** (3db9a64..bdfb592).
 
 ## Prior state (2026-10-25, M9 — /input/ output chaining, DUAL-VERIFIED)
 **M9 — output-into-input-folder for chained processings.** Trigger: user:
