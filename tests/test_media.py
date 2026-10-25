@@ -294,13 +294,16 @@ def test_stream_output_udp_mpegts(gen, media, tmp_path):
     sock.settimeout(1.0)
     port = sock.getsockname()[1]
     received: list[bytes] = []
+    done = threading.Event()
 
     def recv():
-        while True:
+        # keep listening until ffmpeg exits: on a loaded machine ffmpeg can
+        # take longer than the 1 s socket timeout to emit its first datagram
+        while not done.is_set():
             try:
                 d, _ = sock.recvfrom(65536)
             except socket.timeout:
-                return
+                continue
             received.append(d)
 
     t = threading.Thread(target=recv, daemon=True)
@@ -315,6 +318,7 @@ def test_stream_output_udp_mpegts(gen, media, tmp_path):
         capture_output=True, text=True, timeout=120, check=False,
     )
     assert proc.returncode == 0, f"argv={r.arguments}\nstderr={proc.stderr}"
+    done.set()
     t.join(timeout=10)
     # The udp muxer chunks the TS byte stream into variable-length datagrams
     # (up to ~1.5 KB), so datagram boundaries don't align with 188-byte TS

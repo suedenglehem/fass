@@ -199,7 +199,7 @@ truth; availability on the installed build is checked by `fass env` /
 | Muxers & demuxers | Container matrix (mp4 / mov / mkv / webm / mpegts / flv; rtsp / srt stream-only) + explicit `-f` for stream destinations | `containers`, `matrix`, `streaming.output` |
 | Protocols | Allowlisted URL schemes in and out (http(s), rtmp(s), rtsp(s), srt, udp, rtp, tcp, tls) | `streaming.input_schemes`, `streaming.output` |
 | Input/output devices | Input sources `lavfi` / `v4l2` / `alsa` / `dshow` / `avfoundation` / `x11grab`; audio-only output devices (`alsa`, `pulse`) | `sources` |
-| Filters | `crop`, `scale`, `pad`, `transpose`, `hue`, `setpts` + `atempo`, `overlay`, `format`, `subtitles` / `ass` (burn-in) | `operations`, `subtitles`; `builder/` filter graphs |
+| Filters | 84 registry-allowlisted filters (30 video + 20 audio added at M10.0: dynamics EQ/compression, diagnostics, combiners, comparisons, GPU variants). Entries with an `options` schema get per-option validation (kinds, ranges, choices) in `filter_expr_problems`, the plan schema and the argv gate; category flags `diagnostic` / `multi_input` / `needs_reference` / `gpu` / `min_version`; per-build presence probed in `fass env`, full table in `/v1/support` | `filters`; `registry/loader.py` `filter_options_problems`; `builder/` filter graphs |
 
 ## Validation levels
 
@@ -312,6 +312,14 @@ round-trips of hostile filenames and instruction-injection payloads.
   stream ports, GPU, LLM), in-container execution (argv-validated,
   `FASS_ALLOW_EXECUTE`-gated) with run records, and the `fass-worker`
   sidecar that recreates the container on Apply
+- [x] filter library foundation (M10.0) — 50 new registry entries with
+  per-option schemas (transcribed from `ffmpeg -h`), `enable` universal,
+  positional/named argument parsing, category flags (diagnostic,
+  multi_input, needs_reference, gpu, min_version), option validation in
+  expr/schema/argv-gate layers, per-build presence in `/v1/env`, full
+  table in `/v1/support`
+- [ ] M10.1–M10.5: transform NLU phrasing, diagnostic plan mode, combiner
+  graphs, comparison inputs, two-pass vidstab / GPU / anullsrc
 - [ ] deferred (PRD §5): concatenation, transitions, audio
   mixing, HDR, batch processing
 

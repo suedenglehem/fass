@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.1.0",
+  "registry_version": "2.2.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -663,7 +663,7 @@
     }
   },
   "filters": {
-    "description": "Allowlisted FFmpeg filters (https://ffmpeg.org/ffmpeg-filters.html). The NLU may name these (FilterOp expr / plan.filtergraph); every filter instance in a graph is validated against this table — name, domain and argument characters — before a process is spawned. Filters that open files or devices beyond the plan's own inputs (movie=, avfilter sources, …) are deliberately absent from the allowlist.",
+    "description": "Allowlisted FFmpeg filters (https://ffmpeg.org/ffmpeg-filters.html). The NLU may name these (FilterOp expr / plan.filtergraph); every filter instance in a graph is validated against this table — name, domain, argument characters and (for entries with an 'options' schema, the M10 table) every key=value option against its kind/range/choices — before a process is spawned. Entry flags: diagnostic (log-only output), multi_input: N (needs N inputs in a labeled filtergraph), needs_reference (2nd input is the comparison reference), gpu (GPU/platform build gated), min_version. Filters that open files or devices beyond the plan's own inputs (movie=, avfilter sources, …) are deliberately absent from the allowlist.",
     "video": {
       "scale": { "description": "resize: 'scale=-2:480', 'scale=1280:-2', 'scale=1280:720'" },
       "crop": { "description": "crop: 'crop=w:h', 'crop=w:h:x:y' (centered by default)" },
@@ -682,7 +682,1561 @@
       "split": { "description": "split the stream into N copies (graph filter): 'split=2'" },
       "overlay": { "description": "overlay a second input: 'overlay=x:y' (graph filter)" },
       "subtitles": { "description": "burn in a subtitle file: 'subtitles=file.srt' (path needs filter escaping)" },
-      "ass": { "description": "burn in an ass/ssa file: 'ass=file.ass'" }
+      "ass": { "description": "burn in an ass/ssa file: 'ass=file.ass'" },
+      "bbox": {
+        "description": "Compute bounding box for each frame.",
+        "options": {
+          "min_val": {
+            "kind": "int",
+            "range": [
+              0,
+              65535
+            ],
+            "description": "set minimum luminance value for bounding box (default 16)"
+          }
+        },
+        "diagnostic": true
+      },
+      "blackdetect": {
+        "description": "Detect video intervals that are (almost) black.",
+        "options": {
+          "d": {
+            "kind": "number",
+            "description": "set minimum detected black duration in seconds (default 2)"
+          },
+          "black_min_duration": {
+            "kind": "number",
+            "description": "set minimum detected black duration in seconds (default 2)"
+          },
+          "picture_black_ratio_th": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the picture black ratio threshold (default 0.98)"
+          },
+          "pic_th": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the picture black ratio threshold (default 0.98)"
+          },
+          "pixel_black_th": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the pixel black threshold (default 0.1)"
+          },
+          "pix_th": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the pixel black threshold (default 0.1)"
+          }
+        },
+        "diagnostic": true
+      },
+      "blackdetect_vulkan": {
+        "description": "Detect video intervals that are black (Vulkan GPU; FFmpeg 7.1+, absent from both tested builds).",
+        "min_version": "7.1",
+        "gpu": true,
+        "diagnostic": true,
+        "options": {
+          "black_min": {
+            "kind": "number",
+            "range": [
+              0,
+              14400
+            ],
+            "description": "minimum black duration in seconds <double> default 0.1"
+          },
+          "black_avg": {
+            "kind": "number",
+            "range": [
+              0,
+              14400
+            ],
+            "description": "minimum average black duration <double> default 0"
+          },
+          "pic_th": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "minimum image change threshold <double> default 0.98"
+          },
+          "black_threshold": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "black point threshold <double> default 0"
+          },
+          "black_pct": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "black pixel percentage <double> default 98"
+          },
+          "white_min": {
+            "kind": "number",
+            "range": [
+              0,
+              14400
+            ],
+            "description": "minimum white duration <double> default 0"
+          },
+          "white_avg": {
+            "kind": "number",
+            "range": [
+              0,
+              14400
+            ],
+            "description": "minimum average white duration <double> default 0"
+          },
+          "white_th": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "white point threshold <double> default 0"
+          },
+          "white_threshold": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "white threshold <double> default 0"
+          },
+          "white_pct": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "white pixel percentage <double> default 0"
+          },
+          "duration": {
+            "kind": "number",
+            "range": [
+              0,
+              14400
+            ],
+            "description": "minimum detection duration <double> default 0.25"
+          },
+          "pixels": {
+            "kind": "int",
+            "range": [
+              1,
+              1000000
+            ],
+            "description": "pixels per block <int> default 64"
+          }
+        }
+      },
+      "chromakey": {
+        "description": "Turns a certain color into transparency. Operates on YUV colors.",
+        "options": {
+          "color": {
+            "kind": "string",
+            "description": "set the chromakey key color (default \"black\")"
+          },
+          "similarity": {
+            "kind": "number",
+            "range": [
+              1e-05,
+              1
+            ],
+            "description": "set the chromakey similarity value (default 0.01)"
+          },
+          "blend": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the chromakey key blend value (default 0)"
+          },
+          "yuv": {
+            "kind": "bool",
+            "description": "color parameter is in yuv instead of rgb (default false)"
+          }
+        }
+      },
+      "colormatrix": {
+        "description": "Convert color matrix.",
+        "options": {
+          "src": {
+            "kind": "choice",
+            "description": "set source color matrix (default -1)",
+            "values": [
+              "bt709",
+              "fcc",
+              "bt601",
+              "bt470",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "bt2020"
+            ]
+          },
+          "dst": {
+            "kind": "choice",
+            "description": "set destination color matrix (default -1)",
+            "values": [
+              "bt709",
+              "fcc",
+              "bt601",
+              "bt470",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "bt2020"
+            ]
+          }
+        }
+      },
+      "colorspace": {
+        "description": "Convert between colorspaces.",
+        "options": {
+          "all": {
+            "kind": "choice",
+            "description": "Set all color properties together (default 0)",
+            "values": [
+              "bt470m",
+              "bt470bg",
+              "bt601-6-525",
+              "bt601-6-625",
+              "bt709",
+              "smpte170m",
+              "smpte240m",
+              "bt2020"
+            ]
+          },
+          "space": {
+            "kind": "choice",
+            "description": "Output colorspace (default 2)",
+            "values": [
+              "bt709",
+              "fcc",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "ycgco",
+              "gbr",
+              "bt2020nc",
+              "bt2020ncl"
+            ]
+          },
+          "range": {
+            "kind": "choice",
+            "description": "Output color range (default 0)",
+            "values": [
+              "tv",
+              "mpeg",
+              "pc",
+              "jpeg"
+            ]
+          },
+          "primaries": {
+            "kind": "choice",
+            "description": "Output color primaries (default 2)",
+            "values": [
+              "bt709",
+              "bt470m",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "smpte428",
+              "film",
+              "smpte431",
+              "smpte432",
+              "bt2020",
+              "jedec-p22",
+              "ebu3213"
+            ]
+          },
+          "trc": {
+            "kind": "choice",
+            "description": "Output transfer characteristics (default 2)",
+            "values": [
+              "bt709",
+              "bt470m",
+              "gamma22",
+              "bt470bg",
+              "gamma28",
+              "smpte170m",
+              "smpte240m",
+              "linear",
+              "srgb",
+              "iec61966-2-1",
+              "xvycc",
+              "iec61966-2-4",
+              "bt2020-10",
+              "bt2020-12"
+            ]
+          },
+          "format": {
+            "kind": "choice",
+            "description": "Output pixel format (default -1)",
+            "values": [
+              "yuv420p",
+              "yuv420p10",
+              "yuv420p12",
+              "yuv422p",
+              "yuv422p10",
+              "yuv422p12",
+              "yuv444p",
+              "yuv444p10",
+              "yuv444p12"
+            ]
+          },
+          "fast": {
+            "kind": "bool",
+            "description": "Ignore primary chromaticity and gamma correction (default false)"
+          },
+          "dither": {
+            "kind": "choice",
+            "description": "Dithering mode (default none)",
+            "values": [
+              "none",
+              "fsb"
+            ]
+          },
+          "wpadapt": {
+            "kind": "choice",
+            "description": "Whitepoint adaptation method (default bradford)",
+            "values": [
+              "bradford",
+              "vonkries",
+              "identity"
+            ]
+          },
+          "iall": {
+            "kind": "choice",
+            "description": "Set all input color properties together (default 0)",
+            "values": [
+              "bt470m",
+              "bt470bg",
+              "bt601-6-525",
+              "bt601-6-625",
+              "bt709",
+              "smpte170m",
+              "smpte240m",
+              "bt2020"
+            ]
+          },
+          "ispace": {
+            "kind": "choice",
+            "description": "Input colorspace (default 2)",
+            "values": [
+              "bt709",
+              "fcc",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "ycgco",
+              "gbr",
+              "bt2020nc",
+              "bt2020ncl"
+            ]
+          },
+          "irange": {
+            "kind": "choice",
+            "description": "Input color range (default 0)",
+            "values": [
+              "tv",
+              "mpeg",
+              "pc",
+              "jpeg"
+            ]
+          },
+          "iprimaries": {
+            "kind": "choice",
+            "description": "Input color primaries (default 2)",
+            "values": [
+              "bt709",
+              "bt470m",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "smpte428",
+              "film",
+              "smpte431",
+              "smpte432",
+              "bt2020",
+              "jedec-p22",
+              "ebu3213"
+            ]
+          },
+          "itrc": {
+            "kind": "choice",
+            "description": "Input transfer characteristics (default 2)",
+            "values": [
+              "bt709",
+              "bt470m",
+              "gamma22",
+              "bt470bg",
+              "gamma28",
+              "smpte170m",
+              "smpte240m",
+              "linear",
+              "srgb",
+              "iec61966-2-1",
+              "xvycc",
+              "iec61966-2-4",
+              "bt2020-10",
+              "bt2020-12"
+            ]
+          }
+        }
+      },
+      "cropdetect": {
+        "description": "Auto-detect crop size.",
+        "options": {
+          "limit": {
+            "kind": "number",
+            "range": [
+              0,
+              65535
+            ],
+            "description": "Threshold below which the pixel is considered black (default 0.0941176)"
+          },
+          "round": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Value by which the width/height should be divisible (default 16)"
+          },
+          "reset": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Recalculate the crop area after this many frames (default 0)"
+          },
+          "skip": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Number of initial frames to skip (default 2)"
+          },
+          "reset_count": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Recalculate the crop area after this many frames (default 0)"
+          },
+          "max_outliers": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Threshold count of outliers (default 0)"
+          },
+          "mode": {
+            "kind": "choice",
+            "description": "set mode (default black)",
+            "values": [
+              "black",
+              "mvedges"
+            ]
+          },
+          "high": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "Set high threshold for edge detection (default 0.0980392)"
+          },
+          "low": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "Set low threshold for edge detection (default 0.0588235)"
+          },
+          "mv_threshold": {
+            "kind": "int",
+            "range": [
+              0,
+              100
+            ],
+            "description": "motion vector threshold when estimating video window size (default 8)"
+          }
+        },
+        "diagnostic": true
+      },
+      "decimate": {
+        "description": "Decimate frames (post field matching filter).",
+        "options": {
+          "cycle": {
+            "kind": "int",
+            "range": [
+              2,
+              25
+            ],
+            "description": "set the number of frame from which one will be dropped (default 5)"
+          },
+          "dupthresh": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "set duplicate threshold (default 1.1)"
+          },
+          "scthresh": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "set scene change threshold (default 15)"
+          },
+          "blockx": {
+            "kind": "int",
+            "range": [
+              4,
+              512
+            ],
+            "description": "set the size of the x-axis blocks used during metric calculations (default 32)"
+          },
+          "blocky": {
+            "kind": "int",
+            "range": [
+              4,
+              512
+            ],
+            "description": "set the size of the y-axis blocks used during metric calculations (default 32)"
+          },
+          "ppsrc": {
+            "kind": "bool",
+            "description": "mark main input as a pre-processed input and activate clean source input stream (default false)"
+          },
+          "chroma": {
+            "kind": "bool",
+            "description": "set whether or not chroma is considered in the metric calculations (default true)"
+          },
+          "mixed": {
+            "kind": "bool",
+            "description": "set whether or not the input only partially contains content to be decimated (default false)"
+          }
+        }
+      },
+      "drawbox": {
+        "description": "Draw a colored box on the input video.",
+        "options": {
+          "x": {
+            "kind": "string",
+            "description": "set horizontal position of the left box edge (default \"0\")"
+          },
+          "y": {
+            "kind": "string",
+            "description": "set vertical position of the top box edge (default \"0\")"
+          },
+          "width": {
+            "kind": "string",
+            "description": "set width of the box (default \"0\")"
+          },
+          "w": {
+            "kind": "string",
+            "description": "set width of the box (default \"0\")"
+          },
+          "height": {
+            "kind": "string",
+            "description": "set height of the box (default \"0\")"
+          },
+          "h": {
+            "kind": "string",
+            "description": "set height of the box (default \"0\")"
+          },
+          "color": {
+            "kind": "string",
+            "description": "set color of the box (default \"black\")"
+          },
+          "c": {
+            "kind": "string",
+            "description": "set color of the box (default \"black\")"
+          },
+          "thickness": {
+            "kind": "string",
+            "description": "set the box thickness (default \"3\")"
+          },
+          "t": {
+            "kind": "string",
+            "description": "set the box thickness (default \"3\")"
+          },
+          "replace": {
+            "kind": "bool",
+            "description": "replace color & alpha (default false)"
+          },
+          "box_source": {
+            "kind": "string",
+            "description": "use datas from bounding box in side data"
+          }
+        }
+      },
+      "fps": {
+        "description": "Force constant framerate.",
+        "options": {
+          "fps": {
+            "kind": "string",
+            "description": "A string describing desired output framerate (default \"25\")"
+          },
+          "start_time": {
+            "kind": "number",
+            "description": "Assume the first PTS should be this value. (default DBL_MAX)"
+          },
+          "round": {
+            "kind": "choice",
+            "description": "set rounding method for timestamps (default near)",
+            "values": [
+              "zero",
+              "inf",
+              "down",
+              "up",
+              "near"
+            ]
+          },
+          "eof_action": {
+            "kind": "choice",
+            "description": "action performed for last frame (default round)",
+            "values": [
+              "round",
+              "pass"
+            ]
+          }
+        }
+      },
+      "framerate": {
+        "description": "Upsamples or downsamples progressive source between specified frame rates.",
+        "options": {
+          "fps": {
+            "kind": "string",
+            "description": "required output frames per second rate (default \"50\")"
+          },
+          "interp_start": {
+            "kind": "int",
+            "range": [
+              0,
+              255
+            ],
+            "description": "point to start linear interpolation (default 15)"
+          },
+          "interp_end": {
+            "kind": "int",
+            "range": [
+              0,
+              255
+            ],
+            "description": "point to end linear interpolation (default 240)"
+          },
+          "scene": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "scene change level (default 8.2)"
+          },
+          "flags": {
+            "kind": "flagset",
+            "description": "set flags (default scene_change_detect+scd)",
+            "values": [
+              "scene_change_detect",
+              "scd"
+            ]
+          }
+        }
+      },
+      "freezedetect": {
+        "description": "Detects frozen video input.",
+        "options": {
+          "n": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set noise tolerance (default 0.001)"
+          },
+          "noise": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set noise tolerance (default 0.001)"
+          },
+          "d": {
+            "kind": "number",
+            "description": "set minimum duration in seconds (default 2)"
+          },
+          "duration": {
+            "kind": "number",
+            "description": "set minimum duration in seconds (default 2)"
+          }
+        },
+        "diagnostic": true
+      },
+      "idet": {
+        "description": "Interlace detect Filter.",
+        "options": {
+          "intl_thres": {
+            "kind": "number",
+            "description": "set interlacing threshold (default 1.04)"
+          },
+          "prog_thres": {
+            "kind": "number",
+            "description": "set progressive threshold (default 1.5)"
+          },
+          "rep_thres": {
+            "kind": "number",
+            "description": "set repeat threshold (default 3)"
+          },
+          "half_life": {
+            "kind": "number",
+            "range": [
+              -1,
+              2147483647
+            ],
+            "description": "half life of cumulative statistics (default 0)"
+          },
+          "analyze_interlaced_flag": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "set number of frames to use to determine if the interlace flag is accurate (default 0)"
+          }
+        },
+        "diagnostic": true
+      },
+      "libvmaf": {
+        "description": "Compute VMAF quality metric vs a reference input (needs libvmaf model files; present in 9.0.1, absent from 6.1.1).",
+        "needs_reference": true,
+        "options": {
+          "model": {
+            "kind": "string",
+            "description": "VMAF model specification <string> default version=vmaf_v0.6.1"
+          },
+          "feature": {
+            "kind": "string",
+            "description": "extra metric feature, e.g. psnr/ssim <string>"
+          },
+          "log_path": {
+            "kind": "string",
+            "description": "path for the metrics log file <string>"
+          },
+          "log_format": {
+            "kind": "choice",
+            "values": [
+              "json",
+              "xml",
+              "yaml",
+              "csv"
+            ],
+            "description": "log file format <int> default json"
+          },
+          "pool": {
+            "kind": "bool",
+            "description": "pool per-frame scores into a single score <boolean> default 1"
+          },
+          "n_threads": {
+            "kind": "int",
+            "range": [
+              0,
+              32
+            ],
+            "description": "number of threads <int> default 0"
+          },
+          "n_subsample": {
+            "kind": "int",
+            "range": [
+              1,
+              4
+            ],
+            "description": "temporal subsampling factor <int> default 1"
+          },
+          "cpuid": {
+            "kind": "int",
+            "range": [
+              -1,
+              32
+            ],
+            "description": "force CPU feature level <int> default -1"
+          }
+        }
+      },
+      "loop": {
+        "description": "Loop video frames.",
+        "options": {
+          "loop": {
+            "kind": "int",
+            "range": [
+              -1,
+              2147483647
+            ],
+            "description": "number of loops (default 0)"
+          },
+          "size": {
+            "kind": "int",
+            "range": [
+              0,
+              32767
+            ],
+            "description": "max number of frames to loop (default 0)"
+          },
+          "start": {
+            "kind": "int",
+            "description": "set the loop start frame (default 0)"
+          },
+          "time": {
+            "kind": "number",
+            "description": "set the loop start time (default INT64_MAX)"
+          }
+        }
+      },
+      "psnr": {
+        "description": "Calculate the PSNR between two video streams.",
+        "options": {
+          "stats_file": {
+            "kind": "string",
+            "description": "Set file where to store per-frame difference information"
+          },
+          "f": {
+            "kind": "string",
+            "description": "Set file where to store per-frame difference information"
+          },
+          "stats_version": {
+            "kind": "int",
+            "range": [
+              1,
+              2
+            ],
+            "description": "Set the format version for the stats file. (default 1)"
+          },
+          "output_max": {
+            "kind": "bool",
+            "description": "Add raw stats (max values) to the output log. (default false)"
+          },
+          "eof_action": {
+            "kind": "choice",
+            "description": "Action to take when encountering EOF from secondary input (default repeat)",
+            "values": [
+              "repeat",
+              "endall",
+              "pass"
+            ]
+          },
+          "shortest": {
+            "kind": "bool",
+            "description": "force termination when the shortest input terminates (default false)"
+          },
+          "repeatlast": {
+            "kind": "bool",
+            "description": "extend last frame of secondary streams beyond EOF (default true)"
+          },
+          "ts_sync_mode": {
+            "kind": "choice",
+            "description": "How strictly to sync streams based on secondary input timestamps (default default)",
+            "values": [
+              "default",
+              "nearest"
+            ]
+          }
+        },
+        "needs_reference": true
+      },
+      "rotate": {
+        "description": "Rotate the input image.",
+        "options": {
+          "angle": {
+            "kind": "string",
+            "description": "set angle (in radians) (default \"0\")"
+          },
+          "a": {
+            "kind": "string",
+            "description": "set angle (in radians) (default \"0\")"
+          },
+          "out_w": {
+            "kind": "string",
+            "description": "set output width expression (default \"iw\")"
+          },
+          "ow": {
+            "kind": "string",
+            "description": "set output width expression (default \"iw\")"
+          },
+          "out_h": {
+            "kind": "string",
+            "description": "set output height expression (default \"ih\")"
+          },
+          "oh": {
+            "kind": "string",
+            "description": "set output height expression (default \"ih\")"
+          },
+          "fillcolor": {
+            "kind": "string",
+            "description": "set background fill color (default \"black\")"
+          },
+          "c": {
+            "kind": "string",
+            "description": "set background fill color (default \"black\")"
+          },
+          "bilinear": {
+            "kind": "bool",
+            "description": "use bilinear interpolation (default true)"
+          }
+        }
+      },
+      "scale_cuda": {
+        "description": "GPU accelerated video resizer",
+        "options": {
+          "w": {
+            "kind": "string",
+            "description": "Output video width (default \"iw\")"
+          },
+          "h": {
+            "kind": "string",
+            "description": "Output video height (default \"ih\")"
+          },
+          "interp_algo": {
+            "kind": "choice",
+            "description": "Interpolation algorithm used for resizing (default 0)",
+            "values": [
+              "nearest",
+              "bilinear",
+              "bicubic",
+              "lanczos"
+            ]
+          },
+          "format": {
+            "kind": "string",
+            "description": "Output video pixel format (default none)"
+          },
+          "passthrough": {
+            "kind": "bool",
+            "description": "Do not process frames at all if parameters match (default true)"
+          },
+          "param": {
+            "kind": "number",
+            "description": "Algorithm-Specific parameter (default 999999)"
+          },
+          "force_original_aspect_ratio": {
+            "kind": "choice",
+            "description": "decrease or increase w/h if necessary to keep the original AR (default disable)",
+            "values": [
+              "disable",
+              "decrease",
+              "increase"
+            ]
+          },
+          "force_divisible_by": {
+            "kind": "int",
+            "range": [
+              1,
+              256
+            ],
+            "description": "enforce that the output resolution is divisible by a defined integer when force_original_aspect_ratio is used (default 1)"
+          }
+        },
+        "gpu": true
+      },
+      "setdar": {
+        "description": "Set the frame display aspect ratio.",
+        "options": {
+          "dar": {
+            "kind": "string",
+            "description": "set display aspect ratio (default \"0\")"
+          },
+          "ratio": {
+            "kind": "string",
+            "description": "set display aspect ratio (default \"0\")"
+          },
+          "r": {
+            "kind": "string",
+            "description": "set display aspect ratio (default \"0\")"
+          },
+          "max": {
+            "kind": "int",
+            "range": [
+              1,
+              2147483647
+            ],
+            "description": "set max value for nominator or denominator in the ratio (default 100)"
+          }
+        }
+      },
+      "setparams": {
+        "description": "Force field, or color property for the output video frame.",
+        "options": {
+          "field_mode": {
+            "kind": "choice",
+            "description": "select interlace mode (default auto)",
+            "values": [
+              "auto",
+              "bff",
+              "tff",
+              "prog"
+            ]
+          },
+          "range": {
+            "kind": "choice",
+            "description": "select color range (default auto)",
+            "values": [
+              "auto",
+              "unspecified",
+              "unknown",
+              "limited",
+              "tv",
+              "mpeg",
+              "full",
+              "pc",
+              "jpeg"
+            ]
+          },
+          "color_primaries": {
+            "kind": "choice",
+            "description": "select color primaries (default auto)",
+            "values": [
+              "auto",
+              "bt709",
+              "unknown",
+              "bt470m",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "film",
+              "bt2020",
+              "smpte428",
+              "smpte431",
+              "smpte432",
+              "jedec-p22",
+              "ebu3213"
+            ]
+          },
+          "color_trc": {
+            "kind": "choice",
+            "description": "select color transfer (default auto)",
+            "values": [
+              "auto",
+              "bt709",
+              "unknown",
+              "bt470m",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "linear",
+              "log100",
+              "log316",
+              "iec61966-2-4",
+              "bt1361e",
+              "iec61966-2-1",
+              "bt2020-10",
+              "bt2020-12",
+              "smpte2084",
+              "smpte428",
+              "arib-std-b67"
+            ]
+          },
+          "colorspace": {
+            "kind": "choice",
+            "description": "select colorspace (default auto)",
+            "values": [
+              "auto",
+              "gbr",
+              "bt709",
+              "unknown",
+              "fcc",
+              "bt470bg",
+              "smpte170m",
+              "smpte240m",
+              "ycgco",
+              "bt2020nc",
+              "bt2020c",
+              "smpte2085",
+              "chroma-derived-nc",
+              "chroma-derived-c",
+              "ictcp"
+            ]
+          }
+        }
+      },
+      "setsar": {
+        "description": "Set the pixel sample aspect ratio.",
+        "options": {
+          "sar": {
+            "kind": "string",
+            "description": "set sample (pixel) aspect ratio (default \"0\")"
+          },
+          "ratio": {
+            "kind": "string",
+            "description": "set sample (pixel) aspect ratio (default \"0\")"
+          },
+          "r": {
+            "kind": "string",
+            "description": "set sample (pixel) aspect ratio (default \"0\")"
+          },
+          "max": {
+            "kind": "int",
+            "range": [
+              1,
+              2147483647
+            ],
+            "description": "set max value for nominator or denominator in the ratio (default 100)"
+          }
+        }
+      },
+      "showinfo": {
+        "description": "Show textual information for each video frame.",
+        "options": {
+          "checksum": {
+            "kind": "bool",
+            "description": "calculate checksums (default true)"
+          }
+        },
+        "diagnostic": true
+      },
+      "ssim": {
+        "description": "Calculate the SSIM between two video streams.",
+        "options": {
+          "stats_file": {
+            "kind": "string",
+            "description": "Set file where to store per-frame difference information"
+          },
+          "f": {
+            "kind": "string",
+            "description": "Set file where to store per-frame difference information"
+          },
+          "eof_action": {
+            "kind": "choice",
+            "description": "Action to take when encountering EOF from secondary input (default repeat)",
+            "values": [
+              "repeat",
+              "endall",
+              "pass"
+            ]
+          },
+          "shortest": {
+            "kind": "bool",
+            "description": "force termination when the shortest input terminates (default false)"
+          },
+          "repeatlast": {
+            "kind": "bool",
+            "description": "extend last frame of secondary streams beyond EOF (default true)"
+          },
+          "ts_sync_mode": {
+            "kind": "choice",
+            "description": "How strictly to sync streams based on secondary input timestamps (default default)",
+            "values": [
+              "default",
+              "nearest"
+            ]
+          }
+        },
+        "needs_reference": true
+      },
+      "trim": {
+        "description": "Pick one continuous section from the input, drop the rest.",
+        "options": {
+          "start": {
+            "kind": "number",
+            "description": "Timestamp of the first frame that should be passed (default INT64_MAX)"
+          },
+          "starti": {
+            "kind": "number",
+            "description": "Timestamp of the first frame that should be passed (default INT64_MAX)"
+          },
+          "end": {
+            "kind": "number",
+            "description": "Timestamp of the first frame that should be dropped again (default INT64_MAX)"
+          },
+          "endi": {
+            "kind": "number",
+            "description": "Timestamp of the first frame that should be dropped again (default INT64_MAX)"
+          },
+          "start_pts": {
+            "kind": "int",
+            "description": "Timestamp of the first frame that should be  passed (default I64_MIN)"
+          },
+          "end_pts": {
+            "kind": "int",
+            "description": "Timestamp of the first frame that should be dropped again (default I64_MIN)"
+          },
+          "duration": {
+            "kind": "number",
+            "description": "Maximum duration of the output (default 0)"
+          },
+          "durationi": {
+            "kind": "number",
+            "description": "Maximum duration of the output (default 0)"
+          },
+          "start_frame": {
+            "kind": "int",
+            "description": "Number of the first frame that should be passed to the output (default -1)"
+          },
+          "end_frame": {
+            "kind": "int",
+            "description": "Number of the first frame that should be dropped again (default I64_MAX)"
+          }
+        }
+      },
+      "vidstabdetect": {
+        "description": "Extract relative transformations, pass 1 of 2 for stabilization (see vidstabtransform for pass 2).",
+        "options": {
+          "result": {
+            "kind": "string",
+            "description": "path to the file used to write the transforms (default \"transforms.trf\")"
+          },
+          "shakiness": {
+            "kind": "int",
+            "range": [
+              1,
+              10
+            ],
+            "description": "how shaky is the video and how quick is the camera? 1: little (fast) 10: very strong/quick (slow) (default 5)"
+          },
+          "accuracy": {
+            "kind": "int",
+            "range": [
+              1,
+              15
+            ],
+            "description": "(>=shakiness) 1: low 15: high (slow) (default 15)"
+          },
+          "stepsize": {
+            "kind": "int",
+            "range": [
+              1,
+              32
+            ],
+            "description": "region around minimum is scanned with 1 pixel resolution (default 6)"
+          },
+          "mincontrast": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "below this contrast a field is discarded (0-1) (default 0.25)"
+          },
+          "show": {
+            "kind": "int",
+            "range": [
+              0,
+              2
+            ],
+            "description": "0: draw nothing; 1,2: show fields and transforms (default 0)"
+          },
+          "tripod": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "virtual tripod mode (if >0): motion is compared to a reference reference frame (frame # is the value) (default 0)"
+          }
+        }
+      },
+      "vidstabtransform": {
+        "description": "Transform the frames, pass 2 of 2 for stabilization (see vidstabdetect for pass 1).",
+        "options": {
+          "input": {
+            "kind": "string",
+            "description": "set path to the file storing the transforms (default \"transforms.trf\")"
+          },
+          "smoothing": {
+            "kind": "int",
+            "range": [
+              0,
+              1000
+            ],
+            "description": "set number of frames*2 + 1 used for lowpass filtering (default 15)"
+          },
+          "optalgo": {
+            "kind": "choice",
+            "description": "set camera path optimization algo (default opt)",
+            "values": [
+              "opt",
+              "gauss",
+              "avg"
+            ]
+          },
+          "maxshift": {
+            "kind": "int",
+            "range": [
+              -1,
+              500
+            ],
+            "description": "set maximal number of pixels to translate image (default -1)"
+          },
+          "maxangle": {
+            "kind": "number",
+            "range": [
+              -1,
+              3.14
+            ],
+            "description": "set maximal angle in rad to rotate image (default -1)"
+          },
+          "crop": {
+            "kind": "choice",
+            "description": "set cropping mode (default keep)",
+            "values": [
+              "keep",
+              "black"
+            ]
+          },
+          "invert": {
+            "kind": "int",
+            "range": [
+              0,
+              1
+            ],
+            "description": "invert transforms (default 0)"
+          },
+          "relative": {
+            "kind": "int",
+            "range": [
+              0,
+              1
+            ],
+            "description": "consider transforms as relative (default 1)"
+          },
+          "zoom": {
+            "kind": "number",
+            "range": [
+              -100,
+              100
+            ],
+            "description": "set percentage to zoom (>0: zoom in, <0: zoom out (default 0)"
+          },
+          "optzoom": {
+            "kind": "int",
+            "range": [
+              0,
+              2
+            ],
+            "description": "set optimal zoom (0: nothing, 1: optimal static zoom, 2: optimal dynamic zoom) (default 1)"
+          },
+          "zoomspeed": {
+            "kind": "number",
+            "range": [
+              0,
+              5
+            ],
+            "description": "for adative zoom: percent to zoom maximally each frame (default 0.25)"
+          },
+          "interpol": {
+            "kind": "choice",
+            "description": "set type of interpolation (default bilinear)",
+            "values": [
+              "no",
+              "linear",
+              "bilinear",
+              "bicubic"
+            ]
+          },
+          "tripod": {
+            "kind": "bool",
+            "description": "enable virtual tripod mode (same as relative=0:smoothing=0) (default false)"
+          },
+          "debug": {
+            "kind": "bool",
+            "description": "enable debug mode and writer global motions information to file (default false)"
+          }
+        }
+      },
+      "vstack": {
+        "description": "Stack video inputs vertically.",
+        "options": {
+          "inputs": {
+            "kind": "int",
+            "range": [
+              2,
+              2147483647
+            ],
+            "description": "set number of inputs (default 2)"
+          },
+          "shortest": {
+            "kind": "bool",
+            "description": "force termination when the shortest input terminates (default false)"
+          }
+        },
+        "multi_input": 0
+      },
+      "xfade": {
+        "description": "Cross fade one video with another video.",
+        "options": {
+          "transition": {
+            "kind": "choice",
+            "description": "set cross fade transition (default fade)",
+            "values": [
+              "custom",
+              "fade",
+              "wipeleft",
+              "wiperight",
+              "wipeup",
+              "wipedown",
+              "slideleft",
+              "slideright",
+              "slideup",
+              "slidedown",
+              "circlecrop",
+              "rectcrop",
+              "distance",
+              "fadeblack",
+              "fadewhite",
+              "radial",
+              "smoothleft",
+              "smoothright",
+              "smoothup",
+              "smoothdown",
+              "circleopen",
+              "circleclose",
+              "vertopen",
+              "vertclose",
+              "horzopen",
+              "horzclose",
+              "dissolve",
+              "pixelize",
+              "diagtl",
+              "diagtr",
+              "diagbl",
+              "diagbr",
+              "hlslice",
+              "hrslice",
+              "vuslice",
+              "vdslice",
+              "hblur",
+              "fadegrays",
+              "wipetl",
+              "wipetr",
+              "wipebl",
+              "wipebr",
+              "squeezeh",
+              "squeezev",
+              "zoomin",
+              "fadefast",
+              "fadeslow",
+              "hlwind",
+              "hrwind",
+              "vuwind",
+              "vdwind",
+              "coverleft",
+              "coverright",
+              "coverup",
+              "coverdown",
+              "revealleft",
+              "revealright",
+              "revealup",
+              "revealdown"
+            ]
+          },
+          "duration": {
+            "kind": "number",
+            "description": "set cross fade duration (default 1)"
+          },
+          "offset": {
+            "kind": "number",
+            "description": "set cross fade start relative to first input stream (default 0)"
+          },
+          "expr": {
+            "kind": "string",
+            "description": "set expression for custom transition"
+          }
+        },
+        "multi_input": 2
+      },
+      "yadif": {
+        "description": "Deinterlace the input image.",
+        "options": {
+          "mode": {
+            "kind": "choice",
+            "description": "specify the interlacing mode (default send_frame)",
+            "values": [
+              "send_frame",
+              "send_field",
+              "send_frame_nospatial",
+              "send_field_nospatial"
+            ]
+          },
+          "parity": {
+            "kind": "choice",
+            "description": "specify the assumed picture field parity (default auto)",
+            "values": [
+              "tff",
+              "bff",
+              "auto"
+            ]
+          },
+          "deint": {
+            "kind": "choice",
+            "description": "specify which frames to deinterlace (default all)",
+            "values": [
+              "all",
+              "interlaced"
+            ]
+          }
+        }
+      },
+      "yadif_cuda": {
+        "description": "Deinterlace CUDA frames",
+        "options": {
+          "mode": {
+            "kind": "choice",
+            "description": "specify the interlacing mode (default send_frame)",
+            "values": [
+              "send_frame",
+              "send_field",
+              "send_frame_nospatial",
+              "send_field_nospatial"
+            ]
+          },
+          "parity": {
+            "kind": "choice",
+            "description": "specify the assumed picture field parity (default auto)",
+            "values": [
+              "tff",
+              "bff",
+              "auto"
+            ]
+          },
+          "deint": {
+            "kind": "choice",
+            "description": "specify which frames to deinterlace (default all)",
+            "values": [
+              "all",
+              "interlaced"
+            ]
+          }
+        },
+        "gpu": true
+      }
     },
     "audio": {
       "volume": { "description": "gain: 'volume=2' (x2), 'volume=-6dB', 'volume=0.5'" },
@@ -700,7 +2254,1326 @@
       "alimiter": { "description": "limit peak loudness: 'alimiter=limit=0.95'" },
       "adelay": { "description": "delay in ms: 'adelay=500', 'adelay=delays=500|0'" },
       "apad": { "description": "pad with silence: 'apad=pad_dur=2'" },
-      "atrim": { "description": "trim audio: 'atrim=start=5:end=20'" }
+      "atrim": { "description": "trim audio: 'atrim=start=5:end=20'" },
+      "acompresor": {
+        "description": "Audio compressor (absent from both tested builds: 6.1.1-3ubuntu5 and 9.0.1-nvidia).",
+        "options": {
+          "level": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "level of compression in dB <double> default 1"
+          },
+          "attack": {
+            "kind": "number",
+            "range": [
+              0,
+              3600000
+            ],
+            "description": "attack in ms <double> default 20"
+          },
+          "release": {
+            "kind": "number",
+            "range": [
+              0,
+              3600000
+            ],
+            "description": "release in ms <double> default 250"
+          },
+          "makeup": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "makeup gain in dB <double> default 1"
+          },
+          "knee": {
+            "kind": "number",
+            "range": [
+              0,
+              10
+            ],
+            "description": "hard knee ratio <double> default 3"
+          },
+          "kratio": {
+            "kind": "number",
+            "range": [
+              0,
+              10
+            ],
+            "description": "size of soft knee in dB <double> default 2"
+          },
+          "rms": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "window for RMS detection <double> default 0"
+          },
+          "ratio": {
+            "kind": "number",
+            "range": [
+              1,
+              100
+            ],
+            "description": "compression ratio <double> default 10"
+          },
+          "threshold": {
+            "kind": "number",
+            "range": [
+              -100,
+              0
+            ],
+            "description": "compression threshold in dB <double> default 0"
+          }
+        }
+      },
+      "acrossfade": {
+        "description": "Cross fade two input audio streams.",
+        "options": {
+          "nb_samples": {
+            "kind": "int",
+            "range": [
+              1,
+              214748000.0
+            ],
+            "description": "set number of samples for cross fade duration (default 44100)"
+          },
+          "ns": {
+            "kind": "int",
+            "range": [
+              1,
+              214748000.0
+            ],
+            "description": "set number of samples for cross fade duration (default 44100)"
+          },
+          "duration": {
+            "kind": "number",
+            "description": "set cross fade duration (default 0)"
+          },
+          "d": {
+            "kind": "number",
+            "description": "set cross fade duration (default 0)"
+          },
+          "overlap": {
+            "kind": "bool",
+            "description": "overlap 1st stream end with 2nd stream start (default true)"
+          },
+          "o": {
+            "kind": "bool",
+            "description": "overlap 1st stream end with 2nd stream start (default true)"
+          },
+          "curve1": {
+            "kind": "choice",
+            "description": "set fade curve type for 1st stream (default tri)",
+            "values": [
+              "nofade",
+              "tri",
+              "qsin",
+              "esin",
+              "hsin",
+              "log",
+              "ipar",
+              "qua",
+              "cub",
+              "squ",
+              "cbr",
+              "par",
+              "exp",
+              "iqsin",
+              "ihsin",
+              "dese",
+              "desi",
+              "losi",
+              "sinc",
+              "isinc",
+              "quat",
+              "quatr",
+              "qsin2",
+              "hsin2"
+            ]
+          },
+          "c1": {
+            "kind": "choice",
+            "description": "set fade curve type for 1st stream (default tri)",
+            "values": [
+              "nofade",
+              "tri",
+              "qsin",
+              "esin",
+              "hsin",
+              "log",
+              "ipar",
+              "qua",
+              "cub",
+              "squ",
+              "cbr",
+              "par",
+              "exp",
+              "iqsin",
+              "ihsin",
+              "dese",
+              "desi",
+              "losi",
+              "sinc",
+              "isinc",
+              "quat",
+              "quatr",
+              "qsin2",
+              "hsin2"
+            ]
+          },
+          "curve2": {
+            "kind": "choice",
+            "description": "set fade curve type for 2nd stream (default tri)",
+            "values": [
+              "nofade",
+              "tri",
+              "qsin",
+              "esin",
+              "hsin",
+              "log",
+              "ipar",
+              "qua",
+              "cub",
+              "squ",
+              "cbr",
+              "par",
+              "exp",
+              "iqsin",
+              "ihsin",
+              "dese",
+              "desi",
+              "losi",
+              "sinc",
+              "isinc",
+              "quat",
+              "quatr",
+              "qsin2",
+              "hsin2"
+            ]
+          },
+          "c2": {
+            "kind": "choice",
+            "description": "set fade curve type for 2nd stream (default tri)",
+            "values": [
+              "nofade",
+              "tri",
+              "qsin",
+              "esin",
+              "hsin",
+              "log",
+              "ipar",
+              "qua",
+              "cub",
+              "squ",
+              "cbr",
+              "par",
+              "exp",
+              "iqsin",
+              "ihsin",
+              "dese",
+              "desi",
+              "losi",
+              "sinc",
+              "isinc",
+              "quat",
+              "quatr",
+              "qsin2",
+              "hsin2"
+            ]
+          }
+        },
+        "multi_input": 2
+      },
+      "adeclick": {
+        "description": "Remove impulsive noise from input audio.",
+        "options": {
+          "window": {
+            "kind": "number",
+            "range": [
+              10,
+              100
+            ],
+            "description": "set window size (default 55)"
+          },
+          "w": {
+            "kind": "number",
+            "range": [
+              10,
+              100
+            ],
+            "description": "set window size (default 55)"
+          },
+          "overlap": {
+            "kind": "number",
+            "range": [
+              50,
+              95
+            ],
+            "description": "set window overlap (default 75)"
+          },
+          "o": {
+            "kind": "number",
+            "range": [
+              50,
+              95
+            ],
+            "description": "set window overlap (default 75)"
+          },
+          "arorder": {
+            "kind": "number",
+            "range": [
+              0,
+              25
+            ],
+            "description": "set autoregression order (default 2)"
+          },
+          "a": {
+            "kind": "number",
+            "range": [
+              0,
+              25
+            ],
+            "description": "set autoregression order (default 2)"
+          },
+          "threshold": {
+            "kind": "number",
+            "range": [
+              1,
+              100
+            ],
+            "description": "set threshold (default 2)"
+          },
+          "t": {
+            "kind": "number",
+            "range": [
+              1,
+              100
+            ],
+            "description": "set threshold (default 2)"
+          },
+          "burst": {
+            "kind": "number",
+            "range": [
+              0,
+              10
+            ],
+            "description": "set burst fusion (default 2)"
+          },
+          "b": {
+            "kind": "number",
+            "range": [
+              0,
+              10
+            ],
+            "description": "set burst fusion (default 2)"
+          },
+          "method": {
+            "kind": "choice",
+            "description": "set overlap method (default add)",
+            "values": [
+              "add",
+              "a",
+              "save",
+              "s"
+            ]
+          },
+          "m": {
+            "kind": "choice",
+            "description": "set overlap method (default add)",
+            "values": [
+              "add",
+              "a",
+              "save",
+              "s"
+            ]
+          }
+        }
+      },
+      "adrc": {
+        "description": "Audio Spectral Dynamic Range Controller.",
+        "options": {
+          "transfer": {
+            "kind": "string",
+            "description": "set the transfer expression (default \"p\")"
+          },
+          "attack": {
+            "kind": "number",
+            "range": [
+              1,
+              1000
+            ],
+            "description": "set the attack (default 50)"
+          },
+          "release": {
+            "kind": "number",
+            "range": [
+              5,
+              2000
+            ],
+            "description": "set the release (default 100)"
+          },
+          "channels": {
+            "kind": "string",
+            "description": "set channels to filter (default \"all\")"
+          }
+        }
+      },
+      "adynamicequalizer": {
+        "description": "Apply Dynamic Equalization of input audio.",
+        "options": {
+          "threshold": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "set detection threshold (default 0)"
+          },
+          "dfrequency": {
+            "kind": "number",
+            "range": [
+              2,
+              1000000.0
+            ],
+            "description": "set detection frequency (default 1000)"
+          },
+          "dqfactor": {
+            "kind": "number",
+            "range": [
+              0.001,
+              1000
+            ],
+            "description": "set detection Q factor (default 1)"
+          },
+          "tfrequency": {
+            "kind": "number",
+            "range": [
+              2,
+              1000000.0
+            ],
+            "description": "set target frequency (default 1000)"
+          },
+          "tqfactor": {
+            "kind": "number",
+            "range": [
+              0.001,
+              1000
+            ],
+            "description": "set target Q factor (default 1)"
+          },
+          "attack": {
+            "kind": "number",
+            "range": [
+              1,
+              2000
+            ],
+            "description": "set attack duration (default 20)"
+          },
+          "release": {
+            "kind": "number",
+            "range": [
+              1,
+              2000
+            ],
+            "description": "set release duration (default 200)"
+          },
+          "ratio": {
+            "kind": "number",
+            "range": [
+              0,
+              30
+            ],
+            "description": "set ratio factor (default 1)"
+          },
+          "makeup": {
+            "kind": "number",
+            "range": [
+              0,
+              100
+            ],
+            "description": "set makeup gain (default 0)"
+          },
+          "range": {
+            "kind": "number",
+            "range": [
+              1,
+              200
+            ],
+            "description": "set max gain (default 50)"
+          },
+          "mode": {
+            "kind": "choice",
+            "description": "set mode (default cut)",
+            "values": [
+              "listen",
+              "cut",
+              "boost"
+            ]
+          },
+          "dftype": {
+            "kind": "choice",
+            "description": "set detection filter type (default bandpass)",
+            "values": [
+              "bandpass",
+              "lowpass",
+              "highpass",
+              "peak"
+            ]
+          },
+          "tftype": {
+            "kind": "choice",
+            "description": "set target filter type (default bell)",
+            "values": [
+              "bell",
+              "lowshelf",
+              "highshelf"
+            ]
+          },
+          "direction": {
+            "kind": "choice",
+            "description": "set direction (default downward)",
+            "values": [
+              "downward",
+              "upward"
+            ]
+          },
+          "auto": {
+            "kind": "choice",
+            "description": "set auto threshold (default disabled)",
+            "values": [
+              "disabled",
+              "off",
+              "on"
+            ]
+          },
+          "precision": {
+            "kind": "choice",
+            "description": "set processing precision (default auto)",
+            "values": [
+              "auto",
+              "float",
+              "double"
+            ]
+          }
+        }
+      },
+      "amerge": {
+        "description": "Merge two or more audio streams into a single multi-channel stream.",
+        "options": {
+          "inputs": {
+            "kind": "int",
+            "range": [
+              1,
+              64
+            ],
+            "description": "specify the number of inputs (default 2)"
+          }
+        },
+        "multi_input": 0
+      },
+      "amix": {
+        "description": "Audio mixing.",
+        "options": {
+          "inputs": {
+            "kind": "int",
+            "range": [
+              1,
+              32767
+            ],
+            "description": "Number of inputs. (default 2)"
+          },
+          "duration": {
+            "kind": "choice",
+            "description": "How to determine the end-of-stream. (default longest)",
+            "values": [
+              "longest",
+              "shortest",
+              "first"
+            ]
+          },
+          "dropout_transition": {
+            "kind": "number",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Transition time, in seconds, for volume renormalization when an input stream ends. (default 2)"
+          },
+          "weights": {
+            "kind": "string",
+            "description": "Set weight for each input. (default \"1 1\")"
+          },
+          "normalize": {
+            "kind": "bool",
+            "description": "Scale inputs (default true)"
+          }
+        },
+        "multi_input": 0
+      },
+      "anullsrc": {
+        "description": "Null audio source, return empty audio frames.",
+        "options": {
+          "channel_layout": {
+            "kind": "string",
+            "description": "set channel_layout (default \"stereo\")"
+          },
+          "cl": {
+            "kind": "string",
+            "description": "set channel_layout (default \"stereo\")"
+          },
+          "sample_rate": {
+            "kind": "string",
+            "description": "set sample rate (default \"44100\")"
+          },
+          "r": {
+            "kind": "string",
+            "description": "set sample rate (default \"44100\")"
+          },
+          "nb_samples": {
+            "kind": "int",
+            "range": [
+              1,
+              65535
+            ],
+            "description": "set the number of samples per requested frame (default 1024)"
+          },
+          "n": {
+            "kind": "int",
+            "range": [
+              1,
+              65535
+            ],
+            "description": "set the number of samples per requested frame (default 1024)"
+          },
+          "duration": {
+            "kind": "number",
+            "description": "set the audio duration (default -0.000001)"
+          },
+          "d": {
+            "kind": "number",
+            "description": "set the audio duration (default -0.000001)"
+          }
+        }
+      },
+      "asetrate": {
+        "description": "Change the sample rate without altering the data.",
+        "options": {
+          "sample_rate": {
+            "kind": "int",
+            "range": [
+              1,
+              2147483647
+            ],
+            "description": "set the sample rate (default 44100)"
+          },
+          "r": {
+            "kind": "int",
+            "range": [
+              1,
+              2147483647
+            ],
+            "description": "set the sample rate (default 44100)"
+          }
+        }
+      },
+      "ashowinfo": {
+        "description": "Show textual information for each audio frame.",
+        "options": {},
+        "diagnostic": true
+      },
+      "astats": {
+        "description": "Show time domain statistics about audio frames.",
+        "options": {
+          "length": {
+            "kind": "number",
+            "range": [
+              0,
+              10
+            ],
+            "description": "set the window length (default 0.05)"
+          },
+          "metadata": {
+            "kind": "bool",
+            "description": "inject metadata in the filtergraph (default false)"
+          },
+          "reset": {
+            "kind": "int",
+            "range": [
+              0,
+              2147483647
+            ],
+            "description": "Set the number of frames over which cumulative stats are calculated before being reset (default 0)"
+          },
+          "measure_perchannel": {
+            "kind": "flagset",
+            "description": "Select the parameters which are measured per channel (default all+Bit_depth+Crest_factor+DC_offset+Dynamic_range+Entropy+Flat_factor+Max_difference+Max_level+Mean_difference+Min_difference+Min_level+Noise_floor+Noise_floor_count+Number_of_Infs+Number_of_NaNs+Number_of_denormals+Number_of_samples+Peak_count+Peak_level+RMS_difference+RMS_level+RMS_peak+RMS_trough+Zero_crossings+Zero_crossings_rate+Abs_Peak_count)",
+            "values": [
+              "none",
+              "all",
+              "Bit_depth",
+              "Crest_factor",
+              "DC_offset",
+              "Dynamic_range",
+              "Entropy",
+              "Flat_factor",
+              "Max_difference",
+              "Max_level",
+              "Mean_difference",
+              "Min_difference",
+              "Min_level",
+              "Noise_floor",
+              "Noise_floor_count",
+              "Number_of_Infs",
+              "Number_of_NaNs",
+              "Number_of_denormals",
+              "Number_of_samples",
+              "Peak_count",
+              "Peak_level",
+              "RMS_difference",
+              "RMS_level",
+              "RMS_peak",
+              "RMS_trough",
+              "Zero_crossings",
+              "Zero_crossings_rate",
+              "Abs_Peak_count"
+            ]
+          },
+          "measure_overall": {
+            "kind": "flagset",
+            "description": "Select the parameters which are measured overall (default all+Bit_depth+Crest_factor+DC_offset+Dynamic_range+Entropy+Flat_factor+Max_difference+Max_level+Mean_difference+Min_difference+Min_level+Noise_floor+Noise_floor_count+Number_of_Infs+Number_of_NaNs+Number_of_denormals+Number_of_samples+Peak_count+Peak_level+RMS_difference+RMS_level+RMS_peak+RMS_trough+Zero_crossings+Zero_crossings_rate+Abs_Peak_count)",
+            "values": [
+              "none",
+              "all",
+              "Bit_depth",
+              "Crest_factor",
+              "DC_offset",
+              "Dynamic_range",
+              "Entropy",
+              "Flat_factor",
+              "Max_difference",
+              "Max_level",
+              "Mean_difference",
+              "Min_difference",
+              "Min_level",
+              "Noise_floor",
+              "Noise_floor_count",
+              "Number_of_Infs",
+              "Number_of_NaNs",
+              "Number_of_denormals",
+              "Number_of_samples",
+              "Peak_count",
+              "Peak_level",
+              "RMS_difference",
+              "RMS_level",
+              "RMS_peak",
+              "RMS_trough",
+              "Zero_crossings",
+              "Zero_crossings_rate",
+              "Abs_Peak_count"
+            ]
+          }
+        },
+        "diagnostic": true
+      },
+      "channelsplit": {
+        "description": "Split audio into per-channel streams.",
+        "options": {
+          "channel_layout": {
+            "kind": "string",
+            "description": "Input channel layout. (default \"stereo\")"
+          },
+          "channels": {
+            "kind": "string",
+            "description": "Channels to extract. (default \"all\")"
+          }
+        }
+      },
+      "compand": {
+        "description": "Compress or expand audio dynamic range.",
+        "options": {
+          "attacks": {
+            "kind": "string",
+            "description": "set time over which increase of volume is determined (default \"0\")"
+          },
+          "decays": {
+            "kind": "string",
+            "description": "set time over which decrease of volume is determined (default \"0.8\")"
+          },
+          "points": {
+            "kind": "string",
+            "description": "set points of transfer function (default \"-70/-70|-60/-20|1/0\")"
+          },
+          "soft-knee": {
+            "kind": "number",
+            "range": [
+              0.01,
+              900
+            ],
+            "description": "set soft-knee (default 0.01)"
+          },
+          "gain": {
+            "kind": "number",
+            "range": [
+              -900,
+              900
+            ],
+            "description": "set output gain (default 0)"
+          },
+          "volume": {
+            "kind": "number",
+            "range": [
+              -900,
+              0
+            ],
+            "description": "set initial volume (default 0)"
+          },
+          "delay": {
+            "kind": "number",
+            "range": [
+              0,
+              20
+            ],
+            "description": "set delay for samples before sending them to volume adjuster (default 0)"
+          }
+        }
+      },
+      "dynaudnorm": {
+        "description": "Dynamic Audio Normalizer.",
+        "options": {
+          "framelen": {
+            "kind": "int",
+            "range": [
+              10,
+              8000
+            ],
+            "description": "set the frame length in msec (default 500)"
+          },
+          "f": {
+            "kind": "int",
+            "range": [
+              10,
+              8000
+            ],
+            "description": "set the frame length in msec (default 500)"
+          },
+          "gausssize": {
+            "kind": "int",
+            "range": [
+              3,
+              301
+            ],
+            "description": "set the filter size (default 31)"
+          },
+          "g": {
+            "kind": "int",
+            "range": [
+              3,
+              301
+            ],
+            "description": "set the filter size (default 31)"
+          },
+          "peak": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the peak value (default 0.95)"
+          },
+          "p": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the peak value (default 0.95)"
+          },
+          "maxgain": {
+            "kind": "number",
+            "range": [
+              1,
+              100
+            ],
+            "description": "set the max amplification (default 10)"
+          },
+          "m": {
+            "kind": "number",
+            "range": [
+              1,
+              100
+            ],
+            "description": "set the max amplification (default 10)"
+          },
+          "targetrms": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the target RMS (default 0)"
+          },
+          "r": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the target RMS (default 0)"
+          },
+          "coupling": {
+            "kind": "bool",
+            "description": "set channel coupling (default true)"
+          },
+          "n": {
+            "kind": "bool",
+            "description": "set channel coupling (default true)"
+          },
+          "correctdc": {
+            "kind": "bool",
+            "description": "set DC correction (default false)"
+          },
+          "c": {
+            "kind": "bool",
+            "description": "set DC correction (default false)"
+          },
+          "altboundary": {
+            "kind": "bool",
+            "description": "set alternative boundary mode (default false)"
+          },
+          "b": {
+            "kind": "bool",
+            "description": "set alternative boundary mode (default false)"
+          },
+          "compress": {
+            "kind": "number",
+            "range": [
+              0,
+              30
+            ],
+            "description": "set the compress factor (default 0)"
+          },
+          "s": {
+            "kind": "number",
+            "range": [
+              0,
+              30
+            ],
+            "description": "set the compress factor (default 0)"
+          },
+          "threshold": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the threshold value (default 0)"
+          },
+          "t": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the threshold value (default 0)"
+          },
+          "channels": {
+            "kind": "string",
+            "description": "set channels to filter (default \"all\")"
+          },
+          "h": {
+            "kind": "string",
+            "description": "set channels to filter (default \"all\")"
+          },
+          "overlap": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the frame overlap (default 0)"
+          },
+          "o": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the frame overlap (default 0)"
+          },
+          "curve": {
+            "kind": "string",
+            "description": "set the custom peak mapping curve"
+          },
+          "v": {
+            "kind": "string",
+            "description": "set the custom peak mapping curve"
+          }
+        }
+      },
+      "equalizer": {
+        "description": "Apply two-pole peaking equalization (EQ) filter.",
+        "options": {
+          "frequency": {
+            "kind": "number",
+            "range": [
+              0,
+              999999
+            ],
+            "description": "set central frequency (default 0)"
+          },
+          "f": {
+            "kind": "number",
+            "range": [
+              0,
+              999999
+            ],
+            "description": "set central frequency (default 0)"
+          },
+          "width_type": {
+            "kind": "choice",
+            "description": "set filter-width type (default q)",
+            "values": [
+              "h",
+              "q",
+              "o",
+              "s",
+              "k"
+            ]
+          },
+          "t": {
+            "kind": "choice",
+            "description": "set filter-width type (default q)",
+            "values": [
+              "h",
+              "q",
+              "o",
+              "s",
+              "k"
+            ]
+          },
+          "width": {
+            "kind": "number",
+            "range": [
+              0,
+              99999
+            ],
+            "description": "set width (default 1)"
+          },
+          "w": {
+            "kind": "number",
+            "range": [
+              0,
+              99999
+            ],
+            "description": "set width (default 1)"
+          },
+          "gain": {
+            "kind": "number",
+            "range": [
+              -900,
+              900
+            ],
+            "description": "set gain (default 0)"
+          },
+          "g": {
+            "kind": "number",
+            "range": [
+              -900,
+              900
+            ],
+            "description": "set gain (default 0)"
+          },
+          "mix": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set mix (default 1)"
+          },
+          "m": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set mix (default 1)"
+          },
+          "channels": {
+            "kind": "string",
+            "description": "set channels to filter (default \"all\")"
+          },
+          "c": {
+            "kind": "string",
+            "description": "set channels to filter (default \"all\")"
+          },
+          "normalize": {
+            "kind": "bool",
+            "description": "normalize coefficients (default false)"
+          },
+          "n": {
+            "kind": "bool",
+            "description": "normalize coefficients (default false)"
+          },
+          "transform": {
+            "kind": "choice",
+            "description": "set transform type (default di)",
+            "values": [
+              "di",
+              "dii",
+              "tdi",
+              "tdii",
+              "latt",
+              "svf",
+              "zdf"
+            ]
+          },
+          "a": {
+            "kind": "choice",
+            "description": "set transform type (default di)",
+            "values": [
+              "di",
+              "dii",
+              "tdi",
+              "tdii",
+              "latt",
+              "svf",
+              "zdf"
+            ]
+          },
+          "precision": {
+            "kind": "choice",
+            "description": "set filtering precision (default auto)",
+            "values": [
+              "auto",
+              "s16",
+              "s32",
+              "f32",
+              "f64"
+            ]
+          },
+          "r": {
+            "kind": "choice",
+            "description": "set filtering precision (default auto)",
+            "values": [
+              "auto",
+              "s16",
+              "s32",
+              "f32",
+              "f64"
+            ]
+          },
+          "blocksize": {
+            "kind": "int",
+            "range": [
+              0,
+              32768
+            ],
+            "description": "set the block size (default 0)"
+          },
+          "b": {
+            "kind": "int",
+            "range": [
+              0,
+              32768
+            ],
+            "description": "set the block size (default 0)"
+          }
+        }
+      },
+      "hdcd": {
+        "description": "Apply High Definition Compatible Digital (HDCD) decoding.",
+        "options": {
+          "disable_autoconvert": {
+            "kind": "bool",
+            "description": "Disable any format conversion or resampling in the filter graph. (default true)"
+          },
+          "process_stereo": {
+            "kind": "bool",
+            "description": "Process stereo channels together. Only apply target_gain when both channels match. (default true)"
+          },
+          "cdt_ms": {
+            "kind": "int",
+            "range": [
+              100,
+              60000
+            ],
+            "description": "Code detect timer period in ms. (default 2000)"
+          },
+          "force_pe": {
+            "kind": "bool",
+            "description": "Always extend peaks above -3dBFS even when PE is not signaled. (default false)"
+          },
+          "analyze_mode": {
+            "kind": "choice",
+            "description": "Replace audio with solid tone and signal some processing aspect in the amplitude. (default off)",
+            "values": [
+              "off",
+              "lle",
+              "pe",
+              "cdt",
+              "tgm"
+            ]
+          },
+          "bits_per_sample": {
+            "kind": "choice",
+            "description": "Valid bits per sample (location of the true LSB). (default 16)",
+            "values": [
+              "16",
+              "20",
+              "24"
+            ]
+          }
+        }
+      },
+      "join": {
+        "description": "Join multiple audio streams into multi-channel output.",
+        "options": {
+          "inputs": {
+            "kind": "int",
+            "range": [
+              1,
+              2147483647
+            ],
+            "description": "Number of input streams. (default 2)"
+          },
+          "channel_layout": {
+            "kind": "string",
+            "description": "Channel layout of the output stream. (default \"stereo\")"
+          },
+          "map": {
+            "kind": "string",
+            "description": "A comma-separated list of channels maps in the format 'input_stream.input_channel-output_channel."
+          }
+        },
+        "multi_input": 0
+      },
+      "silencedetect": {
+        "description": "Detect silence.",
+        "options": {
+          "n": {
+            "kind": "number",
+            "description": "set noise tolerance (default 0.001)"
+          },
+          "noise": {
+            "kind": "number",
+            "description": "set noise tolerance (default 0.001)"
+          },
+          "d": {
+            "kind": "number",
+            "description": "set minimum duration in seconds (default 2)"
+          },
+          "duration": {
+            "kind": "number",
+            "description": "set minimum duration in seconds (default 2)"
+          },
+          "mono": {
+            "kind": "bool",
+            "description": "check each channel separately (default false)"
+          },
+          "m": {
+            "kind": "bool",
+            "description": "check each channel separately (default false)"
+          }
+        },
+        "diagnostic": true
+      },
+      "silenceremove": {
+        "description": "Remove silence.",
+        "options": {
+          "start_periods": {
+            "kind": "int",
+            "range": [
+              0,
+              9000
+            ],
+            "description": "set periods of silence parts to skip from start (default 0)"
+          },
+          "start_duration": {
+            "kind": "number",
+            "description": "set start duration of non-silence part (default 0)"
+          },
+          "start_threshold": {
+            "kind": "number",
+            "description": "set threshold for start silence detection (default 0)"
+          },
+          "start_silence": {
+            "kind": "number",
+            "description": "set start duration of silence part to keep (default 0)"
+          },
+          "start_mode": {
+            "kind": "choice",
+            "description": "set which channel will trigger trimming from start (default any)",
+            "values": [
+              "any",
+              "all"
+            ]
+          },
+          "stop_periods": {
+            "kind": "int",
+            "range": [
+              -9000,
+              9000
+            ],
+            "description": "set periods of silence parts to skip from end (default 0)"
+          },
+          "stop_duration": {
+            "kind": "number",
+            "description": "set stop duration of silence part (default 0)"
+          },
+          "stop_threshold": {
+            "kind": "number",
+            "description": "set threshold for stop silence detection (default 0)"
+          },
+          "stop_silence": {
+            "kind": "number",
+            "description": "set stop duration of silence part to keep (default 0)"
+          },
+          "stop_mode": {
+            "kind": "choice",
+            "description": "set which channel will trigger trimming from end (default all)",
+            "values": [
+              "any",
+              "all"
+            ]
+          },
+          "detection": {
+            "kind": "choice",
+            "description": "set how silence is detected (default rms)",
+            "values": [
+              "avg",
+              "rms",
+              "peak",
+              "median",
+              "ptp",
+              "dev"
+            ]
+          },
+          "window": {
+            "kind": "number",
+            "description": "set duration of window for silence detection (default 0.02)"
+          },
+          "timestamp": {
+            "kind": "choice",
+            "description": "set how every output frame timestamp is processed (default write)",
+            "values": [
+              "write",
+              "copy"
+            ]
+          }
+        }
+      },
+      "volumedetect": {
+        "description": "Detect audio volume.",
+        "options": {},
+        "diagnostic": true
+      }
     }
   },
   "bitrate_policy": "An explicit target video bitrate (plan.output.video_bitrate_kbps) overrides the quality preset: -b:v and -maxrate at the target, plus -bufsize at 2x the target for H.264/H.265 (a CBR-style target; audio keeps its codec-preset bitrate). An explicit audio bitrate (plan.output.audio_bitrate_kbps) overrides the codec preset's -b:a; lossless/PCM codecs (flac, alac, pcm_*) take no bitrate flag and a requested one is reported as a note.",

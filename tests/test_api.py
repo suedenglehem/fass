@@ -222,6 +222,18 @@ def test_support_exposes_m7_surface():
     assert "scale" in d["filters"]["video"] and "crop" in d["filters"]["video"]
     assert "volume" in d["filters"]["audio"] and "atempo" in d["filters"]["audio"]
     assert d["filters"]["filtergraph"] is True
+    # M10: the full filter table with per-option kinds and category flags
+    table = d["filters"]["table"]
+    assert table["xfade"]["domain"] == "video"
+    assert table["xfade"]["multi_input"] == 2
+    assert "fade" in table["xfade"]["options"]["transition"]["values"]
+    assert table["acompresor"]["domain"] == "audio"
+    assert table["acompresor"]["options"]["level"]["range"] == [0, 100]
+    assert table["silencedetect"]["diagnostic"] is True
+    assert table["libvmaf"]["needs_reference"] is True
+    assert table["scale_cuda"]["gpu"] is True
+    assert table["blackdetect_vulkan"]["min_version"] == "7.1"
+    assert table["scale"]["options"] == {}  # name-only entry keeps its shape
     assert "movflags" in d["format_options"]["mp4"]
     assert "hls_time" in d["format_options"]["hls"]
     assert "mpegts_flags" in d["format_options"]["mpegts"]
@@ -260,7 +272,10 @@ def test_env_endpoint_reports_build():
     assert d["available"] is True
     assert "ffmpeg version" in d["build"]
     assert d["encoders"]["video:h264"]["present"] is True
-    assert d["filters"]["scale"] is True
+    assert d["filters"]["scale"]["present"] is True
+    # M10: every registry filter is probed against this build (like bsfs)
+    assert d["filters"]["acrossfade"]["present"] is True
+    assert d["filters"]["blackdetect_vulkan"]["present"] is False
 
 
 def test_ui_served_at_root():

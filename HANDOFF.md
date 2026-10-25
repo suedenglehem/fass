@@ -17,7 +17,54 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-25, BSF — user-named bitstream filters, dual-build VERIFIED)
+## Current state (2026-10-25, M10.0 — filter library foundation, dual-build VERIFIED)
+**M10.0 — registry-driven filter option schemas + presence probe + validation
+wiring** (the M10.0 phase of the M10 filter-library plan in PROGRESS.md §4).
+
+**What shipped:**
+- **Registry 2.2.0:** 50 new filter entries (30 video + 20 audio) with
+  per-option schemas — kinds choice/number/int/rational/bool/flagset/string,
+  ranges, choice values — transcribed from `ffmpeg -h filter=NAME` on the
+  tested 6.1.1 build (acompresor/blackdetect_vulkan/libvmaf authored from
+  docs: absent from both tested builds). Category flags: `diagnostic` (10
+  log-only filters), `multi_input: N` (amix/amerge/join/vstack 0,
+  acrossfade/xfade 2), `needs_reference` (psnr/ssim/libvmaf), `gpu`
+  (scale_cuda/yadif_cuda/blackdetect_vulkan), `min_version` (7.1 on
+  blackdetect_vulkan). The pre-M10 34 entries keep their description-only
+  shape (no schema → arguments pass through, as before).
+- **Loader (`fass/registry/loader.py`):** `filter_specs()`/`filter_spec()`,
+  `filter_options_problems(name, options)` (filter-side twin of
+  `bsf_errors`, reuses `_validate_option_value`), `_parse_filter_args()`
+  (named `key=value` + positional slots in ffmpeg -h declaration order,
+  `enable` universal, duplicate/too-many/empty-argument detection) — wired
+  into `_validate_instance`, so `filter_expr_problems`, the schema layer,
+  filtergraph validation and the execute argv gate all validate options.
+- **API:** `/v1/env` → `filters: {name: {present}}` for all 84 registry
+  filters (probed per build, like bsfs); `/v1/support` → `filters.table`
+  full option table + flags (mirrors `bitstream_filters`).
+- **Tests:** `tests/test_filters.py` (12: registry shape, schema
+  well-formedness, flags, valid/invalid option examples, name-only
+  pass-through, expr wiring, positional/named mix, labeled graphs, argv
+  gate accept/reject, presence probe + legend-word regression) +
+  test_api env/support extensions. **683 passed** (670 baseline + 12 + 1).
+- **UDP test fix:** `test_stream_output_udp_mpegts` recv thread kept alive
+  until ffmpeg exits (the 1 s socket-timeout race failed on a loaded host —
+  pre-existing flake, reproduced on clean 3634bf4).
+
+**Dual-build verification (2026-10-25, i7):** host 6.1.1 suite 683 passed;
+docker 9.0.1 rebuilt — `/v1/env` filters present: acompressor False,
+libvmaf True, blackdetect_vulkan False, scale_cuda/yadif_cuda True,
+showinfo True; `/v1/support` table 84 entries; argv-level E2E on
+titan.mp4: `-af dynaudnorm=f=200:g=15` exit 0, `-filter_complex
+[0:v][1:v]xfade=transition=fade:duration=1:offset=5` exit 0, `-vf drawbox`
+exit 0; gate rejects `xfade=transition=bogus` and `astats=bogus=1` (422).
+
+**Next (M10.1):** transform-filter NLU phrasing + planner wiring (the
+registry table is already enforced by every layer); then M10.2 diagnostic
+plan mode (`-f null -`), M10.3 combiners, M10.4 comparison (+libvmaf
+model ship), M10.5 two-pass vidstab/GPU/anullsrc, M10.6 verification+docs.
+
+## Previous state (2026-10-25, BSF — user-named bitstream filters, dual-build VERIFIED)
 **BSF — user-named bitstream filters in stream-copy plans.** Trigger: user:
 "next i will need you to work on bitstream filters, i need support of :
 trim, trace_headers, showinfo, setts, prores_metadata, mpeg2_metadata,

@@ -36,6 +36,7 @@ from fass.pipeline import generate
 from fass.probe.ffprobe import ffmpeg_available, parse_ffprobe_json, probe_ffmpeg
 from fass.registry import (
     REGISTRY,
+    all_filter_names,
     format_option_specs,
     filter_names,
     input_schemes,
@@ -198,6 +199,30 @@ def create_app() -> FastAPI:
                 "video": sorted(filter_names("video")),
                 "audio": sorted(filter_names("audio")),
                 "filtergraph": True,
+                # M10: the full filter table — per-option kinds/ranges/choices
+                # plus the category flags — the same table the loader and the
+                # argv validator enforce (mirrors the bitstream_filters block)
+                "table": {
+                    name: {
+                        "domain": domain,
+                        "diagnostic": bool(spec.get("diagnostic")),
+                        "multi_input": spec.get("multi_input"),
+                        "needs_reference": bool(spec.get("needs_reference")),
+                        "gpu": bool(spec.get("gpu")),
+                        "min_version": spec.get("min_version"),
+                        "options": {
+                            key: {
+                                "kind": opt.get("kind"),
+                                "values": opt.get("values"),
+                                "range": opt.get("range"),
+                            }
+                            for key, opt in spec.get("options", {}).items()
+                        },
+                        "description": spec.get("description"),
+                    }
+                    for domain in ("video", "audio")
+                    for name, spec in REGISTRY["filters"][domain].items()
+                },
             },
             "format_options": {
                 container: sorted(format_option_specs(container))
@@ -281,7 +306,9 @@ def create_app() -> FastAPI:
             "build": ff.version,
             "registry_version": REGISTRY["registry_version"],
             "encoders": encoders,
-            "filters": {n: n in ff.filters for n in ("scale", "pad", "hue", "overlay", "format")},
+            # every registry filter, probed against THIS build (like bsfs)
+            "filters": {n: {"present": n in ff.filters}
+                        for n in sorted(all_filter_names())},
             "bsfs": bsfs,
             "execution": execute.execution_enabled(),
             "gpu": load_config().gpu.model_dump(),

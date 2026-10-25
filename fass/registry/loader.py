@@ -729,6 +729,85 @@ def all_filter_names() -> set[str]:
     return filter_names("video") | filter_names("audio")
 
 
+# ------------------------------------------------- filter options (M10)
+
+def filter_specs() -> dict[str, dict]:
+    """{name: entry} of every allowlisted filter. Entries with an 'options'
+    schema (the M10 table) get per-option validation; the older name-only
+    entries keep their description-only shape and pass through unchecked."""
+    specs: dict[str, dict] = {}
+    specs.update(REGISTRY["filters"].get("video", {}))
+    specs.update(REGISTRY["filters"].get("audio", {}))
+    return specs
+
+
+def filter_spec(name: str) -> dict | None:
+    return filter_specs().get(name)
+
+
+def filter_options_problems(name: str, options: dict[str, str]) -> list[str]:
+    """Validate a filter's key=value options against its registry schema —
+    the filter-side twin of bsf_errors. A filter without an option schema
+    (name-only allowlist entry) accepts any arguments, as before. 'enable'
+    is the universal timeline option every filter accepts."""
+    spec = filter_spec(name)
+    if spec is None or "options" not in spec:
+        return []
+    valid = dict(spec.get("options", {}))
+    valid["enable"] = {"kind": "string"}
+    problems = []
+    for key in sorted(options):
+        opt = valid.get(key)
+        if opt is None:
+            allowed = ", ".join(sorted(spec.get("options", {}))) or "(none)"
+            problems.append(
+                f"filter '{name}': option '{key}' is not valid (valid: {allowed})"
+            )
+            continue
+        err = _validate_option_value(f"{name}.{key}", opt, str(options[key]))
+        if err:
+            problems.append(err)
+    return problems
+
+
+_FILTER_OPT_KEY = re.compile(r"^[a-z0-9_-]+$")
+
+
+def _parse_filter_args(name: str, args: str) -> tuple[dict[str, str], list[str]]:
+    """Parse a filter instance's raw argument string into an ordered
+    {key: value} dict. 'key=value' parts are named; bare parts fill the
+    schema's positional slots in declaration order (FFmpeg's positional
+    order = the order ffmpeg -h prints). Returns (options, problems)."""
+    spec = filter_spec(name)
+    options: dict[str, str] = {}
+    problems: list[str] = []
+    if spec is None or "options" not in spec:
+        return options, problems
+    order = list(spec["options"])
+    pos = 0
+    for part in _split_top_level(args, ":"):
+        part = part.strip()
+        if not part:
+            problems.append(f"filter '{name}': empty argument (stray ':')")
+            continue
+        key, sep, val = part.partition("=")
+        if sep and _FILTER_OPT_KEY.match(key):
+            if key in options:
+                problems.append(f"filter '{name}': option '{key}' given twice")
+                continue
+            options[key] = val
+        else:
+            if pos >= len(order):
+                problems.append(
+                    f"filter '{name}': too many positional arguments "
+                    f"({len(order)} accepted)"
+                )
+                continue
+            options[order[pos]] = part
+            pos += 1
+    return options, problems
+
+
 # Filters that take no argument at all — anything after '=' is a mistake.
 _NO_ARG_FILTERS = {"hflip", "vflip", "anull"}
 
@@ -971,4 +1050,10 @@ def _validate_instance(inst: str, problems: list[str]) -> None:
         problems.append(f"filter '{name}' has unbalanced quotes in its arguments")
     if ";" in args:
         problems.append(f"filter '{name}' arguments contain ';' (chain separator)")
+    if args:
+        # M10: filters with an option schema get their key=value options
+        # validated (kinds, ranges, choices) — name-only entries pass through
+        options, opt_problems = _parse_filter_args(name, args)
+        problems.extend(opt_problems)
+        problems.extend(filter_options_problems(name, options))
 
