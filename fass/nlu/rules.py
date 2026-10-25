@@ -30,6 +30,7 @@ from fass.registry import (
     default_codec,
     filter_expr_problems,
     filter_names,
+    filter_spec,
     filtergraph_problems,
     format_option_errors,
     format_option_specs,
@@ -399,8 +400,10 @@ def _detect_rotate(t: str):
         if m and int(m.group(1)) in (90, 180, 270):
             angle, explicit = int(m.group(1)), True
     if angle is not None and angle not in (90, 180, 270):
-        return None, None, \
-            f"rotation by {angle}° (only quarter turns — 90, 180 or 270 — are supported)", None
+        # M10.1: an arbitrary angle is the real rotate filter — the phrase
+        # detector in _detect_filters claims it; the quarter-turn RotateOp
+        # (transpose) does not apply
+        return None, None, None, None
     if angle is None:
         angle = 90
     note = None if explicit else "rotation angle defaulted to 90°"
@@ -771,14 +774,16 @@ _TEXT_OVERLAY_RX = re.compile(
 
 
 def _detect_filters(
-    t: str, duration: float | None
+    t: str, duration: float | None, pre_seen: set[str] | None = None
 ) -> tuple[list[FilterOp], str | None, str | None, Clarification | None, str | None]:
     """Video/audio filters: named phrases, raw 'name=args' expressions,
     named filters, and a full custom filtergraph.
-    Returns (ops, graph, note, clarification, unsupported_fragment)."""
+    Returns (ops, graph, note, clarification, unsupported_fragment).
+    ``pre_seen`` seeds the dedup set with expressions the transform pre-pass
+    already claimed, so a phrase never adds the same filter twice."""
     video_filters = filter_names("video")
     ops: list[FilterOp] = []
-    seen: set[str] = set()
+    seen: set[str] = set(pre_seen or ())
     notes: list[str] = []
     clar: Clarification | None = None
     frag: str | None = None
@@ -870,12 +875,84 @@ def _detect_filters(
     elif re.search(r"\bquieter\b|\bsofter\b|\bsoften\b|\bvolume\s+down\b", text, re.I):
         add("audio", "volume=0.5")
 
-    if re.search(r"\bnormaliz\w*\s+(?:the\s+)?audio\b|\bloudness\b|\bloudnorm\b", text, re.I):
+    # --- M10.1 transform phrases -------------------------------------------
+    # Normalization family (dynaudnorm vs loudnorm vs compand): the dynamic
+    # phrasing is the specific one and wins over plain normalization;
+    # 'compand' is its own filter name. Precedence, never a silent double.
+    dyn = re.search(
+        r"\bdynamic(?:ally)?\s+(?:audio\s+)?(?:normal\w*|compress\w*)\b"
+        r"|\bnormaliz\w*[^\n.!?]{0,24}\bdynamic\w*\b"
+        r"|\bdynaudnorm\b", text, re.I)
+    if dyn:
+        add("audio", "dynaudnorm")
+    elif re.search(r"\bnormaliz\w*\s+(?:the\s+)?audio\b|\bloudness\b|\bloudnorm\b",
+                   text, re.I):
         add("audio", "loudnorm")
+    if re.search(r"\bcompress(?:ion|ed)?\s+(?:the\s+)?audio\b"
+                 r"|\baudio\s+compress\w*\b|\bcompressor\b"
+                 r"|\bcompress\s+(?:the\s+)?dynamic\s+range\b", text, re.I):
+        add("audio", "acompressor")
+    if re.search(r"\bcompand\b", text, re.I):
+        add("audio", "compand")
+    if re.search(r"\bdynamic\s+range\s+control\b|\badrc\b", text, re.I):
+        add("audio", "adrc")
+    if re.search(r"\bdynamic\s+equali[sz]er\b|\badynamicequalizer\b", text, re.I):
+        add("audio", "adynamicequalizer")
+    if re.search(r"\bde[\s-]?click\w*|\bclicks?\s+and\s+pops\b"
+                 r"|\b(?:remove|fix|kill)\s+(?:the\s+)?clicks?\b", text, re.I):
+        add("audio", "adeclick")
+    # 'remove the silences' (jargon → silenceremove) is not 'silence the
+    # audio' (mute → anull): the verb decides
+    if re.search(r"\bsilence[\s-]?remove\b|\bremove\s+(?:out\s+)?(?:the\s+)?silenc\w*\b"
+                 r"|\bstrip\s+(?:out\s+)?(?:the\s+)?silenc\w*\b"
+                 r"|\bcut\s+out\s+(?:the\s+)?silenc\w*\b", text, re.I):
+        add("audio", "silenceremove=start_periods=1:start_silence=0.1")
+    if re.search(r"\bhdcd\b|\bdc\s+offset\b", text, re.I):
+        add("audio", "hdcd")
+
     if re.search(r"\becho\b", text, re.I):
         add("audio", "aecho=0.8:0.88:60:0.4")
     if re.search(r"\bsilence\s+(?:the\s+)?audio\b", text, re.I):
         add("audio", "anull")
+
+    # --- M10.1 video transform phrases --------------------------------------
+    if re.search(r"\bde[\s-]?interlac\w*\b", text, re.I):
+        add("video", "yadif")
+    if re.search(r"\bdecimate\b|\b(?:drop|remove)\s+(?:the\s+)?duplicate\s+frames?\b",
+                 text, re.I):
+        add("video", "decimate")
+    if re.search(r"\bgreen[\s-]?screen\b|\bchroma[\s-]?key\w*\b"
+                 r"|\bremove\s+(?:the\s+)?green\b|\bkey\s+out\s+(?:the\s+)?green\b",
+                 text, re.I):
+        add("video", "chromakey=color=green")
+    m = re.search(r"\b(bt709|bt601|smpte170m|bt2020)\b", text, re.I)
+    if m and re.search(r"\bcolor\b|\bspace\b|\bmatrix\b", text, re.I):
+        # iall declares the INPUT properties — colorspace rejects frames
+        # whose primaries are unknown (the common case for web-sourced
+        # video), so the phrase sets both sides (verified on 9.0.1)
+        add("video", f"colorspace=iall={m.group(1)}:all={m.group(1)}")
+    m = re.search(r"\bfps\s+(?:to\s+|of\s+)?(\d+(?:\.\d+)?)\b"
+                  r"|\b(\d+(?:\.\d+)?)\s*(?:fps|frames?\s+per\s+second)\b", text, re.I)
+    if m:
+        add("video", f"fps=fps={m.group(1) or m.group(2)}")
+    # arbitrary-angle rotation: the quarter-turn RotateOp owns 90/180/270,
+    # any other explicit angle is the real rotate filter (padded frame)
+    m = re.search(r"\brotat\w*[^\n.!?]{0,20}?(\d{1,3})\s*(?:degrees?|deg\b|°)",
+                  text, re.I)
+    if m and int(m.group(1)) not in (90, 180, 270):
+        a = int(m.group(1))
+        add("video",
+            f"rotate=angle={a}*PI/180:fillcolor=black:"
+            f"out_w=rotw({a}*PI/180):out_h=roth({a}*PI/180)")
+    m_dar = re.search(r"\bset\s+(?:the\s+)?display\s+aspect\s+ratio\b|\bsetdar\b",
+                      text, re.I)
+    m_sar = re.search(r"\bset\s+(?:the\s+)?sample\s+aspect\s+ratio\b|\bsetsar\b",
+                      text, re.I)
+    which = "setdar" if m_dar else ("setsar" if m_sar else None)
+    if which:
+        r2 = re.search(r"(\d{1,2}(?:\.\d+)?)\s*[:/]\s*(\d{1,2}(?:\.\d+)?)", text)
+        if r2:
+            add("video", f"{which}=ratio={r2.group(1)}/{r2.group(2)}")
 
     # --- raw 'name=args' and 'apply the X filter' -------------------------
     for m in _RAW_FILTER_RX.finditer(text):
@@ -973,6 +1050,149 @@ def _detect_bitstream_filters(t: str) -> list[dict]:
                 claimed.add(key)
                 break
     return found
+
+
+# ------------------------------------------------- transform filters (M10.1)
+
+# Bare-name claim set: transform-filter names that are unambiguous jargon.
+# Names that are ordinary words ('loop', 'trim', 'crop', 'scale', 'fade',
+# 'volume', 'rotate') stay out — their keyword detectors (TrimOp, CropOp,
+# ResizeOp, the fade/volume phrases, RotateOp) own those words; the explicit
+# forms ('loop=loop=2:size=100', 'apply the loop filter') reach them through
+# _detect_filters. Diagnostic / multi-input / reference filters are separate
+# plan shapes (M10.2–M10.4) and are not claimed here.
+_TRANSFORM_JARGON = {
+    "audio": {"acompressor", "adeclick", "adrc", "adynamicequalizer",
+              "asetrate", "compand", "dynaudnorm", "hdcd", "silenceremove"},
+    "video": {"chromakey", "colormatrix", "colorspace", "decimate",
+              "drawbox", "fps", "framerate", "setdar", "setsar",
+              "setparams", "yadif", "scale_cuda", "yadif_cuda"},
+}
+
+# Bare names that take a bare number next to them ('fps to 30', 'asetrate
+# 44100', '30 fps'): the number is the filter's primary option, not a
+# bitrate or a sample-rate target.
+_TRANSFORM_NUMBERED = {"fps": "fps", "framerate": "fps", "asetrate": "sample_rate"}
+
+
+def _transform_domain(name: str) -> str | None:
+    for domain in ("video", "audio"):
+        if name in _TRANSFORM_JARGON[domain]:
+            return domain
+    return None
+
+
+def _detect_transform_filters(t: str) -> tuple[list[dict], list[str]]:
+    """Registry transform filters named bare in the instruction, with their
+    option tokens — the bitstream-filter pattern (see
+    _detect_bitstream_filters). Returns (found, spans): found is
+    [{'name': …, 'options': {…}, 'domain': …}] in text order, spans are
+    (start, end) of every claimed token, so parse() can blank them out of
+    the detector text length-preservingly — 'asetrate=44100' must not also
+    read as a resample target, 'fps=30' not as a bitrate.
+
+    Two spellings are claimed: the expression token ('asetrate=44100',
+    'yadif=mode=send_frame') and the space form ('asetrate sample_rate=44100').
+    Each loose option token goes to the first (in text order) filter whose
+    schema has that key."""
+    positions: dict[str, int] = {}
+    spans: list[tuple[int, int]] = []
+    jargon = _TRANSFORM_JARGON["video"] | _TRANSFORM_JARGON["audio"]
+    for m in re.finditer(r"\b([a-z][a-z0-9_]*)\b", t):
+        name = m.group(1)
+        if name in jargon and name not in positions:
+            positions[name] = m.start()
+            spans.append(m.span())
+    found = [
+        {"name": n, "options": {}, "positional": [], "domain": _transform_domain(n)}
+        for n in sorted(positions, key=positions.get)
+    ]
+    if not found:
+        return [], spans
+    # expression form: 'name=k=v:k2=v2' claims the whole token; bare values
+    # are positional and map onto the schema keys in _transform_expr
+    expr_spans: list[tuple[int, int]] = []
+    for f in found:
+        m = re.search(rf"\b{re.escape(f['name'])}=(\S+)", t)
+        if m:
+            spans.append(m.span())
+            expr_spans.append(m.span())
+            for pair in m.group(1).split(":"):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    f["options"].setdefault(k, v)
+                elif pair:
+                    f["positional"].append(pair)
+    # bare number next to a numbered filter: 'fps to 30', 'asetrate 44100',
+    # '30 fps' — claimed with the name so no other detector reads it
+    for f in found:
+        key = _TRANSFORM_NUMBERED.get(f["name"])
+        if key is None or f["options"] or f["positional"]:
+            continue
+        m = re.search(rf"\b{re.escape(f['name'])}\b", t)
+        if m:
+            s0, s1 = m.span()
+            after = re.match(r"\s*(?:to\s+|of\s+|at\s+)?(\d+(?:\.\d+)?)", t[s1:])
+            if after:
+                f["options"][key] = after.group(1)
+                spans.append((s0, s1 + after.end()))
+                continue
+        before = re.search(r"(\d+(?:\.\d+)?)\s+$", t[:s0])
+        if before:
+            f["options"][key] = before.group(1)
+            spans.append((s0 - before.end(), s1))
+    # space form: loose 'key=value' tokens, claimed by schema ownership —
+    # tokens inside a claimed expression token are already parsed there
+    claimed: set[str] = set()
+    for m in re.finditer(r"\b([a-z][a-z0-9_]+)=([^\s,;]+)\b", t):
+        key, value = m.group(1), m.group(2)
+        if key in claimed:
+            continue
+        if any(a <= m.start() < b for a, b in expr_spans):
+            continue
+        for f in found:
+            opts = (filter_spec(f["name"]) or {}).get("options", {})
+            if key in opts and key not in f["options"]:
+                f["options"][key] = value
+                claimed.add(key)
+                spans.append(m.span())
+                break
+    return found, spans
+
+
+def _transform_expr(f: dict) -> str:
+    """The filter expression for a claimed transform filter: the name plus
+    its options in FFmpeg's 'name=k=v:k2=v2' form. Positional values (the
+    'asetrate=44100', 'drawbox=0:0:10:10:red' spelling) are mapped onto the
+    schema's option keys in order, so the expression is explicit and the
+    option validator sees named keys."""
+    opts = f["options"]
+    positional = f.get("positional", [])
+    if not opts and not positional:
+        return f["name"]
+    # positional order = the schema's canonical keys in order; alias keys
+    # (drawbox 'w'/'h' repeat 'width'/'height' with the same description)
+    # are skipped so values land on the right option
+    schema_keys: list[str] = []
+    seen_desc: set[str] = set()
+    for k, opt in (filter_spec(f["name"]) or {}).get("options", {}).items():
+        d = opt.get("description", k)
+        if d in seen_desc:
+            continue
+        seen_desc.add(d)
+        schema_keys.append(k)
+    pairs: list[str] = []
+    ki = 0
+    for v in positional:
+        while ki < len(schema_keys) and schema_keys[ki] in opts:
+            ki += 1
+        if ki >= len(schema_keys):
+            pairs.append(v)  # schema exhausted — keep the positional form
+        else:
+            pairs.append(f"{schema_keys[ki]}={v}")
+            ki += 1
+    pairs += [f"{k}={v}" for k, v in opts.items()]
+    return f["name"] + "=" + ":".join(pairs)
 
 
 # ---------------------------------------------------------------- codec options
@@ -1349,7 +1569,8 @@ _VAGUE_SIZE = re.compile(
 _LOSSLESS = re.compile(r"\blossless\b|without\s+(?:any\s+)?(?:quality\s+)?loss\b", re.I)
 
 
-def _scan_ambiguous(t: str, resize: ResizeOp | None) -> Clarification | None:
+def _scan_ambiguous(t: str, resize: ResizeOp | None,
+                    filters: list[FilterOp] | None = None) -> Clarification | None:
     """Focused questions for requests whose intent cannot be safely
     resolved (PRD clarification policy)."""
     # 'lossless' no longer needs a question — parse() resolves it to
@@ -1363,6 +1584,13 @@ def _scan_ambiguous(t: str, resize: ResizeOp | None) -> Clarification | None:
             )
         )
     if resize is None and _VAGUE_SIZE.search(t):
+        # 'compress the audio' is a filter request (M10.1), not a size target
+        if filters and any(
+                o.domain == "audio"
+                and o.expr.split("=")[0] in {"acompressor", "compand",
+                                             "dynaudnorm", "adrc"}
+                for o in filters):
+            return None
         return Clarification(
             question="do you mean smaller video dimensions (e.g. 720p) or a smaller file (target size)?",
             hint=SUPPORTED_SUMMARY,
@@ -1404,6 +1632,23 @@ class RulesAdapter:
                     t_det = t_det.replace(f"{k}={v}", " " * (len(k) + len(v) + 1))
         else:
             t_det = t
+        # M10.1: transform filters claim their name and option tokens the
+        # same way — 'asetrate=44100' must not also read as a resample
+        # target, 'fps=30' not as a bitrate, 'yadif=mode=send_frame' not as
+        # encoder options. The mask is length-preserving (see the BSF note).
+        tf_found, tf_spans = _detect_transform_filters(t_det)
+        for s0, s1 in tf_spans:
+            t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
+        tf_ops: list[FilterOp] = []
+        tf_frag: str | None = None
+        for f in tf_found:
+            expr = _transform_expr(f)
+            problems = filter_expr_problems(expr)
+            if problems:
+                tf_frag = (f"the filter '{expr}' is not usable: "
+                           + "; ".join(problems))
+                break
+            tf_ops.append(FilterOp(domain=f["domain"], expr=expr))
         trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
         crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
         resize, resize_clar = _detect_resize(t_det, exclude=crop_spans)
@@ -1465,12 +1710,14 @@ class RulesAdapter:
         audio_bitrate = _detect_bitrate(t_det, True) if bitrate_is_audio else None
         video_bitrate = _detect_bitrate(t_det, False) if not bitrate_is_audio else None
         filters, filtergraph, filter_note, filter_clar, filter_frag = \
-            _detect_filters(t_det, media.duration if media else None)
+            _detect_filters(t_det, media.duration if media else None,
+                            pre_seen={o.expr for o in tf_ops})
+        filters = tf_ops + filters
         if unsupported_container:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
             return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
-        for frag in (crop_frag, speed_frag, rotate_frag, rs_frag, filter_frag):
+        for frag in (tf_frag, crop_frag, speed_frag, rotate_frag, rs_frag, filter_frag):
             if frag is not None:
                 unsupported.append(UnsupportedPart(fragment=frag,
                                                    reason="outside the MVP support set"))
@@ -1508,7 +1755,7 @@ class RulesAdapter:
                 defaults=[trim_note] if trim_note else [],
             )
 
-        ambiguous = _scan_ambiguous(t_det, resize)
+        ambiguous = _scan_ambiguous(t_det, resize, filters)
 
         # 3. revision: keep the previous watermark's image when the follow-up
         #    only repositions it (the new text may not name the file again)

@@ -227,8 +227,8 @@ def test_support_exposes_m7_surface():
     assert table["xfade"]["domain"] == "video"
     assert table["xfade"]["multi_input"] == 2
     assert "fade" in table["xfade"]["options"]["transition"]["values"]
-    assert table["acompresor"]["domain"] == "audio"
-    assert table["acompresor"]["options"]["level"]["range"] == [0, 100]
+    assert table["acompressor"]["domain"] == "audio"
+    assert table["acompressor"]["options"]["level"]["range"] == [0, 100]
     assert table["silencedetect"]["diagnostic"] is True
     assert table["libvmaf"]["needs_reference"] is True
     assert table["scale_cuda"]["gpu"] is True

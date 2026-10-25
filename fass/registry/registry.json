@@ -2255,8 +2255,8 @@
       "adelay": { "description": "delay in ms: 'adelay=500', 'adelay=delays=500|0'" },
       "apad": { "description": "pad with silence: 'apad=pad_dur=2'" },
       "atrim": { "description": "trim audio: 'atrim=start=5:end=20'" },
-      "acompresor": {
-        "description": "Audio compressor (absent from both tested builds: 6.1.1-3ubuntu5 and 9.0.1-nvidia).",
+      "acompressor": {
+        "description": "Audio compressor: 'acompressor=level=3:ratio=8' (present in both tested builds).",
         "options": {
           "level": {
             "kind": "number",

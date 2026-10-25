@@ -166,12 +166,22 @@ def probe_media(path: str) -> MediaInfo | None:
     return info
 
 
+_ffmpeg_info_cache: FfmpegInfo | None = None
+_ffmpeg_info_probed = False
+
+
 def probe_ffmpeg() -> FfmpegInfo | None:
     """Inspect the local FFmpeg build for encoders, filters, muxers and
     bitstream filters.
 
     Muxer and bsf availability is build-specific (e.g. the ``showinfo``
-    bsf only exists from FFmpeg 7.1), so it is probed, never assumed."""
+    bsf only exists from FFmpeg 7.1), so it is probed, never assumed.
+    The build does not change within a process, so the probe is cached
+    (M10.1: the planner consults filter presence on every request)."""
+    global _ffmpeg_info_cache, _ffmpeg_info_probed
+    if _ffmpeg_info_probed:
+        return _ffmpeg_info_cache
+    _ffmpeg_info_probed = True
     if not ffmpeg_available():
         return None
     info = FfmpegInfo()
@@ -212,6 +222,7 @@ def probe_ffmpeg() -> FfmpegInfo | None:
             if _BSF_NAME.match(name):
                 names.add(name)
         info.bsfs = names
+    _ffmpeg_info_cache = info
     return info
 
 

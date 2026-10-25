@@ -151,10 +151,14 @@ def test_rotate_ccw_defaults_angle_with_note(gen):
     assert any("defaulted to 90" in n for n in r.defaults)
 
 
-def test_rotate_non_quarter_turn_is_unsupported(gen):
+def test_rotate_non_quarter_turn_is_the_rotate_filter(gen):
+    # M10.1: an arbitrary angle is the real rotate filter (padded frame),
+    # not the quarter-turn transpose the RotateOp maps to
     r = gen("rotate the video 45 degrees", "clip.mp4")
-    assert r.status == "unsupported"
-    assert r.plan is None
+    assert r.status == "ready"
+    f = [o for o in r.plan["operations"] if o["type"] == "filter"]
+    assert f and f[0]["expr"].startswith("rotate=angle=45*PI/180")
+    assert f[0]["domain"] == "video"
 
 
 def test_crop_to_exact_dims(gen):

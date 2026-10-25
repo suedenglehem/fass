@@ -22,6 +22,7 @@ from fass.registry import (
     bsf_spec,
     capability_errors,
     extension_for,
+    filter_spec,
     filtergraph_output_labels,
     gpu_coder,
     input_format_for,
@@ -145,6 +146,90 @@ def _version_note(subject: str, min_version: str) -> str | None:
         return None
     return (f"{subject} requires FFmpeg {min_version}+ — the local build "
             f"is {'.'.join(map(str, ver))}, which predates it")
+
+
+# Semantic traps (M10.1): filters whose effect is not what the plain name
+# suggests. The plan is built as requested; the warning states the trap.
+_TRAP_NOTES = {
+    "asetrate": (
+        "asetrate rewrites the sample-rate metadata — it shifts pitch AND "
+        "playback speed (unlike atempo, which preserves pitch)"),
+    "decimate": (
+        "decimate drops frames in a cycle pattern — the output has fewer "
+        "frames (shorter, choppier), not a slower playback"),
+    "chromakey": (
+        "chromakey keys the chosen color to transparency — an output "
+        "without an alpha channel (e.g. H.264 in MP4) renders the keyed "
+        "area black; composite with overlay or write an alpha-capable format"),
+    "colorspace": (
+        "colorspace rewrites color-space metadata tags — it labels the "
+        "stream, it does not convert pixel values"),
+    "colormatrix": (
+        "colormatrix rewrites color-matrix metadata tags — it labels the "
+        "stream, it does not convert pixel values"),
+    "loop": (
+        "loop repeats a frame range — the output runs longer than the "
+        "input; bound it with a trim"),
+    "fps": (
+        "fps drops or duplicates frames to reach the target rate — "
+        "playback speed is unchanged (use a speed change for that)"),
+    "framerate": (
+        "framerate drops or duplicates frames to reach the target rate "
+        "(scene-change aware) — playback speed is unchanged"),
+    "setdar": (
+        "setdar changes the display-aspect-ratio metadata — pixels are not "
+        "rescaled (use resize for that)"),
+    "setsar": (
+        "setsar changes the sample-aspect-ratio metadata — pixels are not "
+        "rescaled (use resize for that)"),
+    "silenceremove": (
+        "silenceremove drops leading/interior silences — output timestamps "
+        "shift; the kept audio is unchanged"),
+    "rotate": (
+        "arbitrary-angle rotation pads the frame (fillcolor) — the output "
+        "dimensions change"),
+    "trim": (
+        "the trim filter cuts inside the filter chain — a plan-level trim "
+        "is usually what you want"),
+}
+
+
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split a filter chain on commas outside brackets and quotes."""
+    parts: list[str] = []
+    cur: list[str] = []
+    depth, quote = 0, None
+    for ch in s:
+        if quote is not None:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"":
+            quote = ch
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _chain_filter_names(expr: str) -> list[str]:
+    """Filter instance names in a chain expression ('a=x,b=c' → ['a','b']).
+    The schema validated the expression, so this is a light parse: top-level
+    commas, then the leading identifier of each instance."""
+    names = []
+    for inst in _split_top_level_commas(expr):
+        m = re.match(r"\s*([a-z][a-z0-9_]*)", inst)
+        if m:
+            names.append(m.group(1))
+    return names
 
 
 # ---------------------------------------------------------------- filters
@@ -593,6 +678,38 @@ def plan_execution(
 
     defaults: list[str] = []
     warnings: list[str] = []
+
+    # -- filter disclosures (M10.1): presence, version, GPU, semantic traps --
+    # The registry validated the names and options; this is what the plan
+    # tells the user about them on THIS build.
+    ff = probe_ffmpeg()
+    disclosed: set[str] = set()
+    for o in edit.operations:
+        if o.type != "filter":
+            continue
+        for name in _chain_filter_names(o.expr):
+            if name in disclosed:
+                continue
+            disclosed.add(name)
+            spec = filter_spec(name)
+            if spec is None:
+                continue
+            if ff is not None and name not in ff.filters:
+                warnings.append(
+                    f"filter '{name}' is not available in the local FFmpeg "
+                    "build — the command will fail to start")
+            if spec.get("min_version"):
+                note = _version_note(f"filter '{name}'", spec["min_version"])
+                if note:
+                    warnings.append(note)
+            if spec.get("gpu"):
+                warnings.append(
+                    f"filter '{name}' needs a GPU at runtime — it fails "
+                    "without one (the plan's GPU flag selects the encoder, "
+                    "not the filter)")
+            note = _TRAP_NOTES.get(name)
+            if note:
+                warnings.append(note)
 
     # -- output destination: stream URL (M3b), device (M4), or file --------
     dest = output_filename or edit.output_destination

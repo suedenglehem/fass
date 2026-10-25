@@ -47,6 +47,14 @@ inputs is what makes "replace the audio with song.mp3" work.
   out (video and audio), blur & sharpen, **burned-in text or a live
   timecode** (`drawtext`), volume / loudness normalization, low- / high-pass,
   bass & treble, echo, limiter, delay, silence padding
+- **Transform filters** — audio dynamics (`acompressor`, `compand`,
+  `dynaudnorm`, `adrc`, `adynamicequalizer`, `adeclick`, `silenceremove`,
+  `hdcd`), video cleanup (`yadif` deinterlace, `decimate` duplicate-frame
+  drop, `chromakey`, `drawbox`, arbitrary-angle `rotate`), frame-rate
+  (`fps`/`framerate`), color space (`colorspace`/`colormatrix`), aspect
+  ratio (`setdar`/`setsar`) — every chain validated against the filter
+  registry, with semantic-trap warnings (asetrate changes pitch **and**
+  speed; decimate drops frames; colorspace is metadata-only, …)
 - **Container conversion** — a broad, codec-matrix-validated set: video in
   MP4 / MOV / MKV / WebM / MPEG-TS / MXF / AVI / FLV / GIF / WebP with H.264 /
   H.265 / VP9 / MPEG-2 / ProRes / MJPEG, audio in MP3 / AAC / FLAC / Opus /

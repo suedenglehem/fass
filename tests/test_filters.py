@@ -2,7 +2,8 @@
 validation, presence probe surface, and the argv gate for -vf/-af/-filter_complex.
 
 The 50 new entries were transcribed from `ffmpeg -h filter=NAME` on the tested
-6.1.1 build (acompresor/blackdetect_vulkan/libvmaf from docs — absent there).
+6.1.1 build (blackdetect_vulkan/libvmaf from docs — absent there; acompressor
+was misspelled 'acompresor' at M10.0 and is corrected in M10.1).
 """
 import pytest
 
@@ -19,7 +20,7 @@ from fass.registry import (
 )
 
 NEW_AUDIO = [
-    "acompresor", "acrossfade", "adeclick", "adrc", "adynamicequalizer",
+    "acompressor", "acrossfade", "adeclick", "adrc", "adynamicequalizer",
     "amerge", "amix", "asetrate", "ashowinfo", "astats", "channelsplit",
     "compand", "dynaudnorm", "equalizer", "hdcd", "join", "silencedetect",
     "silenceremove", "volumedetect", "anullsrc",
@@ -84,7 +85,7 @@ def test_category_flags():
 
 def test_options_valid_examples():
     ok = [
-        ("acompresor", {"level": "3", "ratio": "8"}),
+        ("acompressor", {"level": "3", "ratio": "8"}),
         ("xfade", {"transition": "fade", "duration": "1", "offset": "5"}),
         ("amix", {"inputs": "2", "duration": "longest", "normalize": "0"}),
         ("yadif", {"mode": "send_frame", "parity": "auto", "deint": "all"}),
@@ -100,7 +101,7 @@ def test_options_valid_examples():
         ("vstack", {"inputs": "2"}),
         ("join", {"inputs": "2", "channel_layout": "stereo"}),
         ("setdar", {"dar": "16:9"}),
-        ("acompresor", {"enable": "lte(t,5)"}),  # universal timeline option
+        ("acompressor", {"enable": "lte(t,5)"}),  # universal timeline option
     ]
     for name, opts in ok:
         assert filter_options_problems(name, opts) == [], (name, opts)
@@ -108,12 +109,12 @@ def test_options_valid_examples():
 
 def test_options_invalid_examples():
     bad = [
-        ("acompresor", {"level": "999"}, "above the maximum"),
-        ("acompresor", {"level": "-1"}, "below the minimum"),
+        ("acompressor", {"level": "999"}, "above the maximum"),
+        ("acompressor", {"level": "-1"}, "below the minimum"),
         ("xfade", {"transition": "bogus"}, "is not one of"),
         ("amix", {"inputs": "0"}, "below the minimum"),
         ("astats", {"metadata": "2"}, "expected 0 or 1"),
-        ("acompresor", {"bogus": "1"}, "is not valid"),
+        ("acompressor", {"bogus": "1"}, "is not valid"),
         ("vstack", {"inputs": "x"}, "not an integer"),
         ("acrossfade", {"d": "abc"}, "not a number"),
     ]
@@ -135,14 +136,14 @@ def test_name_only_filters_pass_through():
 # ------------------------------------------------------- expression wiring
 
 def test_expr_instances_get_option_validation():
-    assert filter_expr_problems("acompresor=level=3") == []
-    probs = filter_expr_problems("acompresor=level=999")
+    assert filter_expr_problems("acompressor=level=3") == []
+    probs = filter_expr_problems("acompressor=level=999")
     assert probs and "above the maximum" in probs[0]
-    probs = filter_expr_problems("acompresor=level=1:level=2")
+    probs = filter_expr_problems("acompressor=level=1:level=2")
     assert probs and "twice" in probs[0]
     probs = filter_expr_problems("astats=1:2:3:4:5:6:7")
     assert probs and "too many positional" in probs[0]
-    probs = filter_expr_problems("acompresor=level=1::ratio=2")
+    probs = filter_expr_problems("acompressor=level=1::ratio=2")
     assert probs and "empty argument" in probs[0]
 
 
@@ -169,7 +170,7 @@ def _vf_argv(expr: str) -> list[str]:
 
 
 def test_argv_gate_accepts_valid_filter_options():
-    assert execute.validate_argv(_vf_argv("acompresor=level=3")) == []
+    assert execute.validate_argv(_vf_argv("acompressor=level=3")) == []
     assert execute.validate_argv(_vf_argv("yadif=mode=send_frame")) == []
     assert execute.validate_argv(
         ["ffmpeg", "-i", "a.mp4", "-i", "b.mp4",
@@ -179,11 +180,11 @@ def test_argv_gate_accepts_valid_filter_options():
 
 
 def test_argv_gate_rejects_invalid_filter_options():
-    errs = execute.validate_argv(_vf_argv("acompresor=level=999"))
+    errs = execute.validate_argv(_vf_argv("acompressor=level=999"))
     assert errs and "above the maximum" in errs[0]
     errs = execute.validate_argv(_vf_argv("xfade=transition=bogus"))
     assert errs and "is not one of" in errs[0]
-    errs = execute.validate_argv(_vf_argv("acompresor=bogus=1"))
+    errs = execute.validate_argv(_vf_argv("acompressor=bogus=1"))
     assert errs and "is not valid" in errs[0]
 
 
@@ -192,12 +193,13 @@ def test_argv_gate_rejects_invalid_filter_options():
 def test_presence_probe_covers_new_filters():
     ff = probe_ffmpeg()
     assert ff is not None
-    # present on the tested 6.1.1 build
+    # present on the tested 6.1.1 build (acompressor: the M10.0 entry was
+    # misspelled 'acompresor', so the probe reported it absent — fixed in M10.1)
     for name in ("acrossfade", "astats", "silencedetect", "xfade", "yadif",
-                 "drawbox", "anullsrc", "volumedetect"):
+                 "drawbox", "anullsrc", "volumedetect", "acompressor"):
         assert name in ff.filters, name
     # absent on 6.1.1 (the probe reports the build, never assumes)
-    for name in ("acompresor", "blackdetect_vulkan", "libvmaf"):
+    for name in ("blackdetect_vulkan", "libvmaf"):
         assert name not in ff.filters, name
 
 
