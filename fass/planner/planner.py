@@ -21,6 +21,7 @@ from fass.registry import (
     bsf_for_copy,
     bsf_spec,
     capability_errors,
+    diagnostic_output,
     extension_for,
     filter_spec,
     filtergraph_output_labels,
@@ -78,6 +79,7 @@ class ExecutionPlan:
     output_opts: list[str]
     output_path: str
     af: str | None = None  # audio filter chain (-af): speed changes
+    loglevel: str = "error"  # builder's -loglevel; diagnostic plans raise it to info
     defaults: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -191,6 +193,23 @@ _TRAP_NOTES = {
     "trim": (
         "the trim filter cuts inside the filter chain — a plan-level trim "
         "is usually what you want"),
+}
+
+# Diagnostic filters (M10.2): they write results to FFmpeg's log and change
+# nothing. A plan made only of them runs against the null muxer with the
+# log level raised to info (the results are info-level messages).
+_DIAG_NOTES = {
+    "silencedetect": "silencedetect writes silence intervals to the log — the stream is unchanged",
+    "volumedetect": "volumedetect writes mean/max volume to the log — the stream is unchanged",
+    "astats": "astats writes per-window audio statistics to the log",
+    "ashowinfo": "ashowinfo writes per-frame audio packet info to the log",
+    "blackdetect": "blackdetect writes black intervals to the log",
+    "cropdetect": "cropdetect writes crop recommendations to the log",
+    "freezedetect": "freezedetect writes frozen-frame intervals to the log",
+    "idet": "idet writes interlaced/progressive/repeat frame counts to the log",
+    "showinfo": "showinfo writes per-frame metadata to the log — verbose on long files",
+    "bbox": "bbox writes bounding boxes of frame-to-frame changes to the log",
+    "blackdetect_vulkan": "blackdetect_vulkan writes black intervals to the log (needs a GPU)",
 }
 
 
@@ -480,7 +499,23 @@ def plan_execution(
     if len(edit.operations) > MAX_OPERATIONS:
         errors.append(f"at most {MAX_OPERATIONS} operations are supported per request")
 
+    # Diagnostic analysis (M10.2): a plan made only of diagnostic filters
+    # (registry 'diagnostic': true) analyzes the input and writes nothing —
+    # the results are info-level log messages. Trim is allowed (analyze a
+    # segment); a filtergraph or bitstream filters are other plan shapes and
+    # keep the plan a normal output plan, and an explicitly requested
+    # audio/subtitle output is a file the user wants, not an analysis.
     out = edit.output
+    filter_ops = [o for o in edit.operations if o.type == "filter"]
+    diag_names = [n for o in filter_ops for n in _chain_filter_names(o.expr)]
+    diagnostic = (
+        out.mode == "video"
+        and bool(filter_ops)
+        and all(o.type == "filter" for o in edit.operations)
+        and all((filter_spec(n) or {}).get("diagnostic") for n in diag_names)
+        and not edit.filtergraph
+        and not (edit.bitstream_filters or [])
+    )
     ar_ops = edit.ops_of("audio_replace")
     # A remove followed by a replace still produces audio — the replacement
     # track stands in for the removed one.
@@ -544,13 +579,17 @@ def plan_execution(
         errors.append("the audio is removed, so it cannot be filtered")
 
     input_asset = assets.get(edit.input_id)
+    allowed_kinds = {
+        "video": (AssetKind.VIDEO, AssetKind.SOURCE),
+        "audio": (AssetKind.VIDEO, AssetKind.SOURCE, AssetKind.AUDIO),
+        "subtitles": (AssetKind.VIDEO, AssetKind.SOURCE),
+    }[out.mode]
+    if diagnostic and AssetKind.AUDIO not in allowed_kinds:
+        # audio-domain diagnostics run fine on an audio file (-af … -f null -)
+        allowed_kinds = allowed_kinds + (AssetKind.AUDIO,)
     if input_asset is None:
         errors.append(f"asset id '{edit.input_id}' is not in the asset map")
-    elif input_asset.kind not in {
-            "video": (AssetKind.VIDEO, AssetKind.SOURCE),
-            "audio": (AssetKind.VIDEO, AssetKind.SOURCE, AssetKind.AUDIO),
-            "subtitles": (AssetKind.VIDEO, AssetKind.SOURCE),
-        }[out.mode]:
+    elif input_asset.kind not in allowed_kinds:
         errors.append(f"asset '{edit.input_id}' " + {
             "video": "is not a video or a source",
             "audio": "is not a video, source or audio file",
@@ -710,6 +749,15 @@ def plan_execution(
             note = _TRAP_NOTES.get(name)
             if note:
                 warnings.append(note)
+
+    # -- diagnostic analysis (M10.2): null muxer, log level info, no file --
+    if diagnostic:
+        ep = _build_diagnostic_plan(edit, in_path, defaults, warnings,
+                                    output_filename, diag_names)
+        ep.defaults.extend(defaults)
+        ep.warnings.extend(warnings)
+        _metadata_warnings(ep, edit, metadata)
+        return ep
 
     # -- output destination: stream URL (M3b), device (M4), or file --------
     dest = output_filename or edit.output_destination
@@ -1098,6 +1146,60 @@ def _bsf_arg(b) -> str:
     if not b.options:
         return b.name
     return b.name + "=" + ":".join(f"{k}={b.options[k]}" for k in sorted(b.options))
+
+
+def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
+                           warnings: list[str], output_filename: str | None,
+                           diag_names: list[str]) -> ExecutionPlan:
+    """Diagnostic analysis (M10.2): decode through the diagnostic filters and
+    discard the stream ('-f null -', registry diagnostic_output). The filters
+    write their results to the log at info level, so the builder's -loglevel
+    is raised; no file is written, so an output filename is ignored (noted).
+    A stream destination or audio device is a contradiction — there is no
+    data to carry."""
+    dest = output_filename or edit.output_destination
+    if dest and stream_scheme(dest) is not None:
+        raise PlanError([
+            f"diagnostic analysis writes nothing — the stream destination "
+            f"'{dest}' has no data to carry; drop it"])
+    if dest and output_device_for(dest) is not None:
+        raise PlanError([
+            f"diagnostic analysis writes nothing — it cannot target the "
+            f"audio device '{dest}'"])
+    if output_filename:
+        defaults.append(
+            f"output filename '{output_filename}' ignored — a diagnostic "
+            "run writes no file")
+    inputs = [_main_input(in_path)]
+    if edit.trim is not None:
+        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    opts: list[str] = []
+    if edit.trim is not None and edit.trim.is_bounded:
+        opts += ["-t", fmt_num(edit.trim.duration_seconds)]
+    diag = diagnostic_output()
+    opts += ["-f", diag.get("muxer", "null")]
+    vf = ",".join(o.expr for o in edit.operations
+                  if o.type == "filter" and o.domain == "video")
+    af = ",".join(o.expr for o in edit.operations
+                  if o.type == "filter" and o.domain == "audio")
+    warnings.append(
+        "diagnostic analysis — nothing is written to a file; the results "
+        "are in the run log (log level raised to info)")
+    for name in dict.fromkeys(diag_names):
+        note = _DIAG_NOTES.get(name)
+        if note:
+            warnings.append(note)
+    return ExecutionPlan(
+        mode="diagnostic",
+        inputs=inputs,
+        vf=vf or None,
+        filter_complex=None,
+        maps=[],
+        output_opts=opts,
+        output_path=diag.get("path", "-"),
+        af=af or None,
+        loglevel="info",
+    )
 
 
 def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,

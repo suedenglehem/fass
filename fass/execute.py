@@ -37,6 +37,7 @@ from fass.registry import (
     codec_option_errors,
     codec_option_specs,
     container_from_extension,
+    diagnostic_output,
     filtergraph_problems,
     format_option_errors,
     is_source_spec,
@@ -95,8 +96,10 @@ _CODECS = (
     | {"pcm_s16le", "copy"}
 )
 # Registry-driven: every container muxer, the fixed-container stream muxers,
-# the source-input demuxers (lavfi, …) and the output device formats.
-_MUXERS = all_muxers() | set(source_input_formats()) | set(output_device_formats())
+# the source-input demuxers (lavfi, …), the output device formats, and the
+# diagnostic null muxer (M10.2 — '-f null -' discards the decoded stream).
+_MUXERS = (all_muxers() | set(source_input_formats()) | set(output_device_formats())
+           | {diagnostic_output().get("muxer", "null")})
 _PIX_FMTS = {pf for pfs in REGISTRY["pixel_formats"].values() for pf in pfs}
 _PRESETS = {p for ps in REGISTRY["video_presets"].values() for p in ps}
 _PROFILES = {"baseline", "main", "high"}
@@ -195,6 +198,11 @@ def validate_argv(argv: list[str]) -> list[str]:
                 problems.append(f"flag '{tok}' at the end has no value")
             continue
         if tok in KNOWN_FLAGS:
+            continue
+        if tok == "-" and i == len(argv) - 1:
+            # the null muxer's destination (M10.2 diagnostic runs): '-' is
+            # the output path, not a flag
+            positionals += 1
             continue
         if tok.startswith("-"):
             if _codec_option_encoder(tok[1:], video_encoder, audio_encoder):
@@ -398,7 +406,11 @@ def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
                 notes.append(f"input '{path}' resolved to /input volume: {out[i + 1]}")
     if len(out) >= 2:
         dest = out[-1]
-        if (
+        if dest == "-":
+            # diagnostic run (M10.2): '-' is FFmpeg's null-muxer token, not
+            # a filename — it must not resolve into the output volume
+            notes.append("diagnostic run — output discarded (null muxer)")
+        elif (
             out_dir
             and stream_scheme(dest) is None
             and ":" not in dest
@@ -523,7 +535,7 @@ def start_run(argv: list[str], timeout: float | None = None) -> Run:
         id=run_id, argv=argv, command=render_posix(argv),
         started=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         status="running",
-        output=None if stream_scheme(out_name) else out_name,
+        output=None if (stream_scheme(out_name) or out_name == "-") else out_name,
         notes=notes, log=f"{run_id}.log",
     )
     out_dir = _output_dir()

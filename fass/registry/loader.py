@@ -245,6 +245,14 @@ def stream_output_schemes() -> list[str]:
     return [s for s, i in _streaming()["output"].items() if "muxer" in i]
 
 
+def diagnostic_output() -> dict:
+    """The diagnostic analysis destination (M10.2): {'muxer': 'null',
+    'path': '-'} — the null muxer discards the decoded stream, results go
+    to the log. Used by the planner's diagnostic mode and by the argv
+    gate's -f vocabulary."""
+    return REGISTRY.get("diagnostic_output", {})
+
+
 # ---------------------------------------------------------------- M4 helpers
 
 def pixel_formats_for(video_codec: str) -> list[str]:

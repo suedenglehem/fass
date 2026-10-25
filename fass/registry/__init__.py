@@ -22,6 +22,7 @@ from fass.registry.loader import (  # noqa: F401
     codec_option_specs,
     container_from_extension,
     default_codec,
+    diagnostic_output,
     extension_for,
     filter_expr_problems,
     filter_names,

@@ -954,9 +954,60 @@ def _detect_filters(
         if r2:
             add("video", f"{which}=ratio={r2.group(1)}/{r2.group(2)}")
 
+    # --- M10.2 diagnostic phrases -------------------------------------------
+    # Diagnostic filters report through the log, so the phrasing is a
+    # measurement verb ('detect', 'find', 'where are', 'how loud',
+    # 'measure'), never an edit verb: 'remove the silences' stays
+    # silenceremove (above), 'deinterlace' stays yadif (above) — the verb
+    # decides, and these windows never overlap.
+    _dv = r"(?:detect|find|locate|report|measure|check|show|list|analy[sz]\w*)"
+    if re.search(rf"\b{_dv}\s+(?:the\s+)?silenc\w*|\bsilenc\w*\s+detect\w*"
+                 r"|\bwhere\s+(?:are\s+)?the\s+silenc\w*|\bhow\s+much\s+silenc\w*",
+                 text, re.I):
+        add("audio", "silencedetect")
+    if re.search(rf"\b{_dv}\s+(?:the\s+|its\s+)?volume\b|\bvolume\s+levels?\b"
+                 r"|\bhow\s+loud\b|\b(?:max(?:imum)?|peak|average|min(?:imum)?)\s+volume\b",
+                 text, re.I):
+        add("audio", "volumedetect")
+    if re.search(r"\baudio\s+st(?:ats|atistics)\b"
+                 r"|\bst(?:ats|atistics)\s+(?:about|on|for)\s+(?:the\s+)?audio\b",
+                 text, re.I):
+        add("audio", "astats")
+    if re.search(r"\baudio\s+frame\s+info\w*"
+                 r"|\binfo\w*\s+(?:about|on)\s+(?:the\s+)?audio\s+frames?\b",
+                 text, re.I):
+        add("audio", "ashowinfo")
+    if re.search(rf"\b{_dv}\s+(?:the\s+)?black\s+(?:frames?|intervals?|scenes?)"
+                 r"|\bblack\s+(?:frames?|intervals?|scenes?|screen)\s+detect\w*"
+                 r"|\bwhere\s+are\s+the\s+black\s+(?:frames?|scenes?)\b",
+                 text, re.I):
+        add("video", "blackdetect")
+    if re.search(r"\bblack\s+(?:bars?|borders?|edges?|crop|letterbox|pillarbox)\w*"
+                 r"|\b(?:letterbox|pillarbox)\s+bars?\b"
+                 rf"|\b{_dv}\s+(?:the\s+)?(?:black\s+)?bars?\b",
+                 text, re.I):
+        add("video", "cropdetect")
+    if re.search(rf"\b{_dv}\s+(?:the\s+)?frozen\s+frames?|\bfrozen\s+frames?\s+detect\w*"
+                 r"|\bfreeze\s+detect\w*|\bdetect\s+freez\w*",
+                 text, re.I):
+        add("video", "freezedetect")
+    if re.search(rf"\b{_dv}\s+(?:for\s+)?(?:the\s+)?interlac\w*"
+                 r"|\binterlac\w*\s+(?:detection|analysis|check)"
+                 r"|\b(?:is|are)\s+(?:this|that|it|the)\b[^.!?\n]{0,20}\binterlac\w*",
+                 text, re.I):
+        add("video", "idet")
+    if re.search(rf"\b{_dv}\s+(?:the\s+)?(?:content\s+)?bounding\s+box\w*"
+                 r"|\bbounding\s+box\s+detect\w*",
+                 text, re.I):
+        add("video", "bbox")
+    if re.search(r"(?<!audio\s)\bframe\s+info\w*"
+                 r"|\binfo\w*\s+(?:about|on)\s+(?:the\s+)?frames?\b",
+                 text, re.I):
+        add("video", "showinfo")
+
     # --- raw 'name=args' and 'apply the X filter' -------------------------
     for m in _RAW_FILTER_RX.finditer(text):
-        expr = m.group(1)
+        expr = _fix_db(m.group(1))
         name = expr.split("=", 1)[0]
         if name in all_filter_names():
             add("audio" if name in filter_names("audio") else "video", expr)
@@ -1059,8 +1110,9 @@ def _detect_bitstream_filters(t: str) -> list[dict]:
 # 'volume', 'rotate') stay out — their keyword detectors (TrimOp, CropOp,
 # ResizeOp, the fade/volume phrases, RotateOp) own those words; the explicit
 # forms ('loop=loop=2:size=100', 'apply the loop filter') reach them through
-# _detect_filters. Diagnostic / multi-input / reference filters are separate
-# plan shapes (M10.2–M10.4) and are not claimed here.
+# _detect_filters. Diagnostic filters (M10.2) are claimed too — their names
+# are pure jargon ('idet', 'astats', 'cropdetect'), and their domain comes
+# from the registry. Multi-input / reference filters stay out (M10.3–M10.4).
 _TRANSFORM_JARGON = {
     "audio": {"acompressor", "adeclick", "adrc", "adynamicequalizer",
               "asetrate", "compand", "dynaudnorm", "hdcd", "silenceremove"},
@@ -1068,6 +1120,13 @@ _TRANSFORM_JARGON = {
               "drawbox", "fps", "framerate", "setdar", "setsar",
               "setparams", "yadif", "scale_cuda", "yadif_cuda"},
 }
+
+# M10.2: diagnostic filters named bare. The registry marks them
+# 'diagnostic': true; the planner turns an all-diagnostic filter plan into
+# a '-f null -' analysis run. Domain is registry membership, not a table.
+_DIAGNOSTIC_JARGON = {"silencedetect", "volumedetect", "astats", "ashowinfo",
+                      "blackdetect", "blackdetect_vulkan", "cropdetect",
+                      "freezedetect", "idet", "showinfo", "bbox"}
 
 # Bare names that take a bare number next to them ('fps to 30', 'asetrate
 # 44100', '30 fps'): the number is the filter's primary option, not a
@@ -1079,6 +1138,8 @@ def _transform_domain(name: str) -> str | None:
     for domain in ("video", "audio"):
         if name in _TRANSFORM_JARGON[domain]:
             return domain
+    if name in _DIAGNOSTIC_JARGON:
+        return "audio" if name in filter_names("audio") else "video"
     return None
 
 
@@ -1097,7 +1158,8 @@ def _detect_transform_filters(t: str) -> tuple[list[dict], list[str]]:
     schema has that key."""
     positions: dict[str, int] = {}
     spans: list[tuple[int, int]] = []
-    jargon = _TRANSFORM_JARGON["video"] | _TRANSFORM_JARGON["audio"]
+    jargon = (_TRANSFORM_JARGON["video"] | _TRANSFORM_JARGON["audio"]
+              | _DIAGNOSTIC_JARGON)
     for m in re.finditer(r"\b([a-z][a-z0-9_]*)\b", t):
         name = m.group(1)
         if name in jargon and name not in positions:
@@ -1160,6 +1222,16 @@ def _detect_transform_filters(t: str) -> tuple[list[dict], list[str]]:
     return found, spans
 
 
+# ffmpeg parses the dB suffix case-sensitively: 'silencedetect=n=-30dB'
+# works, '-30db' fails at option parsing. The instruction is lowercased,
+# so the canonical spelling is restored when a filter expression is built.
+_DB_SUFFIX = re.compile(r"(\d)db\b")
+
+
+def _fix_db(expr: str) -> str:
+    return _DB_SUFFIX.sub(r"\1dB", expr)
+
+
 def _transform_expr(f: dict) -> str:
     """The filter expression for a claimed transform filter: the name plus
     its options in FFmpeg's 'name=k=v:k2=v2' form. Positional values (the
@@ -1192,7 +1264,7 @@ def _transform_expr(f: dict) -> str:
             pairs.append(f"{schema_keys[ki]}={v}")
             ki += 1
     pairs += [f"{k}={v}" for k, v in opts.items()]
-    return f["name"] + "=" + ":".join(pairs)
+    return _fix_db(f["name"] + "=" + ":".join(pairs))
 
 
 # ---------------------------------------------------------------- codec options

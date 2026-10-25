@@ -1377,20 +1377,12 @@
         "description": "Detects frozen video input.",
         "options": {
           "n": {
-            "kind": "number",
-            "range": [
-              0,
-              1
-            ],
-            "description": "set noise tolerance (default 0.001)"
+            "kind": "string",
+            "description": "set noise tolerance (default 0.001; linear 0-1, or dB suffixed like -30dB — ffmpeg parses the value)"
           },
           "noise": {
-            "kind": "number",
-            "range": [
-              0,
-              1
-            ],
-            "description": "set noise tolerance (default 0.001)"
+            "kind": "string",
+            "description": "set noise tolerance (default 0.001; linear 0-1, or dB suffixed like -30dB — ffmpeg parses the value)"
           },
           "d": {
             "kind": "number",
@@ -3458,12 +3450,12 @@
         "description": "Detect silence.",
         "options": {
           "n": {
-            "kind": "number",
-            "description": "set noise tolerance (default 0.001)"
+            "kind": "string",
+            "description": "set noise tolerance (default 0.001; linear 0-1, or dB suffixed like -30dB — ffmpeg parses the value)"
           },
           "noise": {
-            "kind": "number",
-            "description": "set noise tolerance (default 0.001)"
+            "kind": "string",
+            "description": "set noise tolerance (default 0.001; linear 0-1, or dB suffixed like -30dB — ffmpeg parses the value)"
           },
           "d": {
             "kind": "number",
@@ -3756,6 +3748,11 @@
         "description": "FFmpeg has no 'trim' bitstream filter — 'trim' is a decode-time video filter. fass implements 'trim' in a copy context as a stream-copy cut: -ss/-t with forced -c copy. Video is keyframe-accurate (starts at the first keyframe at/after the requested point), audio sample-accurate. Re-encoding trim (default) stays frame-accurate."
       }
     }
+  },
+  "diagnostic_output": {
+    "description": "Diagnostic analysis output (M10.2): the null muxer discards the decoded stream — diagnostic filters (registry filters.* entries with 'diagnostic': true) write their results to FFmpeg's log, so a diagnostic plan raises the log level to info and writes no file. The argv ends with '-f null -'.",
+    "muxer": "null",
+    "path": "-"
   },
   "sources": {
     "description": "Generic ffmpeg input sources (the input/output-devices component). An asset whose path is '<format>:<spec>' with an allowlisted format is a source spec, not a file: it gets -f <format> plus ;key=value options as separate option tokens. Output devices carry audio only (pcm) — a plan that produces video cannot target one.",

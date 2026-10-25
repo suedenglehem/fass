@@ -27,6 +27,34 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
     lines: list[str] = []
     out = edit.output
 
+    if ep.mode == "diagnostic":
+        # M10.2: analysis only — the stream is decoded, filtered and
+        # discarded; the results are the filters' log messages.
+        lines.append(
+            "Diagnostic analysis: the input is decoded through the filters "
+            "and discarded (-f null -); results are written to the run log "
+            "(log level info), no file is produced"
+        )
+        for op in edit.operations:
+            if op.type == "filter":
+                lines.append(
+                    f"{'Audio' if op.domain == 'audio' else 'Video'} filter: {op.expr}"
+                )
+        trim = edit.trim
+        if trim is not None:
+            if trim.is_bounded:
+                end = trim.start_seconds + trim.duration_seconds
+                lines.append(
+                    f"Analyzed range: {fmt_num(trim.start_seconds)}s to "
+                    f"{fmt_num(end)}s"
+                )
+            else:
+                lines.append(f"Analyzed range: from {fmt_num(trim.start_seconds)}s to the end")
+        if media is not None:
+            lines.append(f"Input: {media.width}x{media.height}, {media.duration:g}s, {media.video_codec}"
+                         + ("" if media.has_audio else ", no audio stream"))
+        return lines
+
     if out.mode == "subtitles":
         codec = subtitle_dump_codec(out.container)
         lines.append(

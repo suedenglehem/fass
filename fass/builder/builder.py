@@ -12,7 +12,7 @@ from fass.planner import ExecutionPlan
 
 
 def build_argv(ep: ExecutionPlan) -> list[str]:
-    argv: list[str] = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    argv: list[str] = ["ffmpeg", "-hide_banner", "-loglevel", ep.loglevel]
     for inp in ep.inputs:
         argv += inp.pre_opts
         argv += ["-i", inp.path]

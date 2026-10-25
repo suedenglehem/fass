@@ -55,6 +55,14 @@ inputs is what makes "replace the audio with song.mp3" work.
   ratio (`setdar`/`setsar`) — every chain validated against the filter
   registry, with semantic-trap warnings (asetrate changes pitch **and**
   speed; decimate drops frames; colorspace is metadata-only, …)
+- **Diagnostic analysis** — "detect silences", "how loud is this", "detect
+  black frames", "where are the black bars", "detect interlacing", "detect
+  frozen frames", "audio statistics", "frame info", "bounding box"
+  (`silencedetect`, `volumedetect`, `astats`, `ashowinfo`, `blackdetect`,
+  `cropdetect`, `freezedetect`, `idet`, `showinfo`, `bbox`) — an
+  all-diagnostic plan decodes through the filters and discards the stream
+  (`-f null -`, no output file), raising the log level to info so the
+  results land in the run log
 - **Container conversion** — a broad, codec-matrix-validated set: video in
   MP4 / MOV / MKV / WebM / MPEG-TS / MXF / AVI / FLV / GIF / WebP with H.264 /
   H.265 / VP9 / MPEG-2 / ProRes / MJPEG, audio in MP3 / AAC / FLAC / Opus /
