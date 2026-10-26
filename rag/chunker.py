@@ -368,8 +368,10 @@ def chunk_text_file(path: str | Path, corpus_id: str,
             cur, cur_t = [], 0
     if cur:
         rendered.append("\n\n".join(cur))
+    # The raw CLI text is stored sha256-pinned in build-facts/, so citations
+    # resolve to stored evidence: build-help://<corpus>/<file>#<stem>-<i>.
     out: list[Chunk] = []
-    for text in rendered:
+    for i, text in enumerate(rendered, start=1):
         header = f"ffmpeg {cname}" if cname else "ffmpeg"
         full = f"{header}\n\n{text}"
         content_hash = hashlib.sha256(full.encode("utf-8")).hexdigest()
@@ -377,8 +379,9 @@ def chunk_text_file(path: str | Path, corpus_id: str,
             f"{corpus_id}|{path.name}|||{full}".encode("utf-8")
         ).hexdigest()[:16]
         out.append(Chunk(
-            chunk_id=chunk_id, corpus_id=corpus_id, source_url="",
-            anchor="", heading_path=[path.name],
+            chunk_id=chunk_id, corpus_id=corpus_id,
+            source_url=f"build-help://{corpus_id}/{path.name}",
+            anchor=f"{stem}-{i}", heading_path=[path.name],
             component_type=ctype, component_name=cname, option_names=[],
             text=full, parent_id=None, content_hash=content_hash,
             version_status=version_status, source_kind=source_kind,

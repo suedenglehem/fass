@@ -1,0 +1,10 @@
+{
+  "comment": "M11.1 part B — 5 insufficient-evidence queries (PRD 9.1). Mixed: 3 out-of-domain (no topical overlap with the FFmpeg corpus) and 2 in-domain phrasings of features no documented filter provides. Gate 'no fabricated syntax': every exact_match the service returns must be verifiable against the corpus (a query token equals the component name or one of its documented option_names) — checked by the runner against the loaded corpus, not assumed.",
+  "queries": [
+    {"id": "ins-001", "query": "best pizza recipe near my location", "corpus": "ffmpeg-9.0.1", "note": "out-of-domain"},
+    {"id": "ins-002", "query": "quantum entanglement teleportation protocol", "corpus": "ffmpeg-9.0.1", "note": "out-of-domain"},
+    {"id": "ins-003", "query": "add a holographic anaglyph effect to the video", "corpus": "ffmpeg-9.0.1", "note": "in-domain phrasing, no such filter"},
+    {"id": "ins-004", "query": "weather forecast for sao paulo tomorrow", "corpus": "ffmpeg-9.0.1", "note": "out-of-domain"},
+    {"id": "ins-005", "query": "chess opening theory for the sicilian defense", "corpus": "ffmpeg-9.0.1", "note": "out-of-domain"}
+  ]
+}

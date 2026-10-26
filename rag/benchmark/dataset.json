@@ -1,0 +1,33 @@
+{
+ "generated_by": "rag/benchmark/generate_queries.py",
+ "prd": "ffmpeg-assistant-rag-prd.md section 9.1",
+ "registry": "fass/registry/registry.json",
+ "corpora": {
+  "ffmpeg-9.0.1": "rag/corpus/ffmpeg-9.0.1",
+  "ffmpeg-6.1.1": "rag/corpus/ffmpeg-6.1.1"
+ },
+ "counts": {
+  "exact": 87,
+  "option": 79,
+  "nl": 62,
+  "mismatch": 10,
+  "insufficient": 5
+ },
+ "total": 243,
+ "gates": {
+  "exact_top1_min": 0.95,
+  "recall8_min": 0.9,
+  "citation_traceability_min": 1.0,
+  "version_labeling_min": 1.0,
+  "no_fabricated_syntax": "all exact_matches verifiable",
+  "mismatch_no_leak": "novel tokens absent from returned chunks",
+  "persistence": "restart preserves corpus identity",
+  "warm_p95_ms_max": 300,
+  "cold_first_ms_max": 1000
+ },
+ "notes": [
+  "parser 1.2 stores comma-grouped headings with component_name null; registry filters affected in 9.0.1 docs: ['bass', 'blackdetect', 'blackdetect_vulkan', 'setdar', 'setpts', 'setsar', 'settb', 'split', 'treble']. Exact top-1 for those rests on bm25 alone (no exact boost); parser 1.3 should split grouped headings.",
+  "evidence_status 'supported' is over-claimed for out-of-domain queries (bm25 cannot separate; measured 0-16 overlap). M11.2 advisory layer must not treat lexical 'supported' as ground truth; the no-fabrication gate checks exact_match verifiability instead.",
+  "recall8 residual (~21/232) is all-NL and every case is a genuine lexical gap \u2014 inflection (silent/silence, timestamp(s)), compounding (time base/timebase), common-word dilution (frame rate, stream), sibling-component dominance (fade/afade, thumbnail/thumbnail_cuda), or pure synonymy (twice as fast/setpts). No boost rescues them without harming precision; the M11.2 advisory layer must tolerate them."
+ ]
+}

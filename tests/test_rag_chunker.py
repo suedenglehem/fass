@@ -149,6 +149,9 @@ def test_chunk_text_file_filter_name(tmp_path: Path):
     assert chunks[0].component_name == "foo"
     assert chunks[0].component_type == "build_help_filter"
     assert chunks[0].text.startswith("ffmpeg foo\n\n")
-    assert chunks[0].source_url == ""
+    # provenance resolves to the stored build-facts file (PRD 9.1)
+    assert chunks[0].source_url == "build-help://test-corpus/filter-foo.txt"
+    # anchors are file-stem based (match the URL's filename), not cname
+    assert [c.anchor for c in chunks] == ["filter-foo-1", "filter-foo-2"]
     assert chunks[0].heading_path == ["filter-foo.txt"]
     assert chunks[0].parent_id is None

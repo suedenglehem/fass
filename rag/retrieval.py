@@ -44,6 +44,13 @@ EXACT_OPTION_BOOST = 6.0         # query token == an option_name
 EXACT_DOTTED_BOOST = 12.0        # token "component.option" matches both
 DASH_TOKEN_BOOST = 4.0           # "-map" style token present in chunk text
 EXPANSION_SCORE_FACTOR = 0.9     # parent/adjacent chunks rank below their seed
+# The exact-name component union (pulling a component's out-of-window chunks
+# into the candidate set) is only for structured short lookups: `name`,
+# `name option`. In a long free-form NL sentence a single word that happens
+# to equal a component name is incidental, and unioning all of that component's
+# chunks floods top-k with the wrong sibling (e.g. "encode vp9 for a webm file"
+# would surface the native `vp9` encoder instead of `libvpx`).
+COMPONENT_UNION_MAX_TOKENS = 3
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-]*")
 _MAX_QUERY_TOKENS = 16
@@ -296,13 +303,34 @@ class Retriever:
         if source_kinds:
             where.append("source_kind IN (%s)" % ",".join("?" * len(source_kinds)))
             params.extend(source_kinds)
+        where_sql = "".join(" AND " + w for w in where)
         sql = ("SELECT chunk_id, rank FROM chunks WHERE chunks MATCH ?"
-               + "".join(" AND " + w for w in where)
-               + " ORDER BY rank LIMIT ?")
-        rows = self._conn.execute(sql, [match] + params + [LEXICAL_CANDIDATES]) if match else []
-
-        hits = [self._score(c, tokens, rank) for c, rank in
-                ((self._by_id[r[0]], r[1]) for r in rows)]
+               + where_sql + " ORDER BY rank LIMIT ?")
+        rows = (self._conn.execute(sql, [match] + params
+                                   + [LEXICAL_CANDIDATES]).fetchall()
+                if match else [])
+        # Candidate set = bm25 top-30 plus (for short structured queries only)
+        # the chunks of any component whose name a query token equals exactly:
+        # the exact-component boost must be able to fire even when the
+        # component's own chunks fall outside the bm25 window (common-word
+        # names like 'format'). Long NL queries skip the union — see
+        # COMPONENT_UNION_MAX_TOKENS.
+        cand: dict[str, float] = {r[0]: r[1] for r in rows}
+        if match and len(tokens) <= COMPONENT_UNION_MAX_TOKENS:
+            for t in tokens:
+                known = self._known_components.get(t["core"])
+                if not known:
+                    continue
+                for c in self._by_component.get((known[0], known[1].lower()), ()):
+                    if c.chunk_id not in cand:
+                        row = self._conn.execute(
+                            "SELECT rank FROM chunks WHERE chunks MATCH ?"
+                            + where_sql + " AND chunk_id = ?",
+                            [match] + params + [c.chunk_id]).fetchone()
+                        if row is not None:
+                            cand[c.chunk_id] = row[0]
+        hits = [self._score(self._by_id[cid], tokens, rank)
+                for cid, rank in cand.items()]
         # An explicit component_names filter is an exact component request
         # (PRD 5.5 example: NL query + component_names -> supported).
         if component_names:
@@ -384,17 +412,14 @@ class Retriever:
 
     def _expand(self, selected: list[_Hit], top_k: int, max_chars: int,
                 omitted: dict) -> list[_Hit]:
-        """Parent/adjacent expansion (PRD 5.4): for the top seeds, pull in the
-        parent chunk and the adjacent chunk of the same document, bounded by
-        top_k and the character budget. Budget-skipped expansions are counted
-        in ``omitted``."""
+        """Parent/adjacent expansion (PRD 5.4): the selected seeds keep their
+        slots, then the top-3 seeds' parent/adjacent chunks fill the slots the
+        budget did not fill — the response never exceeds top_k. Budget-skipped
+        expansions are counted in ``omitted``."""
         used = sum(len(h.chunk.text) for h in selected)
-        out: list[_Hit] = []
+        out: list[_Hit] = list(selected)
         expanded_ids = {h.chunk.chunk_id for h in selected}
-        for i, h in enumerate(selected):
-            out.append(h)
-            if i >= 3:
-                continue
+        for h in selected[:3]:
             extras: list[Chunk] = []
             parent = self._by_id.get(h.chunk.parent_id) if h.chunk.parent_id else None
             if parent is not None:
@@ -403,7 +428,9 @@ class Retriever:
             if prev is not None:
                 extras.append(prev)
             for e in extras:
-                if e.chunk_id in expanded_ids or len(out) >= top_k:
+                if len(out) >= top_k:
+                    break
+                if e.chunk_id in expanded_ids:
                     continue
                 if used + len(e.text) > max_chars:
                     omitted["chunks"] += 1

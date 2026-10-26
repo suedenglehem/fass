@@ -130,6 +130,12 @@ def _validate_chunks(kind: str, corpus_id: str, chunks: list[dict]) -> None:
                 raise ValueError(f"{kind}: chunk missing key {k!r}")
         if not c["text"].strip():
             raise ValueError(f"{kind}: empty chunk text {c['chunk_id']}")
+        # citation invariant (PRD 9.1): every chunk's url+anchor must
+        # resolve to stored evidence, so neither may be empty at ingest
+        if not c["source_url"].strip():
+            raise ValueError(f"{kind}: empty source_url {c['chunk_id']}")
+        if not c["anchor"].strip():
+            raise ValueError(f"{kind}: empty anchor {c['chunk_id']}")
         if c["corpus_id"] != corpus_id:
             raise ValueError(f"{kind}: corpus_id mismatch {c['chunk_id']}")
         if c["source_kind"] != kind:
