@@ -24,8 +24,12 @@ Run:  fass serve [--host 0.0.0.0] [--port 8000]
 
 from __future__ import annotations
 
+import base64
 import json
+import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
@@ -188,6 +192,17 @@ class RagQueryRequest(BaseModel):
         if not self.query.strip():
             raise ValueError("query must not be whitespace-only")
         return self
+
+
+class FrameRequest(BaseModel):
+    """POST /v1/files/frame body (Files tab): the first frame of one file of
+    a deployment volume, as a 360-px-high JPEG. ``file`` is a bare basename
+    of ``dir`` — the same stance as /v1/mediainfo and the /media routes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dir: Literal["input", "output"] = "input"
+    file: str = Field(min_length=1, max_length=1024)
 
 
 def _llm_status() -> dict:
@@ -631,6 +646,179 @@ def create_app() -> FastAPI:
         except json.JSONDecodeError:
             raise HTTPException(
                 502, f"ffprobe output was not JSON: {proc.stdout[-500:]}")
+
+    # ------------------------------------------------------ files (Files tab)
+
+    def _volume_dir(which: str) -> str:
+        """The deployment directory behind the Files tab's two columns —
+        the same resolution the runner uses ($FASS_INPUT_DIR / /input,
+        $FASS_OUTPUT_DIR / /output, '' when the volume is not mounted)."""
+        return execute._input_dir() if which == "input" else execute._output_dir()
+
+    def _bare_name(file: str) -> str:
+        """The Files tab's basename guard: a bare name inside the selected
+        volume, never a path (the stance of /v1/mediainfo and /media)."""
+        name = file.strip()
+        if not name:
+            raise HTTPException(400, "file: give a bare filename")
+        if "/" in name or ".." in name:
+            raise HTTPException(
+                400, "file must be a bare name in the input or output folder")
+        return name
+
+    @app.get("/v1/files")
+    def files_list(dir: str = "input"):
+        """Top-level regular files of one volume, newest first — the Files
+        tab's two columns. An unmounted volume (no $FASS_*_DIR and no
+        /input|/output) answers exists=false with an empty list; a directory
+        is never a row, and a directory name that is not one of the two
+        volumes is a 400."""
+        if dir not in ("input", "output"):
+            raise HTTPException(400, "dir must be 'input' or 'output'")
+        vol = _volume_dir(dir)
+        if not vol:
+            return {"dir": dir, "exists": False, "files": []}
+        root = Path(vol)
+        files: list[dict] = []
+        try:
+            if not root.is_dir():
+                return {"dir": dir, "exists": False, "files": []}
+            for p in root.iterdir():
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                if not p.is_file():
+                    continue
+                files.append({"name": p.name, "size": st.st_size,
+                              "mtime": st.st_mtime})
+        except OSError:  # unreadable volume: render it as empty
+            return {"dir": dir, "exists": False, "files": []}
+        files.sort(key=lambda f: f["mtime"], reverse=True)
+        return {"dir": dir, "exists": True, "files": files}
+
+    @app.get("/v1/files/inspect")
+    def files_inspect(dir: str = "input", file: str = "", tool: str = "ffprobe"):
+        """Media info for one file of a volume, through the tool the Files
+        tab's menu names: ffprobe (the image ships it, the same JSON the
+        planner reads) or the mediainfo binary (JSON output; a deployment
+        without it answers 503, like the ffprobe case)."""
+        if dir not in ("input", "output"):
+            raise HTTPException(400, "dir must be 'input' or 'output'")
+        if tool not in ("ffprobe", "mediainfo"):
+            raise HTTPException(400, "tool must be 'ffprobe' or 'mediainfo'")
+        name = _bare_name(file)
+        path = execute.volume_file(dir, name)
+        if path is None:
+            raise HTTPException(404, f"{name} not found in the {dir} folder")
+        if tool == "mediainfo":
+            if shutil.which("mediainfo") is None:
+                raise HTTPException(
+                    503, "mediainfo is not installed on this deployment")
+            cmd, timeout = ["mediainfo", "--Output=JSON", str(path)], 30
+        else:
+            if not ffprobe_available():
+                raise HTTPException(
+                    503, "ffprobe is not installed on this deployment")
+            cmd, timeout = (
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_format", "-show_streams", str(path)],
+                120)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=timeout, check=False)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise HTTPException(502, f"{tool} failed: {e}")
+        if proc.returncode != 0:
+            raise HTTPException(502, f"{tool} failed: {proc.stderr[-500:]}")
+        try:
+            return {"tool": tool, "json": json.loads(proc.stdout)}
+        except json.JSONDecodeError:
+            raise HTTPException(
+                502, f"{tool} output was not JSON: {proc.stdout[-500:]}")
+
+    def _jpeg_dims(data: bytes) -> tuple[int, int] | None:
+        """Width/height straight out of the JPEG's own SOF marker — the
+        fallback when ffprobe cannot read the frame."""
+        if len(data) < 4 or data[0] != 0xFF or data[1] != 0xD8:
+            return None
+        n, i = len(data), 2
+        while i < n - 1:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0x01, 0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            if i + 4 > n:
+                return None
+            seg = int.from_bytes(data[i + 2:i + 4], "big")
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                if i + 9 > n:
+                    return None
+                h = int.from_bytes(data[i + 5:i + 7], "big")
+                w = int.from_bytes(data[i + 7:i + 9], "big")
+                return (w, h) if w and h else None
+            i += 2 + max(seg, 2)
+        return None
+
+    def _frame_size(data: bytes, path: Path) -> tuple[int, int] | None:
+        """The written frame's real dimensions: ffprobe on the JPEG, falling
+        back to its SOF marker (scale=-2:360 guarantees an even width)."""
+        if ffprobe_available():
+            try:
+                proc = subprocess.run(
+                    ["ffprobe", "-v", "quiet", "-print_format", "json",
+                     "-show_streams", str(path)],
+                    capture_output=True, text=True, timeout=30, check=False)
+                if proc.returncode == 0:
+                    for s in json.loads(proc.stdout).get("streams", []):
+                        if (s.get("codec_type") == "video"
+                                and s.get("width") and s.get("height")):
+                            return int(s["width"]), int(s["height"])
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                pass
+        return _jpeg_dims(data)
+
+    @app.post("/v1/files/frame")
+    def files_frame(body: FrameRequest):
+        """The file's first frame as a JPEG 360 px high (even width from the
+        aspect: scale=-2:360), base64-encoded for the popup.
+
+        Fail-open like the rest of the info layer: a file with no video
+        stream, a failing ffmpeg and a timeout all answer 200 with
+        ``ok=false`` and ffmpeg's own message tail — the popup shows it as a
+        line, the tab never breaks."""
+        name = _bare_name(body.file)
+        path = execute.volume_file(body.dir, name)
+        if path is None:
+            raise HTTPException(404, f"{name} not found in the {body.dir} folder")
+        if not ffmpeg_available():
+            return {"ok": False,
+                    "error": "ffmpeg is not installed on this deployment"}
+        with tempfile.TemporaryDirectory(prefix="fass-frame-") as td:
+            out = Path(td) / "frame.jpg"
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                   "-i", str(path), "-frames:v", "1",
+                   "-vf", "scale=-2:360", str(out)]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True,
+                                      timeout=60, check=False)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                return {"ok": False, "error": f"ffmpeg failed: {e}"}
+            if proc.returncode != 0 or not out.is_file():
+                tail = (proc.stderr or "").strip()[-500:]
+                return {"ok": False,
+                        "error": tail
+                        or f"ffmpeg produced no frame (exit {proc.returncode})"}
+            data = out.read_bytes()
+            size = _frame_size(data, out)
+        if size is None:
+            return {"ok": False,
+                    "error": "could not read the frame's dimensions"}
+        return {"ok": True, "width": size[0], "height": size[1],
+                "jpeg_b64": base64.b64encode(data).decode()}
 
     @app.get("/v1/logs")
     def list_logs():

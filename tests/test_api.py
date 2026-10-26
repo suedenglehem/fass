@@ -9,10 +9,20 @@ Run under pytest from the repo root (no server needed: fastapi TestClient).
 
 from __future__ import annotations
 
+import base64
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
+from fass import execute
 from fass.api import app
+
+FFMPEG = shutil.which("ffmpeg") is not None
+MEDIAINFO = shutil.which("mediainfo") is not None
 
 client = TestClient(app)
 
@@ -596,3 +606,179 @@ def test_rag_query_top_k_override_reaches_the_client_config(monkeypatch):
     assert r.status_code == 200
     assert r.json()["ok"] is True
     assert captured["cfg"].top_k == 3
+
+
+# ------------------------------------------------- Files tab (volumes + info)
+
+def _vols(tmp_path, monkeypatch):
+    """Isolated input / output volumes (the docker deployment's layout)."""
+    in_dir, out_dir = tmp_path / "in", tmp_path / "out"
+    for d in (in_dir, out_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv(execute.INPUT_DIR_ENV, str(in_dir))
+    monkeypatch.setenv(execute.OUTPUT_DIR_ENV, str(out_dir))
+    return in_dir, out_dir
+
+
+def _make_clip(path: Path, size: str = "320x240", frames: int = 2) -> Path:
+    """A real tiny lavfi clip (the suite's ffmpeg gate: only used under
+    @pytest.mark.skipif(not FFMPEG)."""
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", f"testsrc=duration=0.2:size={size}:rate=10",
+         "-frames:v", str(frames), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-f", "mp4", str(path)],
+        check=True, capture_output=True, timeout=90)
+    return path
+
+
+def _make_wav(path: Path) -> Path:
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=duration=0.2:frequency=440",
+         "-f", "wav", str(path)],
+        check=True, capture_output=True, timeout=90)
+    return path
+
+
+def test_files_lists_volume_files_newest_first(tmp_path, monkeypatch):
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    old, new = in_dir / "old.mp4", in_dir / "new.mp4"
+    old.write_bytes(b"x" * 100)
+    new.write_bytes(b"y" * 2048)
+    os.utime(old, (1_600_000_000, 1_600_000_000))
+    os.utime(new, (1_700_000_000, 1_700_000_000))
+    (in_dir / "sub").mkdir()  # a directory is never a row
+    r = client.get("/v1/files", params={"dir": "input"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["dir"] == "input"
+    assert d["exists"] is True
+    assert [f["name"] for f in d["files"]] == ["new.mp4", "old.mp4"]
+    assert d["files"][0]["size"] == 2048
+    assert d["files"][1]["size"] == 100
+    assert d["files"][0]["mtime"] > d["files"][1]["mtime"]
+    # the other volume is listed independently (empty here)
+    d = client.get("/v1/files", params={"dir": "output"}).json()
+    assert d["exists"] is True and d["files"] == []
+
+
+def test_files_unmounted_volume_is_exists_false(tmp_path, monkeypatch):
+    # no $FASS_*_DIR and no /input|/output on this host: the volume is simply
+    # not there — rendered as an empty column, not as an error
+    monkeypatch.delenv(execute.INPUT_DIR_ENV, raising=False)
+    monkeypatch.delenv(execute.OUTPUT_DIR_ENV, raising=False)
+    monkeypatch.setattr(execute, "_input_dir", lambda: "")
+    d = client.get("/v1/files", params={"dir": "input"}).json()
+    assert d["exists"] is False and d["files"] == []
+    # an env dir that does not exist is the same case
+    monkeypatch.setenv(execute.OUTPUT_DIR_ENV, str(tmp_path / "nope"))
+    d = client.get("/v1/files", params={"dir": "output"}).json()
+    assert d["exists"] is False and d["files"] == []
+
+
+def test_files_bogus_dir_is_400(tmp_path, monkeypatch):
+    _vols(tmp_path, monkeypatch)
+    for bad in ("bogus", "", "in"):
+        assert client.get("/v1/files", params={"dir": bad}).status_code == 400
+
+
+def test_files_inspect_path_traversal_is_400(tmp_path, monkeypatch):
+    # the same stance as /v1/mediainfo and the /media routes: a bare basename
+    # inside the selected volume, never a path
+    _vols(tmp_path, monkeypatch)
+    for bad in ("../secret", "a/b.mp4", "..", "sub/../x"):
+        r = client.get("/v1/files/inspect",
+                       params={"dir": "input", "file": bad})
+        assert r.status_code == 400, bad
+    assert client.get("/v1/files/inspect",
+                      params={"dir": "input", "file": ""}).status_code == 400
+    assert client.get("/v1/files/inspect",
+                      params={"dir": "bogus", "file": "x.mp4"}).status_code == 400
+    assert client.get("/v1/files/inspect",
+                      params={"dir": "input", "file": "x.mp4",
+                              "tool": "exiftool"}).status_code == 400
+
+
+def test_files_inspect_missing_file_is_404(tmp_path, monkeypatch):
+    _vols(tmp_path, monkeypatch)
+    r = client.get("/v1/files/inspect",
+                   params={"dir": "input", "file": "ghost.mp4"})
+    assert r.status_code == 404
+    assert "ghost.mp4" in r.json()["detail"]
+
+
+@pytest.mark.skipif(MEDIAINFO, reason="mediainfo is installed here")
+def test_files_inspect_mediainfo_not_installed_is_503(tmp_path, monkeypatch):
+    # the deployment ships ffprobe, not the mediainfo binary: the menu item
+    # reports that plainly instead of pretending to work
+    in_dir, _out = _vols(tmp_path, monkeypatch)
+    (in_dir / "clip.mp4").write_bytes(b"x")
+    r = client.get("/v1/files/inspect",
+                   params={"dir": "input", "file": "clip.mp4",
+                           "tool": "mediainfo"})
+    assert r.status_code == 503
+    assert "not installed" in r.json()["detail"]
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_files_inspect_ffprobe_real_clip(tmp_path, monkeypatch):
+    in_dir, _out = _vols(tmp_path, monkeypatch)
+    _make_clip(in_dir / "clip.mp4")
+    r = client.get("/v1/files/inspect",
+                   params={"dir": "input", "file": "clip.mp4",
+                           "tool": "ffprobe"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["tool"] == "ffprobe"
+    assert d["json"]["streams"], d
+    assert any(s.get("codec_type") == "video" for s in d["json"]["streams"])
+    assert d["json"]["format"]["filename"].endswith("clip.mp4")
+    # the default tool is ffprobe
+    r = client.get("/v1/files/inspect",
+                   params={"dir": "input", "file": "clip.mp4"})
+    assert r.status_code == 200 and r.json()["tool"] == "ffprobe"
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_files_frame_first_frame_jpeg(tmp_path, monkeypatch):
+    in_dir, _out = _vols(tmp_path, monkeypatch)
+    _make_clip(in_dir / "clip.mp4", size="1280x720")
+    r = client.post("/v1/files/frame",
+                    json={"dir": "input", "file": "clip.mp4"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["ok"] is True, d
+    assert d["height"] == 360 and d["width"] == 640  # even width from the aspect
+    raw = base64.b64decode(d["jpeg_b64"])
+    assert raw[:2] == b"\xff\xd8"  # a real JPEG
+    # the output volume is reachable too
+    assert client.post("/v1/files/frame",
+                       json={"dir": "output", "file": "clip.mp4"}).status_code == 404
+    # the basename guard
+    assert client.post("/v1/files/frame",
+                       json={"dir": "input", "file": "../clip.mp4"}).status_code == 400
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_files_frame_audio_only_fails_open(tmp_path, monkeypatch):
+    # no video stream: a 200 with ok=false and ffmpeg's own message — the
+    # popup shows the line, the tab never breaks
+    in_dir, _out = _vols(tmp_path, monkeypatch)
+    _make_wav(in_dir / "tone.wav")
+    r = client.post("/v1/files/frame", json={"dir": "input", "file": "tone.wav"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["ok"] is False
+    assert d["error"]
+    assert "jpeg_b64" not in d
+
+
+def test_ui_has_the_files_tab():
+    html = client.get("/").text
+    assert 'id="tab-files"' in html and "showTab('files')" in html
+    assert 'id="pane-files"' in html
+    assert "['cmd','runs','info','cfg'].concat('rag','files')" in html
+    for needle in ("files-input", "files-output", "filemenu", "filemodal",
+                   "loadFiles", "fileAction", "closeModal", "1st frame"):
+        assert needle in html
