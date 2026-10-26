@@ -16,22 +16,37 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   9bd4401 §6.3 evidence block + LLM user-turn augmentation; 09060a3
   §6.4/§6.5 pipeline RAG hook + citation derivation (citations.py +
   pipeline.py + 19 tests; suite 1100 passed / 1 skipped).
-  **In flight: M11.2 commit 8 — §9.3 safety gates** (pipeline fail-open
-  guard around rag_retrieve + "evidence not used → command unaffected"
-  warning in build_evidence + tests/test_rag_safety.py, 9 tests covering
-  all 6 gates: poisoned doc, wrong-version corpus, RAG down/raising
-  client, absent filter, adversarial filenames with RAG on, rules-path
-  determinism RAG on vs off; **suite 1109 passed / 1 skipped**).
-  **Delegated: M11.2 commit 7 — §6.7 deployment** (job j_3d4505da56,
-  tr4-secondary: rag/health.py, docker/Dockerfile.rag,
+  **M11.2 commit 8 — §9.3 safety gates — COMMITTED as 5704ff0**
+  (pipeline fail-open guard around rag_retrieve + "evidence not used →
+  command unaffected" warning in build_evidence + tests/test_rag_safety.
+  py, 9 tests covering all 6 gates: poisoned doc, wrong-version corpus,
+  RAG down/raising client, absent filter, adversarial filenames with
+  RAG on, rules-path determinism RAG on vs off; **suite 1109 passed / 1
+  skipped**). **M11.2 commit 7 — §6.7 deployment — INTEGRATED** (job
+  j_3d4505da56, tr4-secondary: rag/health.py, docker/Dockerfile.rag,
   docker/compose.rag.yaml overlay, rag/server.py FASS_RAG_DATA/
-  FASS_RAG_BIND + parse_bind, tests/test_rag_deployment.py; attempt 1
-  crashed exit 0 — suspect report-schema rejection; attempt 2 running,
-  deadline 18:03; integrate via dispatch_integrate or manual --no-ff
-  merge). **Next: commit 8, integrate j_3d4505da56, commit 6 UI
-  Sources panel + config-tab rag block, commit 9 §9.2 ablation
+  FASS_RAG_BIND + parse_bind, tests/test_rag_deployment.py — 35 tests;
+  attempt 1 crashed exit 0 (report-schema rejection), attempt 2
+  succeeded; worktree suite 1132/3 skipped + 1 environmental benchmark
+  failure (gitignored corpus chunks absent in clean worktrees); merged
+  --no-ff as 97c0552, integration accepted via ladd). **M11.2 commit 6
+  — UI Sources panel + config-tab rag block + GET /v1/rag status
+  endpoint — in flight (about to be committed; 3 new /v1/rag
+  TestClient tests; main suite 1147 passed / 1 skipped).**
+  **Delegated (user requests 2026-10-26):** RAG tab (tr4-secondary,
+  base commit 6 — web-UI tab "RAG": query field, query/clear buttons,
+  scrollable chunk results; new endpoint POST /v1/rag/query reusing
+  fass.rag.client.search; disabled → 200 {ok:false, error}); Files
+  tab (AFTER the RAG-tab merge, base = that merge commit — 2 columns
+  /input + /output with sizes + dates, right-click menu: ffprobe /
+  mediainfo / 1st frame, result in popup, 1st frame = JPEG 360 px high
+  at first-frame aspect ratio); M11.3 held-out set authoring (i7, base
+  commit 6, disjoint scope — new data file + new test file: ≥60
+  paraphrase/jargon, 20 ambiguity, 20 unsupported, 10 adversarial).
+  **Next: commit 6, submit both worker jobs, commit 9 §9.2 ablation
   harness (scripts/m11_ablation.py vs tr4's vllm
-  vllm-qwen38-27b-dual-max), then §9.4 close-out.**
+  vllm-qwen38-27b-dual-max) on the main thread, Files-tab job after
+  the RAG-tab merge, then §9.4 close-out.**
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):

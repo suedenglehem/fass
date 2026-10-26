@@ -33,7 +33,14 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fass import dockerctl, execute
-from fass.config import FassConfig, LLMConfig, config_path, load_config, save_config
+from fass.config import (
+    FassConfig,
+    LLMConfig,
+    config_path,
+    load_config,
+    resolved_rag,
+    save_config,
+)
 from fass.pipeline import generate
 from fass.probe.ffprobe import (
     ffmpeg_available,
@@ -325,6 +332,33 @@ def create_app() -> FastAPI:
                 if name != "description"
             },
         }
+
+    @app.get("/v1/rag")
+    def rag_status():
+        """M11.2: read-only RAG state for the config tab — the resolved
+        client config plus the service's corpus list. The service probe
+        is best-effort with a short timeout: a dead fass-rag must render
+        as a status line, never break the endpoint (RAG is fail-open)."""
+        cfg = resolved_rag()
+        service: dict | None = None
+        if cfg.enabled:
+            import urllib.request
+
+            req = urllib.request.Request(cfg.url.rstrip("/") + "/v1/corpora")
+            if cfg.auth_token:
+                req.add_header("Authorization", f"Bearer {cfg.auth_token}")
+            try:
+                with urllib.request.urlopen(req, timeout=2.0) as r:
+                    service = {"ok": True, **json.loads(r.read().decode())}
+            except Exception as e:  # noqa: BLE001 — informational only
+                reason = getattr(e, "reason", None)
+                if isinstance(reason, BaseException):
+                    reason = (getattr(reason, "strerror", None)
+                              or type(reason).__name__)
+                service = {"ok": False,
+                           "error": str(reason or e) or type(e).__name__}
+        return {"enabled": cfg.enabled, "config": cfg.model_dump(),
+                "service": service}
 
     @app.get("/v1/env")
     def env():

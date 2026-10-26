@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M11.2 IN PROGRESS — §6.1–§6.6 + §6.4/§6.5 committed; §9.3 safety gates ready to commit; deployment delegated; UI / ablation next)
+## Current state (2026-10-26, M11.2 IN PROGRESS — §6.1–§6.6, §6.4/§6.5, §9.3, §6.7 all committed (merge 97c0552); commit 6 UI Sources panel + GET /v1/rag endpoint being committed now; RAG tab / Files tab / M11.3 held-out set delegated to workers; ablation next)
 **M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
 FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
 aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
@@ -43,7 +43,7 @@ evidence_status / "insufficient" with RAG, "static" without;
 changed). 19 new tests (tests/test_rag_citations.py 13,
 tests/test_pipeline_rag.py 6) → **suite 1100 passed / 1 skipped.**
 
-**In flight: commit 8 — §9.3 safety gates.** pipeline.py: both
+**Committed: 5704ff0 — §9.3 safety gates.** pipeline.py: both
 `rag_retrieve` call sites (generate + `_closest_supported`) wrapped in
 fail-open try/except → `_degraded_rag(e)` (a broken client contract
 degrades to the same shape instead of failing generation);
@@ -64,8 +64,9 @@ identical RAG on vs off). **Full suite: 1109 passed / 1 skipped.**
 (One flaky test_webinfo.py failure in the first full run — passes in
 isolation and on re-run; unrelated to this change.)
 
-**Delegated: commit 7 — §6.7 deployment (job j_3d4505da56,
-tr4-secondary, cc-worker, base 09060a3, deadline 18:03).** 5 files:
+**INTEGRATED: commit 7 — §6.7 deployment (job j_3d4505da56,
+tr4-secondary, cc-worker, base 09060a3) — merge commit 97c0552.**
+5 files:
 rag/health.py (`python -m rag.health`, FASS_RAG_DATA precedence over
 FASS_RAG_DATA_DIR), docker/Dockerfile.rag (python:3.12-slim, non-root,
 /data), docker/compose.rag.yaml overlay (profile "rag",
@@ -74,17 +75,66 @@ unless-stopped; committed compose.yaml untouched), rag/server.py
 minimal (FASS_RAG_DATA honored, pure parse_bind(spec), FASS_RAG_BIND
 default "127.0.0.1:8100", FASS_RAG_PORT still overrides the port),
 tests/test_rag_deployment.py (text assertions — pyyaml NOT in the
-venv). Attempt 1 crashed with exit 0 (suspect report-schema rejection
-again, per the two prior jobs); attempt 2 running. Integration plan:
-review diff, verify the 5 files + full suite, then dispatch_integrate
-(or manual --no-ff merge if it fails on the schema — that merge is the
-integration authority).
+venv). Attempt 1 crashed with exit 0 (report-schema rejection, per the
+two prior jobs); attempt 2 succeeded. Worktree suite: 1132 passed /
+3 skipped + 1 ENVIRONMENTAL failure
+(tests/test_rag_benchmark.py::test_generator_deterministic —
+rag/corpus/*/chunks/ is gitignored, so clean dispatcher worktrees lack
+the generated corpus data; the file exists in the main tree, the job
+touched nothing there — job's own 35 tests pass). Diff verified
+file-by-file; merged --no-ff as **97c0552**; integration recorded via
+ladd (`ladd --json integrate j_3d4505da56 --commit 97c0552…` →
+accepted). **Main suite post-merge: 1147 passed / 1 skipped.**
 
-Remaining M11.2: commit 6 UI Sources panel + config-tab rag block
-(fass/ui.py; the response now carries `evidence`; node --check on the
-embedded JS); commit 9 §9.2 ablation harness (scripts/m11_ablation.py,
-4 arms vs tr4's local vllm vllm-qwen38-27b-dual-max). Then §9.4
-close-out (live corpus + /v1/support doc_refs), M11.3, M11.4.
+**In flight: commit 6 — UI Sources panel + config-tab rag block +
+GET /v1/rag status endpoint.** fass/api.py: `GET /v1/rag` →
+{enabled, config: cfg.model_dump(), service} — service null when
+disabled; when enabled, probes `<url>/v1/corpora` (stdlib urllib,
+2 s timeout, optional Bearer auth) → {ok: true, …corpora payload} or
+{ok: false, error} — the endpoint NEVER 5xx's (fail-open, mirrors the
+retrieval stance). tests/test_api.py +3 (disabled default →
+enabled false + service null; enabled + dead port → service.ok false
++ error; enabled + live → corpora passthrough via mocked urlopen).
+fass/ui.py: collapsible 'Sources' block on the Command tab rendering
+response.evidence (status/corpus badges, retrieval_ms, citation list
+with url#anchor links + component/source badges, warnings);
+config-tab RAG status block (disabled / enabled+reachable /
+enabled+unreachable states + corpus list with (loaded) marks);
+showTab('cfg') → loadRag() hook; node --check gate on the embedded JS.
+**Full main-tree suite: 1147 passed / 1 skipped (115 s).**
+
+**Delegated (user requests 2026-10-26):**
+- **RAG tab → tr4-secondary** (base = commit 6): web-UI tab "RAG" with
+  a query field, "query"/"clear" buttons, scrollable results. New
+  endpoint `POST /v1/rag/query` {query, top_k?} reusing
+  `fass.rag.client.search(resolved_rag(), q)` (media=None,
+  probed_version=None); RAG disabled → 200 {ok: false, error: "RAG
+  disabled — enable with FASS_RAG_ENABLED=1 + FASS_RAG_URL"} (never
+  5xx). Results = header line (corpus + corpus_match + retrieval_ms +
+  evidence_status + warnings) + chunk cards (title as url#anchor link,
+  component_type/name, option_names, score, full text). TestClient
+  tests: disabled → ok false; mocked client → chunks; empty query →
+  422. node --check gate; full suite; commit with Co-Authored-By
+  trailer.
+- **Files tab → after RAG-tab merge** (base = the RAG-tab merge commit;
+  both tabs edit the ui.py tab bar → serialized): web-UI tab "Files" —
+  2 columns for /input and /output with file sizes + dates;
+  right-click context menu with "ffprobe", "mediainfo", "1st frame";
+  result shown in a popup; "1st frame" = extract first frame as JPEG
+  360 px high, width per the first frame's aspect ratio
+  (`-frames:v 1 -vf scale=-2:360`). New endpoints: list dir; run
+  ffprobe/mediainfo (VERIFY mediainfo availability on tr4 before
+  briefing); extract frame + serve it (base64 in popup or under a
+  media path).
+- **M11.3 held-out set authoring → i7** (base = commit 6, DISJOINT
+  scope — new data file + new test file only, explicit allowed_scope):
+  ≥60 paraphrase/jargon queries, 20 ambiguity, 20 unsupported, 10
+  adversarial per the PRD M11.3 section + shape-validation test.
+
+Remaining M11.2: commit 9 §9.2 ablation harness (scripts/
+m11_ablation.py, 4 arms vs tr4's local vllm
+vllm-qwen38-27b-dual-max), then §9.4 close-out (live corpus +
+/v1/support doc_refs), M11.3, M11.4.
 
 **M11.1 (COMPLETE, for reference) — part A integrated as 181c1e5**
 (from tr4-secondary job j_7dea91b80b): rag/retrieval.py FTS5 lexical
@@ -142,15 +192,16 @@ suite: 1015 passed / 1 skipped** (990 + 25). dispatch_integrate is
 impossible for failed jobs — the merge commit c27a0d8 records the
 integration; the job's worktree is retained for review.
 
-**Next:** (1) commit 8 (§9.3 safety gates — code + 9 tests done, suite
-1109/1, message `rag: M11.2 §9.3 — safety gates: fail-open retrieval +
-evidence-ignored warnings`); (2) integrate deployment job j_3d4505da56
-when it lands (review diff, verify 5 files + full suite,
-dispatch_integrate or manual --no-ff merge); (3) commit 6 UI Sources
-panel + config-tab rag block; (4) commit 9 ablation harness. Advisory
-evidence only; registry/builder/argv gate stays sovereign; treat
+**Next:** (1) commit 6 (code + 3 /v1/rag tests done, suite 1147/1,
+message `ui: M11.2 — Sources panel + RAG status block (GET /v1/rag)`);
+(2) submit RAG-tab job → tr4-secondary (base = commit 6) and M11.3
+held-out set job → i7 (base = commit 6, disjoint scope); (3) commit 9
+ablation harness (main thread while both workers run); (4) when the
+RAG-tab lands: review, full suite, merge, record integration via ladd,
+then submit the Files-tab job → the free worker. Advisory evidence
+only; registry/builder/argv gate stays sovereign; treat
 evidence_status 'supported' with skepticism per the M11.1 calibration
-note. Then M11.3 authoring, M11.4 ablation kill criterion; and a later
+note. Then M11.3 evaluation, M11.4 ablation kill criterion; and a later
 parser release for comma-grouped headings (split → component_name,
 re-ingest manuals — the parser 1.3 slot was taken by build-help
 provenance).

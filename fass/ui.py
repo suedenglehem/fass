@@ -79,6 +79,15 @@ th { color: var(--muted); font-weight: 600; }
 .note { font-size: 13px; color: var(--muted); }
 .err { color: var(--bad); font-size: 13px; }
 .ok { color: var(--ready); font-size: 13px; }
+a { color: var(--accent); }
+.sources { margin-top: 14px; }
+.sources summary { cursor: pointer; font-size: 14px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .03em; margin-bottom: 6px; }
+.sources summary:hover { color: var(--text); }
+.sources summary::-webkit-details-marker { display: none; }
+.sources summary::before { content: "▸ "; }
+.sources[open] summary::before { content: "▾ "; }
+.sources .badge { margin-bottom: 4px; }
 .portrow { display: flex; gap: 8px; margin: 6px 0; align-items: center; }
 .portrow input { width: auto; flex: 1; }
 .portrow select { width: auto; }
@@ -223,6 +232,14 @@ th { color: var(--muted); font-weight: 600; }
       <button type="button" class="small ghost" style="margin-top:10px" onclick="llmTest(true)">test LLM (unsaved values)</button>
       <span id="llm-status"></span>
 
+      <h3>RAG — documentation retrieval</h3>
+      <div id="rag-status" class="note"></div>
+      <p class="note">The fass-rag sidecar serves pinned FFmpeg manual corpora; the LLM
+      adapter asks it once per generation and cites what the plan used. Enable it with
+      <span class="mono">FASS_RAG_ENABLED=1</span> + <span class="mono">FASS_RAG_URL=…</span>
+      (or the <span class="mono">rag</span> block of config.json). It is fail-open: a dead
+      service never blocks a generation or changes the command.</p>
+
       <h3>Deploy</h3>
       <div id="cfg-status" class="note"></div>
       <div class="row" style="align-items:center">
@@ -248,6 +265,7 @@ function showTab(t) {
   }
   if (t === 'runs') loadRuns();
   if (t === 'info') { loadLogs(); showInfo($('sel-log').checked ? 'log' : 'mi'); }
+  if (t === 'cfg') loadRag();
 }
 
 /* ------------------------------------------------------------ command tab */
@@ -304,6 +322,32 @@ function lists(items) {
   if (!items || !items.length) return '';
   return '<ul>' + items.map(i => `<li>${esc(i)}</li>`).join('') + '</ul>';
 }
+/* M11.2: the response's evidence block (PRD §6.4) — derived from the
+   validated plan, never model-generated. */
+function sourcesHtml(ev) {
+  if (!ev || !(ev.citations || []).length) return '';
+  const cls = ev.status === 'supported' ? 'b-ready'
+            : ev.status === 'unavailable' ? 'b-bad' : 'b-clar';
+  let head = `<span class="badge ${cls}">${esc(ev.status)}</span>`;
+  if (ev.corpus_id)
+    head += ` <span class="badge b-run">corpus ${esc(ev.corpus_id)}${ev.corpus_match ? ' · ' + esc(ev.corpus_match) : ''}</span>`;
+  if (ev.retrieval_ms != null)
+    head += ` <span class="note">${ev.retrieval_ms} ms</span>`;
+  let html = `<details open class="sources"><summary>Sources ${head}</summary>`;
+  if (ev.note) html += `<p class="note">${esc(ev.note)}</p>`;
+  html += '<ul>';
+  for (const c of ev.citations) {
+    const href = c.url ? (c.anchor ? c.url + '#' + c.anchor : c.url) : null;
+    const label = href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(c.title || c.component)}</a>`
+      : esc(c.title || c.component);
+    html += `<li>${label} <span class="badge b-clar">${esc(c.component)}</span> <span class="note">${esc(c.source)}</span></li>`;
+  }
+  html += '</ul>';
+  if ((ev.warnings || []).length)
+    html += '<p class="note">' + ev.warnings.map(w => '— ' + esc(w)).join('<br>') + '</p>';
+  return html + '</details>';
+}
 function render(d) {
   const badge = d.status === 'ready' ? 'b-ready' :
                 d.status === 'needs_clarification' ? 'b-clar' : 'b-bad';
@@ -318,6 +362,7 @@ function render(d) {
            <pre id="cmdargs" hidden style="display:none">${esc(JSON.stringify(d.arguments))}</pre>`
         : '<p class="note">execution is disabled on this deployment (FASS_ALLOW_EXECUTE unset) — copy the command and run it yourself</p>'}
       <h2>What it does</h2>${lists(d.summary)}
+      ${sourcesHtml(d.evidence)}
       <h2>Defaults applied</h2>${lists(d.defaults) || '<p>none</p>'}
       <h2>Warnings</h2>${lists(d.warnings) || '<p>none</p>'}
       <h2>Validation</h2><p>${esc(d.validation_level)} — ${esc((d.checks || []).map(c => (c.ok ? 'ok' : 'FAIL') + ': ' + c.name + ' — ' + c.detail).join('; ') || 'n/a')}</p>`;
@@ -327,7 +372,8 @@ function render(d) {
   } else if (d.status === 'unsupported') {
     html += '<h2>Not supported in the MVP</h2>' + lists(
       (d.unsupported || []).map(u => (u.reason || '') + (u.hint ? ' — ' + u.hint : ''))) +
-      '<h2>Supported instead</h2><p>' + esc(d.unsupported && d.unsupported[0] && d.unsupported[0].hint || '') + '</p>';
+      '<h2>Supported instead</h2><p>' + esc(d.unsupported && d.unsupported[0] && d.unsupported[0].hint || '') + '</p>' +
+      sourcesHtml(d.evidence);
   } else {
     html += '<h2>Errors</h2>' + lists(d.errors);
   }
@@ -614,6 +660,42 @@ async function llmTest(useUnsaved) {
       : `<span class="err">${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data))}</span>`;
   } catch (err) {
     el.innerHTML = `<span class="err">${esc(err)}</span>`;
+  }
+}
+async function loadRag() {
+  const el = $('rag-status');
+  el.innerHTML = '<span class="note">checking…</span>';
+  try {
+    const d = await (await fetch('/v1/rag')).json();
+    if (!d.enabled) {
+      el.innerHTML = `<span class="err">RAG disabled</span> — the LLM adapter plans ` +
+        `without retrieved documentation (citations are the registry's static ` +
+        `doc_refs). Enable with <span class="mono">FASS_RAG_ENABLED=1</span> + ` +
+        `<span class="mono">FASS_RAG_URL</span>, or the <span class="mono">rag</span> ` +
+        `block of config.json.`;
+      return;
+    }
+    const c = d.config;
+    let html = `RAG enabled — <span class="mono">${esc(c.url)}</span> ` +
+      `<span class="note">(timeout ${c.timeout_ms} ms · top_k ${c.top_k} · ` +
+      `evidence ${c.max_evidence_chars} chars · corpus ${esc(c.corpus)} · ` +
+      `instruction in query: ${c.send_instruction ? 'yes' : 'no'})</span><br>`;
+    const s = d.service;
+    if (!s) {
+      html += '<span class="err">service state unknown</span>.';
+    } else if (s.ok) {
+      const corps = (s.corpora || []).map(k =>
+        `${esc(k.corpus_id)}${k.loaded ? ' (loaded)' : ''}`).join(', ') || 'no corpora';
+      html += `corpora: ${corps}`;
+      if (s.loaded_corpus_id)
+        html += ` — serving <span class="mono">${esc(s.loaded_corpus_id)}</span>`;
+    } else {
+      html += `<span class="err">service unreachable</span> (${esc(s.error)}) — ` +
+        'generations degrade to RAG-less (fail-open); commands are unaffected.';
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<span class="err">status check failed</span>: ${esc(e)}`;
   }
 }
 

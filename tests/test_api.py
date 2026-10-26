@@ -448,3 +448,70 @@ def test_ui_offers_kind_select_for_extra_inputs():
     for kind in ("video", "audio", "image"):
         assert f"<option value=\"{kind}\">" in html
     assert "assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };" in html
+
+
+# ------------------------------------------------- GET /v1/rag (M11.2)
+
+class _FakeCorporaResp:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_rag_status_disabled_by_default(monkeypatch):
+    # default config is RAG off: the endpoint reports disabled, no probe
+    monkeypatch.delenv("FASS_RAG_ENABLED", raising=False)
+    monkeypatch.delenv("FASS_RAG_URL", raising=False)
+    r = client.get("/v1/rag")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["enabled"] is False
+    assert d["service"] is None
+    assert set(d["config"]) == {"url", "timeout_ms", "top_k",
+                                "max_evidence_chars", "corpus", "auth_token",
+                                "send_instruction", "enabled"}
+
+
+def test_rag_status_enabled_service_down_fails_open(monkeypatch):
+    # a dead fass-rag must render as a status line, never break the endpoint
+    import fass.api as api
+    from fass.config import RagConfig
+
+    monkeypatch.setattr(api, "resolved_rag",
+                        lambda: RagConfig(enabled=True,
+                                          url="http://127.0.0.1:9"))
+    r = client.get("/v1/rag")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["enabled"] is True
+    assert d["service"]["ok"] is False
+    assert d["service"]["error"]
+
+
+def test_rag_status_enabled_service_up(monkeypatch):
+    import fass.api as api
+    import urllib.request
+    from fass.config import RagConfig
+
+    body = b'{"corpora": [{"corpus_id": "ffmpeg-6.1.1", ' \
+            b'"version_status": "stable", "loaded": true, ' \
+            b'"kinds": ["filter", "codec"]}], ' \
+            b'"loaded_corpus_id": "ffmpeg-6.1.1"}'
+    monkeypatch.setattr(api, "resolved_rag",
+                        lambda: RagConfig(enabled=True,
+                                          url="http://127.0.0.1:8100"))
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeCorporaResp(body))
+    d = client.get("/v1/rag").json()
+    assert d["enabled"] is True
+    assert d["service"]["ok"] is True
+    assert d["service"]["loaded_corpus_id"] == "ffmpeg-6.1.1"
+    assert d["service"]["corpora"][0]["corpus_id"] == "ffmpeg-6.1.1"
