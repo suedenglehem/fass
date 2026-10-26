@@ -336,6 +336,12 @@ class OutputSpec(BaseModel):
             # with no explicit audio codec, the container default applies
             # (e.g. aac in mp4) — its options must validate too
             acodec = self.audio_codec or audio_for(self.container)
+            if acodec is None:
+                # a container that carries no audio (e.g. an animated GIF)
+                # has no audio codec for options to apply to
+                raise ValueError(
+                    f"audio codec options need an audio codec, but a "
+                    f"{self.container} file carries no audio")
             enc = audio_encoder_name(acodec)
             for err in codec_option_errors(enc, self.audio_codec_options):
                 raise ValueError(err)

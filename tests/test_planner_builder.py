@@ -125,6 +125,32 @@ def test_audio_kept_maps_optional_audio():
     assert "0:a?" in maps
 
 
+def test_gif_output_drops_audio():
+    # A GIF carries no audio: the input's track is dropped with an explicit
+    # -an, no audio map and no audio encoder (the §9.2 held-out 'Make it a
+    # gif' request crashed the planner on the audio-codec lookup).
+    media = make_media(video_codec="h264", audio_codec="aac", has_audio=True)
+    ep = ep_for(output=OutputSpec(container="gif", video_codec="gif"),
+                media=media)
+    assert ep.mode == "reencode"
+    argv = build_argv(ep)
+    assert "-an" in argv
+    assert "-c:a" not in argv
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert "0:a?" not in maps
+    assert any("carries no audio" in d for d in ep.defaults)
+
+
+def test_gif_output_rejects_audio_operations():
+    out = OutputSpec(container="gif", video_codec="gif")
+    with pytest.raises(PlanError, match="carries no audio"):
+        ep_for(output=out,
+               operations=[AudioResampleOp(sample_rate=22050)])
+    with pytest.raises(PlanError, match="carries no audio"):
+        ep_for(output=out, operations=[AudioReplaceOp(asset_id="aud")],
+               audio_path="song.mp3")
+
+
 def test_explicit_output_equal_input_rejected():
     with pytest.raises(PlanError):
         ep_for(output=OutputSpec(container="mp4", video_codec="h264"),

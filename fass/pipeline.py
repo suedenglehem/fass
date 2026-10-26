@@ -473,7 +473,10 @@ def generate(
                 else:
                     enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
                 encoders.append(enc)
-                if edit.output.audio_mode.value == "encode":
+                if edit.output.audio_mode.value == "encode" \
+                        and audio_for(edit.output.container) is not None:
+                    # A no-audio container (e.g. GIF) has no audio encoder —
+                    # the planner emitted -an for it.
                     acodec = edit.output.audio_codec or audio_for(edit.output.container)
                     encoders.append(REGISTRY["audio_codecs"][acodec]["encoder"])
                 for op in edit.operations:

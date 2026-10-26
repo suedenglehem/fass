@@ -208,6 +208,11 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         lines.append("Audio: removed")
     elif ep.mode == "copy":
         lines.append("Audio: kept (copied)")
+    elif REGISTRY["matrix"][out.container]["audio_codec"] is None:
+        # A container that carries no audio (e.g. an animated GIF): the
+        # input's track is dropped — the planner emitted -an for it.
+        lines.append(
+            f"Audio: dropped — a {out.container} file carries no audio")
     else:
         ac = REGISTRY["audio_codecs"][REGISTRY["matrix"][out.container]["audio_codec"]]
         br = ac.get("bitrate_kbps")

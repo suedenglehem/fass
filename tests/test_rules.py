@@ -289,6 +289,15 @@ def test_h264_in_webm_is_unsupported(gen):
     assert r.status == "unsupported"
 
 
+def test_gif_conversion(gen):
+    # The §9.2 held-out paraphrase ('Make it a gif for the docs page'): a
+    # no-audio container is a ready plan — the planner drops the audio.
+    r = gen("Make it a gif for the docs page", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["container"] == "gif"
+    assert r.plan["output"]["video_codec"] == "gif"
+
+
 def test_remove_audio(gen):
     r = gen("remove the audio", "clip.mp4")
     assert r.status == "ready"

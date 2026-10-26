@@ -147,11 +147,20 @@ class ArmResult:
 def run_rules(entry: dict, assets: dict) -> ArmResult:
     t0 = time.monotonic()
     previous = entry.get("previous_plan")
-    r = generate(
-        entry["instruction"], assets,
-        previous_plan=EditPlan.model_validate(previous) if previous else None,
-        adapter_name="rules",
-    )
+    try:
+        r = generate(
+            entry["instruction"], assets,
+            previous_plan=EditPlan.model_validate(previous)
+            if previous else None,
+            adapter_name="rules",
+        )
+    except Exception as e:  # noqa: BLE001 — a pipeline crash is a metric,
+        # not a run-killer (the llm arms record provider failures the same
+        # way)
+        return ArmResult(arm="rules", id=entry["id"], status="error",
+                         plan=None, errors=[f"pipeline: {e}"],
+                         latency_s=round(time.monotonic() - t0, 3),
+                         error=str(e))
     return ArmResult(
         arm="rules", id=entry["id"], status=r.status,
         plan=r.plan,  # GenerationResponse.plan is already a dict

@@ -847,6 +847,20 @@ def plan_execution(
     if not audio_survives and any(
             o.type == "filter" and o.domain == "audio" for o in edit.operations):
         errors.append("the audio is removed, so it cannot be filtered")
+    # A video container that carries no audio (e.g. an animated GIF) drops
+    # the input's track — operations that act on that track are impossible.
+    if out.mode == "video" and not REGISTRY["matrix"].get(
+            out.container, {}).get("audio"):
+        if resample:
+            errors.append(
+                f"a {out.container} file carries no audio, so it cannot be "
+                "resampled"
+            )
+        if ar_ops:
+            errors.append(
+                f"a {out.container} file carries no audio, so the audio "
+                "track cannot be replaced"
+            )
 
     input_asset = assets.get(edit.input_id)
     allowed_kinds = {
@@ -1520,10 +1534,17 @@ def plan_execution(
                     if metadata.video_codec == edit.output.video_codec:
                         want = edit.output.audio_codec \
                             or audio_for(edit.output.container)
-                        warnings.append(
-                            f"input audio is {metadata.audio_codec}; encoding to "
-                            f"{want} to match the requested output"
-                        )
+                        if want is None:
+                            warnings.append(
+                                f"input audio is {metadata.audio_codec}; the "
+                                f"{edit.output.container} output carries no "
+                                "audio, so the track is dropped"
+                            )
+                        else:
+                            warnings.append(
+                                f"input audio is {metadata.audio_codec}; encoding to "
+                                f"{want} to match the requested output"
+                            )
                     else:
                         warnings.append(
                             f"input video is {metadata.video_codec}; re-encoding to "
@@ -2029,20 +2050,25 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
 
     ar_op = edit.ops_of("audio_replace")
     audio_remove = edit.output.audio_mode == AudioMode.REMOVE and not ar_op
+    # A container that carries no audio (e.g. an animated GIF) maps no audio
+    # stream at all — the input's audio track is dropped.
+    carries_audio = bool(
+        REGISTRY["matrix"].get(edit.output.container, {}).get("audio"))
     if ar_op:
         # replacement audio: first audio stream of the extra input, never the
         # input's own track (and never an optional map)
         maps.append(f"{audio_idx}:a:0")
-    elif combine and audio_source == "graph":
+    elif combine and audio_source == "graph" and carries_audio:
         # audio combiner (or concat with audio): the graph's audio pad is
         # the output audio
         maps.append(f"[{ca_label}]")
-    elif combine and audio_source == "main" and not audio_remove:
+    elif combine and audio_source == "main" and not audio_remove and carries_audio:
         # video combiner: the combined video replaces the frame source, the
         # audio stays the main input's own stream
         maps.append("0:a?")
     elif (not audio_remove and not (edit.filtergraph and not fg_labels)
-          and not (combine and audio_source == "none")):
+          and not (combine and audio_source == "none")
+          and carries_audio):
         # combine with audio_source == "none" (concat without audio): no audio
         # explicit maps: keep the optional audio map; auto-map (unlabeled
         # graph) already picks the audio stream on its own
@@ -2058,7 +2084,8 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     # has no audio stream, so it is only emitted when audio survives.
     speed_ops = edit.ops_of("speed")
     speed_op = speed_ops[0] if speed_ops else None
-    af = _audio_filter_chain(edit) if not audio_remove else None
+    af = _audio_filter_chain(edit) \
+        if not audio_remove and carries_audio else None
 
     opts: list[str] = []
     if edit.trim is not None and edit.trim.is_bounded:
@@ -2206,29 +2233,38 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
     else:
         # A named audio_codec overrides the container's default (validated
         # against the matrix in plan_execution); the bitrate override works
-        # the same way the audio-mode branch does.
+        # the same way the audio-mode branch does. A container that carries
+        # no audio at all (e.g. an animated GIF) resolves to None — the
+        # input's audio track is simply dropped.
         acodec = edit.output.audio_codec or audio_for(edit.output.container)
-        ac = REGISTRY["audio_codecs"][acodec]
-        opts += ["-c:a", ac["encoder"]]
-        if edit.output.audio_codec_options:
-            opts += _codec_option_tokens(edit.output.audio_codec_options)
+        if acodec is None:
+            opts.append("-an")
             defaults.append(
-                f"audio codec options for {ac['encoder']}: "
-                + ", ".join(f"-{k} {v}" for k, v in
-                            sorted(edit.output.audio_codec_options.items()))
+                f"a {edit.output.container} file carries no audio — the "
+                "input's audio track is dropped"
             )
-        kbps = edit.output.audio_bitrate_kbps or ac.get("bitrate_kbps")
-        if kbps is not None:
-            opts += ["-b:a", f"{kbps}k"]
-        # Audio resampler targets (-ar / -ac); inert when the output has no
-        # audio stream.
-        for ro in edit.ops_of("audio_resample"):
-            if ro.sample_rate is not None:
-                opts += ["-ar", str(ro.sample_rate)]
-                defaults.append(f"audio sample rate {ro.sample_rate} Hz")
-            if ro.channels is not None:
-                opts += ["-ac", str(ro.channels)]
-                defaults.append(f"audio channels {ro.channels}")
+        else:
+            ac = REGISTRY["audio_codecs"][acodec]
+            opts += ["-c:a", ac["encoder"]]
+            if edit.output.audio_codec_options:
+                opts += _codec_option_tokens(edit.output.audio_codec_options)
+                defaults.append(
+                    f"audio codec options for {ac['encoder']}: "
+                    + ", ".join(f"-{k} {v}" for k, v in
+                                sorted(edit.output.audio_codec_options.items()))
+                )
+            kbps = edit.output.audio_bitrate_kbps or ac.get("bitrate_kbps")
+            if kbps is not None:
+                opts += ["-b:a", f"{kbps}k"]
+            # Audio resampler targets (-ar / -ac); inert when the output has
+            # no audio stream.
+            for ro in edit.ops_of("audio_resample"):
+                if ro.sample_rate is not None:
+                    opts += ["-ar", str(ro.sample_rate)]
+                    defaults.append(f"audio sample rate {ro.sample_rate} Hz")
+                if ro.channels is not None:
+                    opts += ["-ac", str(ro.channels)]
+                    defaults.append(f"audio channels {ro.channels}")
 
     if sub_exprs:
         # Burn: the escaped filter expression is already in the chain; this
