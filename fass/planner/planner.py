@@ -12,6 +12,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
+from fass.execute import resolve_input_name
 from fass.probe.ffprobe import MediaInfo, ffmpeg_available, probe_ffmpeg, probe_media
 from fass.registry import (
     REGISTRY,
@@ -961,10 +962,11 @@ def plan_execution(
         if not errors and domain is not None and len(extra_assets) == len(op.asset_ids):
             main_media = metadata
             if main_media is None and stream_scheme(input_asset.path) is None:
-                main_media = probe_media(input_asset.path, require_video=False)
+                main_media = probe_media(
+                    resolve_input_name(input_asset.path), require_video=False)
             extra_medias: list[MediaInfo] = []
             for a in extra_assets:
-                m = probe_media(a.path, require_video=False)
+                m = probe_media(resolve_input_name(a.path), require_video=False)
                 if m is None:
                     errors.append(
                         f"combiner input '{a.path}' could not be probed — is "
@@ -1059,8 +1061,9 @@ def plan_execution(
             continue
         main_media = metadata
         if main_media is None and stream_scheme(input_asset.path) is None:
-            main_media = probe_media(input_asset.path, require_video=True)
-        ref_media = probe_media(a.path, require_video=True)
+            main_media = probe_media(
+                resolve_input_name(input_asset.path), require_video=True)
+        ref_media = probe_media(resolve_input_name(a.path), require_video=True)
         if ref_media is None:
             errors.append(
                 f"comparison reference '{a.path}' could not be probed — is "

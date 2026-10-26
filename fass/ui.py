@@ -113,8 +113,8 @@ th { color: var(--muted); font-weight: 600; }
     <label for="instr">Instruction</label>
     <textarea id="instr" required placeholder="cut from 00:10 to 00:30, resize to 720p, and add my logo to the bottom-right corner"></textarea>
     <div class="row">
-      <div><label for="inp">Input video (local path or stream URL)</label>
-        <input id="inp" required placeholder="clip.mp4 or rtmp://host:1935/live"></div>
+      <div><label for="inp">Input video (-i a file from the input folder, or a stream URL)</label>
+        <input id="inp" required placeholder="-i clip.mp4 or rtmp://host:1935/live"></div>
       <div><label for="out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)<span class="tip" data-tip="To chain ffmpeg processings, start the filename with /input/ — e.g. /input/step1.mp4 — and the result is written into the input folder instead of /output. The next run then picks it up by bare name (step1.mp4).">?</span></label>
         <input id="out" placeholder="out.mp4, /input/step1.mp4, or rtmp://host:1935/live"></div>
     </div>
@@ -219,7 +219,7 @@ function addExtra() {
   const id = 'in' + extraN;
   const row = document.createElement('div');
   row.className = 'row';
-  row.innerHTML = `<div><input class="extra-inp" data-id="${id}" placeholder="e.g. song.mp3 (id: ${id})"></div>
+  row.innerHTML = `<div><input class="extra-inp" data-id="${id}" placeholder="e.g. -i song.mp3 (id: ${id})"></div>
     <div style="flex: 0 0 auto"><select class="extra-kind" style="width:auto">
       <option value="auto">auto</option><option value="video">video</option>
       <option value="audio">audio</option><option value="image">image</option>

@@ -553,3 +553,15 @@ def test_e2e_libvmaf_logs_the_score(gen, clips, tmp_path):
     assert "libvmaf" in _fc(r.arguments)
     assert "VMAF" in proc.stderr
     assert list(tmp_path.iterdir()) == []
+
+
+@ pytestmark_media
+def test_e2e_comparison_bare_names_resolved_in_input_dir(gen, clips,
+                                                         monkeypatch):
+    # M10.6 container condition: bare main + reference names must probe in
+    # $FASS_INPUT_DIR, not relative to the cwd
+    monkeypatch.setenv("FASS_INPUT_DIR", str(clips.a.parent))
+    r = gen("compare a.mp4 against b.mp4 with psnr", input_path="a.mp4",
+            extra={"ref": Asset(path="b.mp4")})
+    assert r.status == "ready", \
+        f"{r.status}: {r.errors} {r.clarifications} {r.unsupported}"

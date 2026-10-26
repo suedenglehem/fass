@@ -53,6 +53,23 @@ def test_ready_without_existing_file_is_still_ready():
     assert d["arguments"][0] == "ffmpeg"
 
 
+def test_i_prefix_input_convention_stripped():
+    # web UI convention: `-i <file>` names a file in the input folder;
+    # the prefix is stripped before planning (both plain-string and
+    # {path, kind} asset forms)
+    r = post("resize to 720p", {"main": "-i clip.mp4"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready"
+    assert "clip.mp4" in d["arguments"]
+    assert "-i clip.mp4" not in d["arguments"]
+    r = post("resize to 720p",
+             {"main": {"path": "-i clip.mp4", "kind": "video"}})
+    d = r.json()
+    assert d["status"] == "ready"
+    assert "clip.mp4" in d["arguments"]
+
+
 def test_needs_clarification_is_structured_200():
     r = post("make it smaller", {"main": "clip.mp4"})
     assert r.status_code == 200

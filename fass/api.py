@@ -59,6 +59,18 @@ class AssetRef(BaseModel):
     kind: AssetKind | None = None
 
 
+def _strip_i_prefix(path: str) -> str:
+    """Input convention (web UI): `-i <file>` names a file in the input
+    folder — the `-i ` prefix is accepted everywhere a plain filename is
+    (bare names resolve against $FASS_INPUT_DIR / /input at probe and run
+    time). Streams and source specs never start with `-i `, so the
+    stripping is pass-through for them."""
+    parts = path.split(None, 1)
+    if parts[0] == "-i" and len(parts) > 1:
+        return parts[1].strip()
+    return path
+
+
 class CommandRequest(BaseModel):
     """POST /v1/commands body. Malformed bodies → 422 (FastAPI validation)."""
 
@@ -68,7 +80,9 @@ class CommandRequest(BaseModel):
     assets: dict[str, str | AssetRef] = Field(
         description="asset id -> local path or stream URL "
                     "(http(s)://, rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp://); "
-                    "a value may be a plain string or {path, kind}; "
+                    "a value may be a plain string or {path, kind}; an input may be "
+                    "written `-i <file>` (the web UI convention) — <file> is a name in "
+                    "the input folder ($FASS_INPUT_DIR / /input); "
                     "must include 'main' (the input video)"
     )
     output_filename: str | None = Field(
@@ -171,7 +185,7 @@ def create_app() -> FastAPI:
         try:
             assets = {}
             for aid, ref in body.assets.items():
-                path = ref.path if isinstance(ref, AssetRef) else ref
+                path = _strip_i_prefix(ref.path if isinstance(ref, AssetRef) else ref)
                 kind = (ref.kind if isinstance(ref, AssetRef) else None) or guess_kind(path)
                 assets[aid] = Asset(path=path, kind=kind)
         except ValueError as e:  # pydantic ValidationError is a ValueError

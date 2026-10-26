@@ -712,3 +712,14 @@ def test_e2e_amix(gen, clips, tmp_path):
     assert info.has_audio
     # amix duration=longest -> the main's 10s
     assert abs(info.duration - 10.0) <= 0.5
+
+
+@ pytestmark_media
+def test_e2e_combiner_bare_names_resolved_in_input_dir(gen, clips, monkeypatch):
+    # M10.6 container condition: the web UI binds inputs by bare name; the
+    # planner must probe them in $FASS_INPUT_DIR, not relative to the cwd
+    monkeypatch.setenv("FASS_INPUT_DIR", str(clips.a.parent))
+    r = gen("crossfade a.mp4 and b.mp4", input_path="a.mp4",
+            extra={"b": Asset(path="b.mp4")})
+    assert r.status == "ready", \
+        f"{r.status}: {r.errors} {r.clarifications} {r.unsupported}"
