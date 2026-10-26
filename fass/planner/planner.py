@@ -12,7 +12,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from fass.probe.ffprobe import MediaInfo, ffmpeg_available, probe_ffmpeg
+from fass.probe.ffprobe import MediaInfo, ffmpeg_available, probe_ffmpeg, probe_media
 from fass.registry import (
     REGISTRY,
     audio_bsf_for_copy,
@@ -21,6 +21,8 @@ from fass.registry import (
     bsf_for_copy,
     bsf_spec,
     capability_errors,
+    combiner_domain,
+    combiner_filters,
     diagnostic_output,
     extension_for,
     filter_spec,
@@ -210,6 +212,9 @@ _DIAG_NOTES = {
     "showinfo": "showinfo writes per-frame metadata to the log — verbose on long files",
     "bbox": "bbox writes bounding boxes of frame-to-frame changes to the log",
     "blackdetect_vulkan": "blackdetect_vulkan writes black intervals to the log (needs a GPU)",
+    "psnr": "psnr writes the mean/max signal-to-noise ratio to the log — the stream is unchanged",
+    "ssim": "ssim writes the structural similarity score to the log — the stream is unchanged",
+    "libvmaf": "libvmaf writes the pooled VMAF score to the log — the stream is unchanged",
 }
 
 
@@ -363,19 +368,25 @@ def _crop_too_big(edit: EditPlan, metadata: MediaInfo) -> str | None:
     return None
 
 
-def _overlay_position(op: WatermarkOp) -> tuple[str, str]:
-    m = op.margin_px
+def _overlay_xy(position: str, margin: int) -> tuple[str, str]:
+    """The overlay x/y expressions for a named corner/center position."""
+    m = str(margin)
     return {
-        "top_left": (str(m), str(m)),
-        "top_right": (f"W-w-{m}", str(m)),
-        "bottom_left": (str(m), f"H-h-{m}"),
+        "top_left": (m, m),
+        "top_right": (f"W-w-{m}", m),
+        "bottom_left": (m, f"H-h-{m}"),
         "bottom_right": (f"W-w-{m}", f"H-h-{m}"),
         "center": ("(W-w)/2", "(H-h)/2"),
-    }[op.position]
+    }[position]
+
+
+def _overlay_position(op: WatermarkOp) -> tuple[str, str]:
+    return _overlay_xy(op.position, op.margin_px)
 
 
 def build_video_chain(operations: list, defaults: list[str],
-                      sub_exprs: dict[str, str] | None = None):
+                      sub_exprs: dict[str, str] | None = None,
+                      start_label: str | None = None):
     """Build the video filter chain in user-specified order.
 
     Returns (mode, chain, video_out_label):
@@ -386,10 +397,14 @@ def build_video_chain(operations: list, defaults: list[str],
     ``sub_exprs`` maps a burned-subtitle asset id to its complete filter
     argument ('subtitles=…' / 'ass=…'); the file is opened by the filter
     itself, so no extra input is needed (M5).
+
+    ``start_label`` chains the first segment off an existing labeled pad
+    (e.g. a combiner filter's '[cv]' output, M10.3) instead of the main
+    input's '[0:v]' — the chain then always runs in complex mode.
     """
     if not operations:
         return "none", None, None
-    if not any(o.type == "watermark" for o in operations):
+    if not any(o.type == "watermark" for o in operations) and not start_label:
         parts = []
         for o in operations:
             if o.type == "resize":
@@ -412,10 +427,11 @@ def build_video_chain(operations: list, defaults: list[str],
         return "vf", ",".join(parts) or None, None
 
     segs: list[str] = []
-    prev: str | None = None
+    prev: str | None = start_label
     last_out: str | None = None
+    offset = 1 if start_label else 0  # the combiner pad already took v0's place
     for i, o in enumerate(operations):
-        out = f"v{i}"
+        out = f"v{i + offset}"
         src = f"[{prev}]" if prev is not None else "[0:v]"
         if o.type == "resize":
             segs.append(f"{src}{_scale_expr(o, defaults)}[{out}]")
@@ -484,6 +500,215 @@ def _codec_option_tokens(options: dict[str, str]) -> list[str]:
     return [tok for k, v in sorted(options.items()) for tok in (f"-{k}", str(v))]
 
 
+def _combiner_segments(combine: dict, defaults: list[str],
+                       warnings: list[str]) -> tuple[list[str], str | None,
+                                                     str | None, str]:
+    """Labeled -filter_complex segments for a multi-input filter (M10.3).
+
+    ``combine`` is the plan_execution context: {'op', 'domain',
+    'main_media', 'extra_medias'} — the main input is pad 0, the extras
+    pads 1..N-1, in the plan's asset order. Returns (segments, video_out,
+    audio_out, audio_source): a video combiner outputs video and an audio
+    combiner outputs audio (the main's video stays stream-mapped);
+    audio_source is 'graph' (the audio comes from the graph's pad),
+    'main' (the main input's own audio stream survives, stream-mapped) or
+    'none' (the output carries no audio). Raises PlanError on semantic
+    problems (unknown duration, mismatched layouts, …).
+    """
+    op = combine["op"]
+    name = op.filter
+    domain = combine["domain"]
+    main = combine["main_media"]
+    medias = [main] + combine["extra_medias"]
+    opts = dict(op.options)
+    n = len(medias)
+    segs: list[str] = []
+
+    if name == "xfade":
+        if n != 2:
+            raise PlanError(["xfade mixes exactly two inputs"])
+        duration = float(opts.get("duration", "1"))
+        if duration <= 0:
+            raise PlanError(["xfade's duration must be positive"])
+        transition = opts.get("transition", "fade")
+        dur0 = main.duration
+        if not dur0 or dur0 <= 0:
+            raise PlanError([
+                "xfade's offset is computed from the main input's duration, "
+                "which is unknown — provide probe metadata or a file ffprobe "
+                "can read"])
+        offset = dur0 - duration
+        if offset < 0:
+            raise PlanError([
+                f"the main input is {fmt_num(dur0)}s long — a "
+                f"{fmt_num(duration)}s crossfade would start before it ends; "
+                "the transition duration must not exceed the main input's "
+                "duration"])
+        # xfade needs identical rate/format/size/timebase on both pads:
+        # normalize the extra input to the main's. (fps takes no format
+        # option in 6.x builds — format is its own filter.)
+        norm = "settb=AVTB"
+        if main.fps and main.pix_fmt:
+            norm = f"fps={fmt_num(main.fps)},format={main.pix_fmt},settb=AVTB"
+            defaults.append(
+                f"xfade: both inputs normalized to {fmt_num(main.fps)} fps, "
+                f"{main.pix_fmt} (the main input's rate)")
+        scale = ""
+        if (main.width and main.height
+                and medias[1].width and medias[1].height
+                and (medias[1].width, medias[1].height)
+                != (main.width, main.height)):
+            scale = f"scale={main.width}:{main.height},"
+            warnings.append(
+                f"xfade: input 1 is {medias[1].width}x{medias[1].height}, "
+                f"the main is {main.width}x{main.height} — input 1 is "
+                "scaled to the main's size")
+        segs = [
+            f"[0:v]{norm}[c0]",
+            f"[1:v]{scale}{norm}[c1]",
+            f"[c0][c1]xfade=transition={transition}:"
+            f"duration={fmt_num(duration)}:offset={fmt_num(offset)}[cv]",
+        ]
+        defaults.append(
+            f"xfade offset {fmt_num(offset)}s = main duration {fmt_num(dur0)}s "
+            "− transition duration (computed — the crossfade starts so both "
+            "inputs play until the end)")
+        if medias[1].has_audio:
+            warnings.append(
+                "the second input's audio is dropped by the crossfade — only "
+                "the main input's audio is kept (say 'mix the audio' to blend "
+                "it)")
+        return segs, "cv", None, "main"
+
+    if name == "acrossfade":
+        if n != 2:
+            raise PlanError(["acrossfade mixes exactly two inputs"])
+        d = float(opts.get("duration", "1"))
+        if d <= 0:
+            raise PlanError(["acrossfade's duration must be positive"])
+        if "duration" not in opts:
+            defaults.append(f"acrossfade duration {fmt_num(d)}s (defaulted)")
+        segs = [f"[0:a][1:a]acrossfade=d={fmt_num(d)}[ca]"]
+        return segs, None, "ca", "graph"
+
+    if name == "concat":
+        has_audio = [m.has_audio for m in medias]
+        v = 1 if domain == "video" else 0
+        if "v" in opts and int(opts["v"]) != v:
+            raise PlanError([
+                f"concat in a {'video' if v else 'audio'}-domain plan must "
+                f"keep v={v} (the plan's concat options say v={opts['v']})"])
+        if "a" in opts:
+            a = int(opts["a"])
+        elif all(has_audio):
+            a = 1
+        elif not any(has_audio):
+            a = 0
+        else:
+            missing = [i for i, has in enumerate(has_audio) if not has]
+            which = ("input " if len(missing) == 1 else "inputs ") \
+                + ", ".join(str(i) for i in missing)
+            raise PlanError([
+                "the inputs' audio does not line up — " + which +
+                (" has" if len(missing) == 1 else " have")
+                + " no audio. Say 'without the audio' to concatenate "
+                "video only, or add audio to that clip first"])
+        if a and not all(has_audio):
+            raise PlanError([
+                "concat can only keep audio when every input has it — the "
+                "inputs here do not match (say 'without the audio')"])
+        # The concat filter takes each input's streams in order
+        # ([0:v][0:a][1:v][1:a]), not all videos then all audios — and it
+        # needs identical video dimensions, so scale extras to the main's.
+        segs: list[str] = []
+        pads: list[str] = []
+        for i in range(n):
+            if v:
+                m = medias[i]
+                if i and (main.width and main.height
+                          and m.width and m.height
+                          and (m.width, m.height)
+                          != (main.width, main.height)):
+                    segs.append(
+                        f"[{i}:v]scale={main.width}:{main.height}[s{i}]")
+                    warnings.append(
+                        f"concat: input {i} is {m.width}x{m.height}, the "
+                        f"main is {main.width}x{main.height} — input {i} is "
+                        "scaled to the main's size")
+                    pads.append(f"[s{i}]")
+                else:
+                    pads.append(f"[{i}:v]")
+            if a:
+                pads.append(f"[{i}:a]")
+        outs = ("[cv]" if v else "") + ("[ca]" if a else "")
+        segs += ["".join(pads) + f"concat=n={n}:v={v}:a={a}" + outs]
+        if a == 0 and any(has_audio):
+            warnings.append(
+                "audio is dropped in the concatenation (not every input "
+                "carries audio)")
+        return segs, ("cv" if v else None), ("ca" if a else None), \
+            ("graph" if a else "none")
+
+    if name in ("hstack", "vstack"):
+        vertical = name == "vstack"
+        dims = [(m.width, m.height) for m in medias]
+        if any(w is None or h is None for w, h in dims):
+            raise PlanError([
+                f"{name} needs the inputs' dimensions, which could not be "
+                "probed — re-probe the files or use a file ffprobe can read"])
+        w0, h0 = dims[0]
+        norm_segs: list[str] = []
+        pads = ["[0:v]"]
+        for i in range(1, n):
+            w, h = dims[i]
+            if (vertical and w != w0) or (not vertical and h != h0):
+                scale = f"scale={w0}:-2" if vertical else f"scale=-2:{h0}"
+                norm_segs.append(f"[{i}:v]{scale}[s{i}]")
+                warnings.append(
+                    f"{name}: input {i} is {w}x{h}, the main is "
+                    f"{w0}x{h0} — input {i} is scaled to the main's "
+                    f"{'width' if vertical else 'height'} (aspect preserved)")
+                pads.append(f"[s{i}]")
+            else:
+                pads.append(f"[{i}:v]")
+        segs = norm_segs + ["".join(pads) + f"{name}=inputs={n}[cv]"]
+        if any(m.has_audio for m in medias[1:]):
+            warnings.append(
+                "the second input's audio is dropped by the stack — only "
+                "the main input's audio is kept")
+        return segs, "cv", None, "main"
+
+    if name == "overlay":
+        if n != 2:
+            raise PlanError(["overlay takes the main input plus one overlay input"])
+        x = opts.get("x", "0")
+        y = opts.get("y", "0")
+        segs = [f"[0:v][1:v]overlay=x={x}:y={y}[cv]"]
+        if medias[1].has_audio:
+            warnings.append(
+                "the overlay input's audio is dropped — only the main "
+                "input's audio is kept")
+        return segs, "cv", None, "main"
+
+    if name in ("amix", "amerge", "join"):
+        pads = "".join(f"[{i}:a]" for i in range(n))
+        if name == "amix":
+            duration = opts.get("duration", "longest")
+            segs = [f"{pads}amix=inputs={n}:duration={duration}[ca]"]
+        elif name == "amerge":
+            segs = [f"{pads}amerge=inputs={n}[ca]"]
+        else:
+            layout = opts.get("channel_layout")
+            if not layout:
+                raise PlanError([
+                    "'join' needs a target channel layout — say e.g. 'join "
+                    "the audio tracks to 5.1' or 'to stereo'"])
+            segs = [f"{pads}join=inputs={n}:channel_layout={layout}[ca]"]
+        return segs, None, "ca", "graph"
+
+    raise PlanError([f"combiner filter '{name}' is not supported by the planner"])
+
+
 def plan_execution(
     edit: EditPlan,
     assets: dict,
@@ -507,15 +732,31 @@ def plan_execution(
     # audio/subtitle output is a file the user wants, not an analysis.
     out = edit.output
     filter_ops = [o for o in edit.operations if o.type == "filter"]
+    compare_ops = edit.ops_of("compare")
     diag_names = [n for o in filter_ops for n in _chain_filter_names(o.expr)]
-    diagnostic = (
-        out.mode == "video"
-        and bool(filter_ops)
+    diag_names += [o.metric for o in compare_ops]
+    diag_names = list(dict.fromkeys(diag_names))
+    filter_diagnostic = (
+        bool(filter_ops)
         and all(o.type == "filter" for o in edit.operations)
         and all((filter_spec(n) or {}).get("diagnostic") for n in diag_names)
+    )
+    diagnostic = (
+        out.mode == "video"
+        and (filter_diagnostic or bool(compare_ops))
         and not edit.filtergraph
         and not (edit.bitstream_filters or [])
     )
+    # A reference metric in a plain -vf/-af chain can never work — it needs
+    # the second (reference) pad a comparison plan or a custom filtergraph
+    # provides.
+    for o in filter_ops:
+        for name in _chain_filter_names(o.expr):
+            if (filter_spec(name) or {}).get("needs_reference"):
+                errors.append(
+                    f"the {name} filter needs a reference input — it cannot "
+                    "run on the input alone; say 'compare ... against "
+                    "<file>' (a comparison plan)")
     ar_ops = edit.ops_of("audio_replace")
     # A remove followed by a replace still produces audio — the replacement
     # track stands in for the removed one.
@@ -649,6 +890,207 @@ def plan_execution(
                     "or write MP4 / MOV / MKV"
                 )
 
+    # -- combiner inputs (M10.3): resolve + probe the extra inputs ----------
+    # The API probes only the main input, so the extras (and the main, when
+    # no metadata came in) are probed here — they need a real duration and
+    # stream layout for the graph math.
+    combine = None
+    for op in edit.ops_of("combine"):
+        spec = filter_spec(op.filter) or {}
+        domain = combiner_domain(op.filter)
+        min_total = spec.get("multi_input") or 2
+        total = 1 + len(op.asset_ids)
+        if total < min_total:
+            errors.append(
+                f"{op.filter} takes at least {min_total} inputs — the plan "
+                f"has {total}")
+        if spec.get("multi_input") == 2 and total != 2:
+            errors.append(
+                f"{op.filter} mixes exactly two inputs — the plan has {total}")
+        seen_ids = {edit.input_id}
+        extra_assets: list = []
+        for aid in op.asset_ids:
+            if aid in seen_ids:
+                errors.append(f"combiner input '{aid}' duplicates an input")
+                continue
+            seen_ids.add(aid)
+            a = assets.get(aid)
+            if a is None:
+                errors.append(f"combiner asset id '{aid}' is not in the asset map")
+                continue
+            if a.kind not in (AssetKind.VIDEO, AssetKind.AUDIO):
+                errors.append(
+                    f"combiner input '{aid}' must be a media file "
+                    "(image, subtitle and stream inputs are not supported yet)")
+                continue
+            if stream_scheme(a.path) is not None:
+                errors.append(
+                    f"combiner input '{aid}' is a stream — combiner inputs "
+                    "must be local files (they are probed for duration and "
+                    "layout)")
+                continue
+            extra_assets.append(a)
+        if not errors and domain is not None and len(extra_assets) == len(op.asset_ids):
+            main_media = metadata
+            if main_media is None and stream_scheme(input_asset.path) is None:
+                main_media = probe_media(input_asset.path, require_video=False)
+            extra_medias: list[MediaInfo] = []
+            for a in extra_assets:
+                m = probe_media(a.path, require_video=False)
+                if m is None:
+                    errors.append(
+                        f"combiner input '{a.path}' could not be probed — is "
+                        "the file readable?")
+                    continue
+                extra_medias.append(m)
+                have = m.video_streams > 0 if domain == "video" else m.has_audio
+                if not have:
+                    errors.append(
+                        f"combiner input '{a.path}' has no {domain} stream — "
+                        f"{op.filter} needs {domain} from every input")
+            if not errors:
+                if main_media is None:
+                    errors.append(
+                        f"the main input's {domain} streams could not be "
+                        "verified — provide probe metadata or a file "
+                        "ffprobe can read")
+                else:
+                    have = (main_media.video_streams > 0
+                            if domain == "video" else main_media.has_audio)
+                    if not have:
+                        errors.append(
+                            f"the main input has no {domain} stream — "
+                            f"{op.filter} needs {domain} from every input")
+                    else:
+                        combine = {
+                            "op": op, "domain": domain,
+                            "main_media": main_media,
+                            "extra_assets": extra_assets,
+                            "extra_medias": extra_medias,
+                        }
+
+    if combine is not None:
+        if edit.trim is not None:
+            errors.append(
+                "trimming cannot be combined with a multi-input filter — "
+                "the cut point would fight the transition offset (trim the "
+                "clip first, then combine)")
+        if wm_assets:
+            errors.append(
+                "a watermark cannot be added in the same pass as a "
+                "multi-input filter — combine first, then add the watermark")
+        if ar_assets:
+            errors.append(
+                "replacing the audio cannot be combined with a multi-input "
+                "filter in one pass — combine first, then replace the audio")
+        if sub_ops:
+            errors.append(
+                "subtitles cannot be combined with a multi-input filter in "
+                "one pass — combine first, then add the subtitles")
+        if out.mode == "audio":
+            errors.append(
+                "an audio-only output cannot carry a multi-input filter in "
+                "the MVP — export a video container (e.g. mp4) that keeps "
+                "the main video with the combined audio")
+        if out.mode == "subtitles":
+            errors.append(
+                "a subtitle dump cannot carry a multi-input filter")
+        if out.audio_mode == AudioMode.REMOVE and combine["domain"] == "audio":
+            errors.append(
+                "an audio combiner produces the output audio — it cannot be "
+                "removed in the same plan")
+
+    # -- comparison reference (M10.4): resolve + probe the reference input --
+    # The comparison is a standalone analysis: the reference clip is the
+    # second input (pad 1), the main input stays pad 0, and the metric
+    # (psnr/ssim/libvmaf) compares them frame by frame into the log.
+    compare = None
+    for op in edit.ops_of("compare"):
+        if op.reference == edit.input_id:
+            errors.append(
+                "the comparison reference must be a different file than the "
+                "main input (the metric measures the difference between the "
+                "two)")
+            continue
+        a = assets.get(op.reference)
+        if a is None:
+            errors.append(
+                f"comparison reference asset id '{op.reference}' is not in "
+                "the asset map")
+            continue
+        if a.kind not in (AssetKind.VIDEO, AssetKind.SOURCE):
+            errors.append(
+                f"comparison reference '{a.path}' must be a media file "
+                "(image, subtitle and stream references are not supported "
+                "yet)")
+            continue
+        if stream_scheme(a.path) is not None:
+            errors.append(
+                f"comparison reference '{a.path}' is a stream — the "
+                "reference must be a local file (it is probed for layout)")
+            continue
+        main_media = metadata
+        if main_media is None and stream_scheme(input_asset.path) is None:
+            main_media = probe_media(input_asset.path, require_video=True)
+        ref_media = probe_media(a.path, require_video=True)
+        if ref_media is None:
+            errors.append(
+                f"comparison reference '{a.path}' could not be probed — is "
+                "the file readable?")
+            continue
+        if ref_media.video_streams == 0:
+            errors.append(
+                f"comparison reference '{a.path}' has no video stream — "
+                f"{op.metric} compares video frame by frame")
+            continue
+        if main_media is None:
+            errors.append(
+                "the main input's video streams could not be verified — "
+                "provide probe metadata or a file ffprobe can read")
+            continue
+        if main_media.video_streams == 0:
+            errors.append(
+                f"the main input has no video stream — {op.metric} compares "
+                "video frame by frame")
+            continue
+        compare = {
+            "op": op, "main_media": main_media,
+            "ref_asset": a, "ref_media": ref_media,
+        }
+
+    if compare is not None:
+        if edit.trim is not None:
+            errors.append(
+                "trimming cannot be combined with a comparison — the cut "
+                "point would shift the main input's frames against the "
+                "reference timeline (trim the clip first, then compare)")
+        if wm_assets:
+            errors.append(
+                "a watermark cannot be added in the same pass as a "
+                "comparison — comparisons write nothing; add the watermark "
+                "first, then compare the result")
+        if ar_assets:
+            errors.append(
+                "replacing the audio cannot be combined with a comparison "
+                "in one pass — comparisons are standalone analyses")
+        if sub_ops:
+            errors.append(
+                "subtitles cannot be combined with a comparison in one "
+                "pass — comparisons are standalone analyses")
+        if out.mode != "video":
+            errors.append(
+                "a comparison is a video analysis — it cannot produce an "
+                f"{out.mode} output (psnr/ssim/libvmaf compare video frame "
+                "by frame)")
+        for other in edit.operations:
+            if other.type not in ("compare",):
+                errors.append(
+                    f"operation '{other.type}' cannot be combined with a "
+                    "comparison — comparisons are standalone analyses "
+                    "(apply the edit first, then compare the result "
+                    "against the reference)")
+                break
+
     # -- mode-specific operation restrictions --------------------------------
     if out.mode == "audio":
         for o in edit.operations:
@@ -749,11 +1191,30 @@ def plan_execution(
             note = _TRAP_NOTES.get(name)
             if note:
                 warnings.append(note)
+    for op in compare_ops:
+        # comparison metric disclosures: presence (libvmaf is not in every
+        # build) and min_version; no GPU/trap notes apply to a metric
+        if op.metric in disclosed:
+            continue
+        disclosed.add(op.metric)
+        spec = filter_spec(op.metric)
+        if spec is None:
+            continue
+        if ff is not None and op.metric not in ff.filters:
+            warnings.append(
+                f"filter '{op.metric}' is not available in the local "
+                "FFmpeg build — the command will fail to start (psnr and "
+                "ssim are available on every build)")
+        elif spec.get("min_version"):
+            note = _version_note(f"filter '{op.metric}'", spec["min_version"])
+            if note:
+                warnings.append(note)
 
     # -- diagnostic analysis (M10.2): null muxer, log level info, no file --
     if diagnostic:
         ep = _build_diagnostic_plan(edit, in_path, defaults, warnings,
-                                    output_filename, diag_names)
+                                    output_filename, diag_names,
+                                    compare=compare)
         ep.defaults.extend(defaults)
         ep.warnings.extend(warnings)
         _metadata_warnings(ep, edit, metadata)
@@ -801,7 +1262,7 @@ def plan_execution(
         video_ops = sorted({
             o.type for o in edit.operations
             if o.type in ("resize", "crop", "rotate", "speed", "grayscale",
-                          "watermark", "subtitles", "filter")
+                          "watermark", "subtitles", "filter", "combine")
         })
         if video_ops:
             raise PlanError([
@@ -1111,7 +1572,7 @@ def plan_execution(
                 sub_exprs = {so.asset_id: subtitle_burn_expr(sub_path)}
         ep = _build_reencode_plan(
             edit, in_path, wm_path, ar_path, sub_input, sub_exprs, sub_enc,
-            out_path, defaults, warnings
+            out_path, defaults, warnings, combine=combine
         )
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
@@ -1150,13 +1611,19 @@ def _bsf_arg(b) -> str:
 
 def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
                            warnings: list[str], output_filename: str | None,
-                           diag_names: list[str]) -> ExecutionPlan:
+                           diag_names: list[str],
+                           compare: dict | None = None
+                           ) -> ExecutionPlan:
     """Diagnostic analysis (M10.2): decode through the diagnostic filters and
     discard the stream ('-f null -', registry diagnostic_output). The filters
     write their results to the log at info level, so the builder's -loglevel
     is raised; no file is written, so an output filename is ignored (noted).
     A stream destination or audio device is a contradiction — there is no
-    data to carry."""
+    data to carry.
+
+    ``compare`` (M10.4) switches the plan to a comparison: the reference clip
+    is input pad 1, the graph is the labeled metric chain from
+    ``_comparison_segments`` and the simple vf/af chains do not apply."""
     dest = output_filename or edit.output_destination
     if dest and stream_scheme(dest) is not None:
         raise PlanError([
@@ -1171,6 +1638,8 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
             f"output filename '{output_filename}' ignored — a diagnostic "
             "run writes no file")
     inputs = [_main_input(in_path)]
+    if compare is not None:
+        inputs.append(InputSpec(compare["ref_asset"].path))
     if edit.trim is not None:
         inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
     opts: list[str] = []
@@ -1178,13 +1647,23 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
         opts += ["-t", fmt_num(edit.trim.duration_seconds)]
     diag = diagnostic_output()
     opts += ["-f", diag.get("muxer", "null")]
-    vf = ",".join(o.expr for o in edit.operations
-                  if o.type == "filter" and o.domain == "video")
-    af = ",".join(o.expr for o in edit.operations
-                  if o.type == "filter" and o.domain == "audio")
-    warnings.append(
-        "diagnostic analysis — nothing is written to a file; the results "
-        "are in the run log (log level raised to info)")
+    fcomplex: str | None = None
+    vf = af = None
+    if compare is not None:
+        fcomplex = ";".join(_comparison_segments(compare, defaults, warnings))
+        warnings.append(
+            "diagnostic analysis — nothing is written to a file; "
+            f"the {compare['op'].metric} summary is in the run log "
+            f"(the reference '{compare['ref_asset'].path}' is the second "
+            "input, compared frame by frame against the main input)")
+    else:
+        vf = ",".join(o.expr for o in edit.operations
+                      if o.type == "filter" and o.domain == "video")
+        af = ",".join(o.expr for o in edit.operations
+                      if o.type == "filter" and o.domain == "audio")
+        warnings.append(
+            "diagnostic analysis — nothing is written to a file; the results "
+            "are in the run log (log level raised to info)")
     for name in dict.fromkeys(diag_names):
         note = _DIAG_NOTES.get(name)
         if note:
@@ -1193,13 +1672,81 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
         mode="diagnostic",
         inputs=inputs,
         vf=vf or None,
-        filter_complex=None,
-        maps=[],
+        filter_complex=fcomplex,
+        # a labeled filtergraph output is not auto-mapped — the metric pad
+        # must be connected to the (null) output explicitly
+        maps=["[cmp]"] if compare is not None else [],
         output_opts=opts,
         output_path=diag.get("path", "-"),
         af=af or None,
         loglevel="info",
     )
+
+
+def vmaf_model_path() -> str | None:
+    """libvmaf model location from the environment (M10.4): a full path in
+    FASS_VMAF_MODEL, else vmaf_v0.6.1.pkl under FASS_VMAF_MODEL_DIR, else
+    None (the filter's built-in model/version applies)."""
+    model = os.environ.get("FASS_VMAF_MODEL")
+    if model:
+        return model
+    model_dir = os.environ.get("FASS_VMAF_MODEL_DIR")
+    if model_dir:
+        return os.path.join(model_dir, "vmaf_v0.6.1.pkl")
+    return None
+
+
+def _comparison_segments(compare: dict, defaults: list[str],
+                         warnings: list[str]) -> list[str]:
+    """Labeled -filter_complex segments for a comparison (M10.4).
+
+    ``compare`` is the plan_execution context: {'op', 'main_media',
+    'ref_asset', 'ref_media'}. The metric needs identical frame dimensions
+    on both pads, so the reference is scaled to the main's size when they
+    differ; rate and pixel-format mismatches are only noted (converting
+    them would resample the measured signal and distort the metric). The
+    last segment feeds [0:v] and the reference pad into the metric and
+    labels the output [cmp]."""
+    op = compare["op"]
+    main = compare["main_media"]
+    ref = compare["ref_media"]
+    metric = op.metric
+    segs: list[str] = []
+    p1 = "[1:v]"
+    if (main.width and main.height and ref.width and ref.height
+            and (ref.width, ref.height) != (main.width, main.height)):
+        p1 = "[c1]"
+        segs.append(f"[1:v]scale={main.width}:{main.height}[c1]")
+        warnings.append(
+            f"the reference is {ref.width}x{ref.height}, the main input is "
+            f"{main.width}x{main.height} — the reference is scaled to the "
+            "main's size (the metric compares identical dimensions)")
+    if (main.fps and ref.fps and abs(main.fps - ref.fps) > 0.01):
+        warnings.append(
+            f"the reference runs at {fmt_num(ref.fps)} fps, the main input "
+            f"at {fmt_num(main.fps)} fps — frames are compared in arrival "
+            "order (no rate conversion; the metric scores the overlapping "
+            "span)")
+    if (main.pix_fmt and ref.pix_fmt and main.pix_fmt != ref.pix_fmt):
+        warnings.append(
+            f"the reference is {ref.pix_fmt}, the main input is "
+            f"{main.pix_fmt} — the metric converts internally")
+    opts = dict(op.options)
+    if metric == "libvmaf" and "model" not in opts:
+        model = vmaf_model_path()
+        if model:
+            # the filter's model option is a specification
+            # ('version=vmaf_v0.6.1' or 'path=<file>'); a bare path is
+            # rejected by the filter
+            opts["model"] = f"path={model}"
+            defaults.append(
+                f"libvmaf model: {model} (FASS_VMAF_MODEL / "
+                "FASS_VMAF_MODEL_DIR)")
+    tail = ""
+    if opts:
+        tail = "=" + ":".join(f"{k}={v}" for k, v in sorted(opts.items()))
+    segs.append(f"[0:v]{p1}{metric}{tail}[cmp]")
+    return segs
 
 
 def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
@@ -1305,14 +1852,19 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
 def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
                          audio_path: str | None, sub_path: str | None,
                          sub_exprs: dict[str, str] | None, sub_enc: str | None,
-                         out_path: str, defaults: list[str], warnings: list[str]) -> ExecutionPlan:
+                         out_path: str, defaults: list[str], warnings: list[str],
+                         combine: dict | None = None) -> ExecutionPlan:
     inputs = [_main_input(in_path)]
     if edit.trim is not None:
         # -ss as an input option: frame-accurate when followed by decoding.
         inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
-    # Input order is fixed: main=0, watermark=1 (build_video_chain hardcodes
+    # Input order is fixed: main=0, combiner extras in the plan's asset
+    # order (the graph pads reference them by index), then — mutually
+    # exclusive with a combiner — watermark=1 (build_video_chain hardcodes
     # [1:v]), soft-subtitle input before the replacement audio (audio stays
     # last, as audio_idx below assumes).
+    if combine:
+        inputs += [InputSpec(a.path) for a in combine["extra_assets"]]
     if wm_path:
         inputs.append(InputSpec(wm_path))
     sub_idx = None
@@ -1336,14 +1888,36 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         fg_labels = filtergraph_output_labels(edit.filtergraph)
         maps = [f"[{l}]" for l in fg_labels]
     else:
-        chain_mode, chain, vlabel = build_video_chain(
-            edit.operations, defaults, sub_exprs=sub_exprs)
-        if chain_mode == "complex":
-            vf, fcomplex = None, chain
-            maps = [f"[{vlabel}]"]
+        ca_label: str | None = None
+        chain_ops = [o for o in edit.operations if o.type != "combine"]
+        if combine:
+            # The combiner consumes the extra inputs as labeled pads; any
+            # remaining video operations chain after its output pad.
+            segs, cv_label, ca_label, audio_source = _combiner_segments(
+                combine, defaults, warnings)
+            chain_mode, chain, vlabel = build_video_chain(
+                chain_ops, defaults, start_label=cv_label)
+            # The combiner always runs in complex mode; there is no -vf.
+            vf, fcomplex = None, (
+                ";".join(segs) + (";" + chain if chain else ""))
+            if cv_label is not None:
+                # video combiner: the graph's video pad is the output video
+                maps = [f"[{vlabel or cv_label}]"]
+            elif vlabel is not None:
+                # audio combiner + video ops: chain runs off the main [0:v]
+                maps = [f"[{vlabel}]"]
+            else:
+                # audio combiner alone: video is the main input's own stream
+                maps = ["0:v:0"]
         else:
-            vf, fcomplex = (chain or None), None
-            maps = ["0:v:0"]
+            chain_mode, chain, vlabel = build_video_chain(
+                edit.operations, defaults, sub_exprs=sub_exprs)
+            if chain_mode == "complex":
+                vf, fcomplex = None, chain
+                maps = [f"[{vlabel}]"]
+            else:
+                vf, fcomplex = (chain or None), None
+                maps = ["0:v:0"]
 
     ar_op = edit.ops_of("audio_replace")
     audio_remove = edit.output.audio_mode == AudioMode.REMOVE and not ar_op
@@ -1351,7 +1925,17 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         # replacement audio: first audio stream of the extra input, never the
         # input's own track (and never an optional map)
         maps.append(f"{audio_idx}:a:0")
-    elif not audio_remove and not (edit.filtergraph and not fg_labels):
+    elif combine and audio_source == "graph":
+        # audio combiner (or concat with audio): the graph's audio pad is
+        # the output audio
+        maps.append(f"[{ca_label}]")
+    elif combine and audio_source == "main" and not audio_remove:
+        # video combiner: the combined video replaces the frame source, the
+        # audio stays the main input's own stream
+        maps.append("0:a?")
+    elif (not audio_remove and not (edit.filtergraph and not fg_labels)
+          and not (combine and audio_source == "none")):
+        # combine with audio_source == "none" (concat without audio): no audio
         # explicit maps: keep the optional audio map; auto-map (unlabeled
         # graph) already picks the audio stream on its own
         maps.append("0:a?")
@@ -1507,7 +2091,9 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
             f"audio replaced with the first audio stream of '{audio_path}'; "
             "-shortest: output ends when the shorter of video and replacement audio ends"
         )
-    elif audio_remove:
+    elif audio_remove or (combine and audio_source == "none"):
+        # A concat without audio maps no audio stream either — -an keeps
+        # the output explicitly audio-free.
         opts.append("-an")
     else:
         # A named audio_codec overrides the container's default (validated

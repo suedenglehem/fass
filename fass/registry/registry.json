@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.2.0",
+  "registry_version": "2.4.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -680,7 +680,43 @@
       "boxblur": { "description": "Gaussian blur: 'boxblur=2:2'" },
       "unsharp": { "description": "sharpen: 'unsharp=5:5:1.0'" },
       "split": { "description": "split the stream into N copies (graph filter): 'split=2'" },
-      "overlay": { "description": "overlay a second input: 'overlay=x:y' (graph filter)" },
+      "overlay": {
+        "description": "overlay a second input on top of the main: 'overlay=x:y' (graph filter)",
+        "options": {
+          "x": { "kind": "string", "description": "set the x expression (default 0)" },
+          "y": { "kind": "string", "description": "set the y expression (default 0)" },
+          "eof_action": {
+            "kind": "choice",
+            "description": "action to take when the overlay input ends (default repeat)",
+            "values": ["repeat", "endall", "pass"]
+          },
+          "eval": {
+            "kind": "choice",
+            "description": "specify when to evaluate the x/y expressions (default frame)",
+            "values": ["init", "frame"]
+          },
+          "shortest": {
+            "kind": "bool",
+            "description": "force termination when the shortest input terminates (default false)"
+          },
+          "format": {
+            "kind": "choice",
+            "description": "set output format (default yuv420)",
+            "values": ["yuv420", "yuv420p10", "yuv422", "yuv422p10",
+                       "yuv444", "yuv444p10", "rgb", "gbrp", "auto"]
+          },
+          "repeatlast": {
+            "kind": "bool",
+            "description": "repeat overlay of the last overlay frame (default true)"
+          },
+          "alpha": {
+            "kind": "choice",
+            "description": "alpha format (default straight)",
+            "values": ["straight", "premultiplied"]
+          }
+        },
+        "multi_input": 2
+      },
       "subtitles": { "description": "burn in a subtitle file: 'subtitles=file.srt' (path needs filter escaping)" },
       "ass": { "description": "burn in an ass/ssa file: 'ass=file.ass'" },
       "bbox": {
@@ -1432,6 +1468,8 @@
       "libvmaf": {
         "description": "Compute VMAF quality metric vs a reference input (needs libvmaf model files; present in 9.0.1, absent from 6.1.1).",
         "needs_reference": true,
+        "diagnostic": true,
+        "min_version": "7.0",
         "options": {
           "model": {
             "kind": "string",
@@ -1516,6 +1554,7 @@
       },
       "psnr": {
         "description": "Calculate the PSNR between two video streams.",
+        "diagnostic": true,
         "options": {
           "stats_file": {
             "kind": "string",
@@ -1816,6 +1855,7 @@
       },
       "ssim": {
         "description": "Calculate the SSIM between two video streams.",
+        "diagnostic": true,
         "options": {
           "stats_file": {
             "kind": "string",
@@ -2062,6 +2102,46 @@
             "description": "enable debug mode and writer global motions information to file (default false)"
           }
         }
+      },
+      "concat": {
+        "description": "Concatenate video and/or audio streams end to end: '[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1'.",
+        "options": {
+          "n": {
+            "kind": "int",
+            "range": [1, 2147483647],
+            "description": "specify the number of segments (default 2)"
+          },
+          "v": {
+            "kind": "int",
+            "range": [0, 2147483647],
+            "description": "specify the number of video streams per segment (default 1)"
+          },
+          "a": {
+            "kind": "int",
+            "range": [0, 2147483647],
+            "description": "specify the number of audio streams per segment (default 0)"
+          },
+          "unsafe": {
+            "kind": "bool",
+            "description": "enable unsafe mode (default false)"
+          }
+        },
+        "multi_input": 0
+      },
+      "hstack": {
+        "description": "Stack video inputs horizontally.",
+        "options": {
+          "inputs": {
+            "kind": "int",
+            "range": [2, 2147483647],
+            "description": "set number of inputs (default 2)"
+          },
+          "shortest": {
+            "kind": "bool",
+            "description": "force termination when the shortest input terminates (default false)"
+          }
+        },
+        "multi_input": 0
       },
       "vstack": {
         "description": "Stack video inputs vertically.",

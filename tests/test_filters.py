@@ -5,6 +5,9 @@ The 50 new entries were transcribed from `ffmpeg -h filter=NAME` on the tested
 6.1.1 build (blackdetect_vulkan/libvmaf from docs — absent there; acompressor
 was misspelled 'acompresor' at M10.0 and is corrected in M10.1).
 """
+import re
+import subprocess
+
 import pytest
 
 from fass import execute
@@ -48,7 +51,13 @@ def test_registry_has_the_50_new_entries():
         assert name in video, name
     for name in NEW_AUDIO:
         assert name in audio, name
-    assert len(video) == 48 and len(audio) == 36
+    assert len(video) == 50 and len(audio) == 36
+    # All nine combiners (M10.0: xfade/vstack/overlay/acrossfade/amerge/
+    # amix/join; M10.3: concat/hstack) carry the multi_input marker.
+    for name in ("concat", "hstack", "xfade", "vstack", "overlay",
+                 "acrossfade", "amerge", "amix", "join"):
+        spec = video.get(name) or audio.get(name)
+        assert spec is not None and "multi_input" in spec, name
     assert int(REGISTRY["registry_version"].split(".")[1]) >= 2
 
 
@@ -198,9 +207,22 @@ def test_presence_probe_covers_new_filters():
     for name in ("acrossfade", "astats", "silencedetect", "xfade", "yadif",
                  "drawbox", "anullsrc", "volumedetect", "acompressor"):
         assert name in ff.filters, name
-    # absent on 6.1.1 (the probe reports the build, never assumes)
+    # build-dependent: libvmaf only ships in 7.x+ libvmaf-linked builds,
+    # blackdetect_vulkan only with --enable-vulkan (6.1.1 has neither; the
+    # 9.0.1 nvidia base has libvmaf but no vulkan) — the probe must mirror
+    # the actual build, never assume presence or absence
+    raw = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True
+    ).stdout
+    raw_names = {
+        p[1]
+        for line in raw.splitlines()
+        for p in [line.split()]
+        if len(p) >= 2 and set(p[0]) <= set("TSC.-")
+        and re.match(r"^[A-Za-z0-9_]+$", p[1])
+    }
     for name in ("blackdetect_vulkan", "libvmaf"):
-        assert name not in ff.filters, name
+        assert (name in ff.filters) is (name in raw_names), name
 
 
 def test_probe_parser_excludes_legend_words():

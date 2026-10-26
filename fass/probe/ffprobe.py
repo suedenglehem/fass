@@ -77,60 +77,72 @@ def _run(cmd: list[str], timeout: float = 30.0) -> str | None:
         return None
 
 
-def parse_ffprobe_json(payload: dict) -> MediaInfo | None:
-    """Parse `ffprobe -print_format json -show_format -show_streams` output."""
+def parse_ffprobe_json(payload: dict, *, require_video: bool = True
+                       ) -> MediaInfo | None:
+    """Parse `ffprobe -print_format json -show_format -show_streams` output.
+
+    ``require_video`` (default) rejects audio-only files — the main input of
+    a normal plan is video media. Combiner plans (M10.3) probe audio-only
+    inputs with ``require_video=False``."""
     streams = payload.get("streams") or []
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
-    if video is None:
+    if require_video and video is None:
+        return None
+    if video is None and audio is None:
         return None
     fmt = payload.get("format") or {}
     duration = None
     try:
-        duration = float(fmt.get("duration") or video.get("duration"))
+        duration = float(fmt.get("duration") or (video or audio).get("duration"))
     except (TypeError, ValueError):
         duration = None
 
     fps = None
-    rate = video.get("avg_frame_rate") or video.get("r_frame_rate") or ""
-    if "/" in rate:
-        num, _, den = rate.partition("/")
-        try:
-            fps = float(num) / float(den) if float(den) else None
-        except ValueError:
-            fps = None
+    if video is not None:
+        rate = video.get("avg_frame_rate") or video.get("r_frame_rate") or ""
+        if "/" in rate:
+            num, _, den = rate.partition("/")
+            try:
+                fps = float(num) / float(den) if float(den) else None
+            except ValueError:
+                fps = None
 
     rotation = None
-    for sd in video.get("side_data_list") or []:
-        if "displaymatrix" in sd or sd.get("rotation"):
-            try:
-                rotation = int(float(sd.get("rotation")))
-            except (TypeError, ValueError):
-                rotation = None
-    if rotation is None:
-        tags = video.get("tags") or {}
-        for key in ("rotate", "rotation"):
-            if tags.get(key) not in (None, ""):
+    if video is not None:
+        for sd in video.get("side_data_list") or []:
+            if "displaymatrix" in sd or sd.get("rotation"):
                 try:
-                    rotation = int(float(tags[key]))
-                except ValueError:
+                    rotation = int(float(sd.get("rotation")))
+                except (TypeError, ValueError):
                     rotation = None
+        if rotation is None:
+            tags = video.get("tags") or {}
+            for key in ("rotate", "rotation"):
+                if tags.get(key) not in (None, ""):
+                    try:
+                        rotation = int(float(tags[key]))
+                    except ValueError:
+                        rotation = None
 
-    pix_fmt = video.get("pix_fmt")
-    tags = {k.lower(): v for k, v in (video.get("tags") or {}).items()}
-    hdr = pix_fmt in _HDR_PIX_FMTS or tags.get("color_space") == "bt2020nc" or \
-        (video.get("color_space") in ("bt2020nc", "bt2020ncl"))
-    # color_* top-level stream fields
-    for k in ("color_space", "color_primaries", "color_trc"):
-        if video.get(k) in ("bt2020nc", "bt2020ncl", "smpte2084"):
-            hdr = True
+    if video is None:
+        pix_fmt, hdr = None, False
+    else:
+        pix_fmt = video.get("pix_fmt")
+        tags = {k.lower(): v for k, v in (video.get("tags") or {}).items()}
+        hdr = pix_fmt in _HDR_PIX_FMTS or tags.get("color_space") == "bt2020nc" or \
+            (video.get("color_space") in ("bt2020nc", "bt2020ncl"))
+        # color_* top-level stream fields
+        for k in ("color_space", "color_primaries", "color_trc"):
+            if video.get(k) in ("bt2020nc", "bt2020ncl", "smpte2084"):
+                hdr = True
 
     return MediaInfo(
         path=payload.get("_path", ""),
         duration=duration,
-        video_codec=video.get("codec_name"),
-        width=video.get("width"),
-        height=video.get("height"),
+        video_codec=video.get("codec_name") if video else None,
+        width=video.get("width") if video else None,
+        height=video.get("height") if video else None,
         pix_fmt=pix_fmt,
         fps=fps,
         has_audio=audio is not None,
@@ -145,9 +157,10 @@ def parse_ffprobe_json(payload: dict) -> MediaInfo | None:
     )
 
 
-def probe_media(path: str) -> MediaInfo | None:
+def probe_media(path: str, *, require_video: bool = True) -> MediaInfo | None:
     """ffprobe a local file. Returns None when ffprobe is missing or the
-    file cannot be read."""
+    file cannot be read. ``require_video=False`` accepts audio-only files
+    (combiner inputs, M10.3)."""
     if not ffprobe_available():
         return None
     out = _run(
@@ -160,7 +173,7 @@ def probe_media(path: str) -> MediaInfo | None:
         payload = json.loads(out)
     except json.JSONDecodeError:
         return None
-    info = parse_ffprobe_json(payload)
+    info = parse_ffprobe_json(payload, require_video=require_video)
     if info:
         info.path = path
     return info

@@ -753,6 +753,33 @@ def filter_spec(name: str) -> dict | None:
     return filter_specs().get(name)
 
 
+def combiner_filters() -> dict[str, dict]:
+    """Multi-input filters (registry 'multi_input' flag) — the filters that
+    join the main input with one or more additional inputs: xfade, acrossfade,
+    concat, hstack, vstack, overlay (video) and amix, amerge, join (audio).
+    {name: entry} across both domains."""
+    return {name: spec for name, spec in filter_specs().items()
+            if "multi_input" in spec}
+
+
+def combiner_domain(name: str) -> str | None:
+    """'video' or 'audio' domain of a combiner filter, None if it is not one."""
+    for domain in ("video", "audio"):
+        spec = REGISTRY["filters"].get(domain, {}).get(name)
+        if spec is not None and "multi_input" in spec:
+            return domain
+    return None
+
+
+def comparison_filters() -> dict[str, dict]:
+    """Comparison metrics (registry 'needs_reference' flag) — the filters
+    that measure the quality difference between the main input and a
+    reference input: psnr, ssim, libvmaf. {name: entry} across both
+    domains."""
+    return {name: spec for name, spec in filter_specs().items()
+            if spec.get("needs_reference")}
+
+
 def filter_options_problems(name: str, options: dict[str, str]) -> list[str]:
     """Validate a filter's key=value options against its registry schema —
     the filter-side twin of bsf_errors. A filter without an option schema

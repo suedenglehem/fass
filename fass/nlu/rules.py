@@ -16,6 +16,7 @@ import os
 import re
 
 from fass.probe.ffprobe import MediaInfo
+from fass.planner.planner import _overlay_xy
 from fass.registry import (
     REGISTRY,
     all_filter_names,
@@ -50,6 +51,8 @@ from fass.schema import (
     AudioResampleOp,
     BitstreamFilterSpec,
     Clarification,
+    CombinerOp,
+    CompareOp,
     CropOp,
     EditPlan,
     FilterOp,
@@ -95,7 +98,15 @@ SUPPORTED_SUMMARY = (
     "level=4.1', 'remux with trace_headers'), and stream-copy trim ('copy "
     "trim from 00:10 to 00:30' — no re-encode, video keyframe-accurate); one "
     "image watermark "
-    "(position, margin, scale), subtitles from an srt/ass/ssa/vtt file "
+    "(position, margin, scale), combining a second input "
+    "('crossfade the clips', 'crossfade the audio', 'stack them side by "
+    "side', 'stack them vertically', 'concatenate clip a and clip b', "
+    "'overlay clip2 on top', 'mix the audio', 'join the audio tracks to "
+    "5.1'), and measuring the quality difference against a reference file "
+    "('compare the re-encoded clip against the original', 'how much quality "
+    "loss' — psnr or ssim, or libvmaf/VMAF when named; the metric summary "
+    "lands in the run log, nothing is written), subtitles from an "
+    "srt/ass/ssa/vtt file "
     "('add subtitles from subs.srt' — burned in by default, or soft/"
     "selectable on request). Inputs may also be remote streams (http(s)://, "
     "rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp:// URLs), local "
@@ -1475,6 +1486,301 @@ def _detect_watermark(t: str, assets: dict):
     return op, None, "; ".join(notes) or None
 
 
+# ------------------------------------------------- combiners (M10.3)
+
+# Multi-input (combiner) phrasings: the verb names the filter, the bound
+# (or the sole other eligible) media file is the second input. The claimed
+# spans are blanked out of the detector text length-preservingly (the BSF
+# / transform pattern), so 'crossfade the audio over 2 seconds' is not
+# re-read as an audio keep/remove or a trim duration.
+_CROSSFADE_RX = re.compile(r"\bcross[-\s]?fades?\b", re.I)
+_AUDIO_CTX_RX = re.compile(
+    r"\b(?:audio|sound|soundtrack|music|songs?|tracks?|voiceover|voice)\b",
+    re.I)
+_VIDEO_CTX_RX = re.compile(
+    r"\b(?:video|videos|clips?|footage|scenes?|movies?|films?)\b", re.I)
+_CONCAT_RX = re.compile(
+    r"\bconcatenat(?:e|ed|ing|es|ion)?\b|\bend[-\s]?to[-\s]?end\b"
+    r"|\bone after (?:the\s+)?other\b|\bback[-\s]?to[-\s]?back\b"
+    r"|\bappend(?:ed|ing)?\b|\bstitch(?:es|ed|ing)?\b", re.I)
+_STACK_RX = re.compile(r"\bstack(?:s|ed|ing)?\b", re.I)
+_SIDE_BY_SIDE_RX = re.compile(
+    r"\bside[-\s]?by[-\s]?side\b|\bhorizont(?:al|ally)\w*\b"
+    r"|\bnext to\b|\bbeside\b", re.I)
+_VERT_STACK_RX = re.compile(
+    r"\bvertic(?:al|ally)\w*\b|\bone (?:above|over) the other\b"
+    r"|\b(?:below|under|above)\s+(?:it|them|each other)\b", re.I)
+_OVERLAY_RX = re.compile(
+    r"\boverlays?\b|\bpicture[-\s]?in[-\s]?(?:the\s+)?(?:picture|video)\b"
+    r"|\bon[-\s]?top[-\s]?of\b|\bover\s+(?:the\s+)?(?:video|picture|clip|footage)\b",
+    re.I)
+_MIX_RX = re.compile(r"\bmix(?:es|ed|ing)?\b|\bblend(?:s|ed|ing)?\b", re.I)
+_MERGE_RX = re.compile(r"\bmerge(?:s|d|ing)?\b", re.I)
+_JOIN_RX = re.compile(r"\bjoin(?:s|ed|ing)?\b", re.I)
+_LAYOUT_RX = re.compile(r"\b(5\.1(\+2)?|7\.1|quad|stereo)\b", re.I)
+_COMBINE_MARGIN = 16  # px, used when the overlay position is a keyword
+
+_VIDEO_KINDS = (AssetKind.VIDEO,)
+_VIDEO_AUDIO_KINDS = (AssetKind.VIDEO, AssetKind.AUDIO)
+
+
+def _bind_combiner_input(t: str, assets: dict, main_id: str, kinds):
+    """Match a mentioned filename/identifier to a non-main asset of the
+    requested kinds; otherwise fall back to the sole such asset."""
+    cands = {aid: a for aid, a in assets.items()
+             if aid != main_id and a.kind in kinds}
+    for aid, a in cands.items():
+        base = os.path.basename(a.path)
+        if (base.lower() in t or a.path.lower() in t
+                or (a.label and a.label.lower() in t) or aid.lower() in t):
+            return aid, f"bound '{base}' as the second input"
+    if len(cands) == 1:
+        aid = next(iter(cands))
+        return aid, "bound the only other media file as the second input"
+    return None, None
+
+
+def _combine_duration(t: str, m: "re.Match[str]"):
+    """A duration attached to the combiner verb: 'over 2 seconds',
+    'in 1.5s', 'a 2-second crossfade'. The match window is extended past
+    its end first, so a word the window would truncate ('…5 s|econds')
+    cannot fake a match on the bare 's' — the whole match must end
+    inside the window. Returns (value, span) or None."""
+    lo = max(0, m.start() - 30)
+    hi = min(len(t), m.end() + 40)
+    dm = re.search(r"(\d+(?:\.\d+)?)\s*-?\s*(?:seconds?|secs?|s)\b",
+                   t[lo:min(len(t), hi + 9)], re.I)
+    if not dm or dm.end() > hi - lo:
+        return None
+    return dm.group(1), (lo + dm.start(), lo + dm.end())
+
+
+def _detect_combiner(t: str, assets: dict):
+    """M10.3: a multi-input filter from a two-input phrasing.
+    Returns (CombinerOp|None, clarification|None, note|None, spans,
+    unsupported_fragment|None)."""
+    main_id = "main"
+    spans: list[tuple[int, int]] = []
+    notes: list[str] = []
+
+    def bind_and_finish(name, kinds, options, frag_if_audio=None):
+        aid, note = _bind_combiner_input(t, assets, main_id, kinds)
+        if note:
+            notes.append(note)
+        if aid is None:
+            cands = [a for a2, a in assets.items()
+                     if a2 != main_id and a.kind in kinds]
+            if not cands and frag_if_audio is not None:
+                # the only other asset exists but can't feed this filter —
+                # name it instead of asking which file
+                others = [a for a2, a in assets.items()
+                          if a2 != main_id and a.kind not in kinds]
+                if len(others) == 1:
+                    base = os.path.basename(others[0].path)
+                    return None, None, None, spans, (
+                        f"combining with '{base}' for {name} — it is an "
+                        f"{others[0].kind.value} file and {name} needs a "
+                        f"video from every input")
+            q = ("which file is the second input for the combine?" if cands
+                 else "which file should the inputs be combined with?")
+            return (None, Clarification(question=q, hint=(
+                None if cands else
+                "bind another file (e.g. --asset clip2=clip2.mp4) and refer "
+                "to it in the request")),
+                None, spans, None)
+        base = os.path.basename(assets[aid].path)
+        bm = re.search(re.escape(base), t, re.I)
+        if bm and not any(a <= bm.start() < b for a, b in spans):
+            spans.append(bm.span())
+        if frag_if_audio and assets[aid].kind == AssetKind.AUDIO:
+            return None, None, None, spans, (
+                f"combining with '{base}' for {name} — it is an audio file "
+                f"and {name} needs a video from every input")
+        op = CombinerOp(filter=name, asset_ids=[aid], options=options)
+        return op, None, "; ".join(notes) or None, spans, None
+
+    m = _CROSSFADE_RX.search(t)
+    if m:
+        audio = _AUDIO_CTX_RX.search(
+            t[max(0, m.start() - 40):m.end() + 40]) is not None
+        options: dict[str, str] = {}
+        d = _combine_duration(t, m)
+        if d:
+            options["duration"] = d[0]
+            spans.append(d[1])
+        spans.append(m.span())
+        if audio:
+            return bind_and_finish("acrossfade", _VIDEO_AUDIO_KINDS, options)
+        return bind_and_finish("xfade", _VIDEO_KINDS, options,
+                               frag_if_audio="crossfading")
+
+    m = _STACK_RX.search(t)
+    if m:
+        if _SIDE_BY_SIDE_RX.search(t):
+            name = "hstack"
+        elif _VERT_STACK_RX.search(t):
+            name = "vstack"
+        else:
+            spans.append(m.span())
+            return None, Clarification(
+                question=("stack side by side (horizontal) or one above the "
+                          "other (vertical)?")), None, spans, None
+        spans.append(m.span())
+        return bind_and_finish(name, _VIDEO_KINDS, {},
+                               frag_if_audio=f"{name}ing")
+
+    m = _CONCAT_RX.search(t)
+    if m:
+        spans.append(m.span())
+        options = {}
+        if re.search(r"\bwithout\s+(?:the\s+)?audio\b", t, re.I):
+            options["a"] = "0"
+            notes.append("concatenation without audio")
+        # an audio-only second file is fine here (concat drops or keeps
+        # audio per the layout) — the planner verifies the streams
+        return bind_and_finish("concat", _VIDEO_AUDIO_KINDS, options)
+
+    m = _JOIN_RX.search(t)
+    if m:
+        window = t[max(0, m.start() - 40):m.end() + 40]
+        lm = _LAYOUT_RX.search(t)
+        audio_ctx = _AUDIO_CTX_RX.search(window) is not None
+        if lm or audio_ctx:
+            spans.append(m.span())
+            layout = None
+            if lm:
+                layout = lm.group(1)
+                spans.append(lm.span())
+            else:
+                return None, Clarification(
+                    question=("join the audio tracks to what channel layout "
+                              "(stereo, quad, 5.1)?")), None, spans, None
+            return bind_and_finish(
+                "join", _VIDEO_AUDIO_KINDS, {"channel_layout": layout})
+        if _VIDEO_CTX_RX.search(window):
+            # 'join the two videos' = end to end, not the audio join filter
+            spans.append(m.span())
+            return bind_and_finish("concat", _VIDEO_AUDIO_KINDS, {})
+
+    m = _MIX_RX.search(t)
+    if m and _AUDIO_CTX_RX.search(
+            t[max(0, m.start() - 30):m.end() + 30]):
+        spans.append(m.span())
+        return bind_and_finish("amix", _VIDEO_AUDIO_KINDS, {})
+
+    m = _MERGE_RX.search(t)
+    if m:
+        window = t[max(0, m.start() - 30):m.end() + 30]
+        if _AUDIO_CTX_RX.search(window):
+            spans.append(m.span())
+            return bind_and_finish("amerge", _VIDEO_AUDIO_KINDS, {})
+        if _VIDEO_CTX_RX.search(window):
+            # 'merge the two videos' = end to end, like 'join the two videos'
+            spans.append(m.span())
+            return bind_and_finish("concat", _VIDEO_AUDIO_KINDS, {})
+
+    m = _OVERLAY_RX.search(t)
+    if m:
+        # a named image in the request is a watermark, not an overlay input
+        img = next((a for a in assets.values()
+                    if a.kind == AssetKind.IMAGE and (
+                        os.path.basename(a.path).lower() in t
+                        or (a.label and a.label.lower() in t))), None)
+        if img is not None:
+            return None, None, None, [], None
+        spans.append(m.span())
+        options = {}
+        pos = _detect_position(t)
+        if pos:
+            x, y = _overlay_xy(pos, _COMBINE_MARGIN)
+            options = {"x": x, "y": y}
+            notes.append(f"overlay position '{pos.replace('_', ' ')}' "
+                         f"(margin {_COMBINE_MARGIN}px)")
+        return bind_and_finish("overlay", _VIDEO_KINDS, options,
+                               frag_if_audio="overlaying")
+
+    return None, None, None, [], None
+
+
+# ------------------------------------------------- comparison (M10.4)
+
+# A quality comparison measures the difference between the main input and a
+# reference input with one of the registry 'needs_reference' metrics
+# (psnr, ssim, libvmaf). Triggers: the compare/comparison verb, a quality-
+# loss phrasing (jargon: 'quality loss' means psnr/ssim), or a bare metric
+# word (naming the metric implies the analysis). The reference is the bound
+# (or the sole other eligible) media file; the claimed spans are blanked
+# length-preservingly like the combiner's.
+_COMPARE_RX = re.compile(
+    r"\bcompare(?:d|s)?\b|\bcompar(?:ison|ing|e)\b"
+    r"|\bquality\s+(?:loss|difference|degradation|drop|impact)\b", re.I)
+_PSNR_RX = re.compile(r"\bpsnr\b", re.I)
+_SSIM_RX = re.compile(r"\bssim\b", re.I)
+_VMAF_RX = re.compile(r"\blib-?vmaf\b|\bvmaf\b", re.I)
+
+
+def _detect_compare(t: str, assets: dict):
+    """M10.4: a quality comparison against a reference input.
+    Returns (CompareOp|None, clarification|None, note|None, spans,
+    unsupported_fragment|None)."""
+    main_id = "main"
+    spans: list[tuple[int, int]] = []
+    notes: list[str] = []
+
+    m = (_COMPARE_RX.search(t) or _PSNR_RX.search(t)
+         or _SSIM_RX.search(t) or _VMAF_RX.search(t))
+    if not m:
+        return None, None, None, [], None
+    metric = None
+    if _PSNR_RX.search(t):
+        metric = "psnr"
+    elif _SSIM_RX.search(t):
+        metric = "ssim"
+    elif _VMAF_RX.search(t):
+        metric = "libvmaf"
+    # blank the trigger words (the verb and any metric mention) so the
+    # remaining detectors don't re-read them
+    for rx in (_COMPARE_RX, _PSNR_RX, _SSIM_RX, _VMAF_RX):
+        for mm in rx.finditer(t):
+            if not any(a <= mm.start() < b for a, b in spans):
+                spans.append(mm.span())
+    if metric is None:
+        # metric-less: the two metrics every build has (libvmaf needs a
+        # model, so it is not offered unless the user names it)
+        return None, Clarification(
+            question=("which quality metric — PSNR (signal-to-noise ratio) "
+                      "or SSIM (structural similarity)?")), None, spans, None
+    aid, note = _bind_combiner_input(t, assets, main_id, _VIDEO_KINDS)
+    if note:
+        notes.append(note)
+    if aid is None:
+        cands = [a for a2, a in assets.items()
+                 if a2 != main_id and a.kind in _VIDEO_KINDS]
+        if not cands:
+            others = [a for a2, a in assets.items()
+                      if a2 != main_id and a.kind not in _VIDEO_KINDS]
+            if len(others) == 1:
+                base = os.path.basename(others[0].path)
+                return None, None, None, spans, (
+                    f"comparing with '{base}' — it is an "
+                    f"{others[0].kind.value} file and the comparison metric "
+                    "needs video from both inputs")
+        q = ("which file is the reference for the comparison?" if cands
+             else "which file should the main input be compared against?")
+        return (None, Clarification(
+            question=q, hint=(
+                None if cands else
+                "bind another file (e.g. --asset ref=ref.mp4) and refer to "
+                "it in the request")),
+            None, spans, None)
+    base = os.path.basename(assets[aid].path)
+    bm = re.search(re.escape(base), t, re.I)
+    if bm and not any(a <= bm.start() < b for a, b in spans):
+        spans.append(bm.span())
+    op = CompareOp(metric=metric, reference=aid)
+    return op, None, "; ".join(notes) or None, spans, None
+
+
 # ---------------------------------------------------------------- subtitles
 
 # A bare .srt/.ass/.ssa/.vtt mention is handled by asset binding below; the
@@ -1534,10 +1840,10 @@ def _detect_subtitles(t: str, assets: dict):
 
 UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     # speed, rotation, cropping, flips, volume changes, filters, subtitle
-    # dumps and audio extraction are supported (M5–M7) — their detectors run
-    # in parse() before this scan, so only what a detector cannot resolve
-    # (e.g. an out-of-range factor) reaches the user, with its own message
-    (re.compile(r"\bconcat(?:enate)?\b|\bmerge\w*\b|\bstitch\w*\b|\bappend\w*\b", re.I), "concatenation of multiple files"),
+    # dumps, audio extraction and multi-input combines are supported
+    # (M5–M7, M10.3) — their detectors run in parse(), so only what a
+    # detector cannot resolve (e.g. an out-of-range factor) reaches the
+    # user, with its own message
     # 'split the video into 3 parts' — but 'split' as a FILTER
     # ('[0:v]split=2[a][b]') is a filtergraph, not a segment request
     (re.compile(r"\bsplit(?:ting)?\s+(?:the\s+)?(?:video|file|clip|it)\b|\bsplit\s+into\b", re.I), "splitting into segments"),
@@ -1721,6 +2027,20 @@ class RulesAdapter:
                            + "; ".join(problems))
                 break
             tf_ops.append(FilterOp(domain=f["domain"], expr=expr))
+        # M10.3: the combiner claims its verb and bound file before the
+        # other detectors run (the mask keeps 'crossfade the audio over
+        # 2 seconds' from reading as an audio keep/remove or a trim)
+        combine, comb_clar, comb_note, comb_spans, comb_frag = \
+            _detect_combiner(t_det, assets)
+        for s0, s1 in comb_spans:
+            t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
+        # M10.4: the comparison claims its verb, metric and reference file
+        # the same way (the mask keeps 'compare ... and trim 5s' honest —
+        # the conflict is raised below, not re-read as an audio change)
+        compare, cmp_clar, cmp_note, cmp_spans, cmp_frag = \
+            _detect_compare(t_det, assets)
+        for s0, s1 in cmp_spans:
+            t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
         trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
         crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
         resize, resize_clar = _detect_resize(t_det, exclude=crop_spans)
@@ -1781,6 +2101,30 @@ class RulesAdapter:
         bitrate_is_audio = _bitrate_is_audio(t_det, mode)
         audio_bitrate = _detect_bitrate(t_det, True) if bitrate_is_audio else None
         video_bitrate = _detect_bitrate(t_det, False) if not bitrate_is_audio else None
+        if combine is not None and mode != "video":
+            return ParseResult(
+                status=ParseStatus.UNSUPPORTED,
+                unsupported=[UnsupportedPart(
+                    fragment=(f"combining two inputs with {combine.filter} "
+                              f"into a {mode} output"),
+                    reason=("a multi-input filter needs the main video to stay "
+                            "in the output in the MVP — export a video container "
+                            "(e.g. mp4) instead of an audio-only file or a "
+                            "subtitle dump")),
+                ],
+            )
+        if compare is not None and mode != "video":
+            return ParseResult(
+                status=ParseStatus.UNSUPPORTED,
+                unsupported=[UnsupportedPart(
+                    fragment=(f"comparing the inputs with {compare.metric} "
+                              f"into {'an' if mode[0] in 'aeiou' else 'a'} "
+                              f"{mode} output"),
+                    reason=("a quality comparison is a video analysis — "
+                            "export a video container (e.g. mp4) instead of "
+                            "an audio-only file or a subtitle dump")),
+                ],
+            )
         filters, filtergraph, filter_note, filter_clar, filter_frag = \
             _detect_filters(t_det, media.duration if media else None,
                             pre_seen={o.expr for o in tf_ops})
@@ -1789,7 +2133,8 @@ class RulesAdapter:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
             return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=unsupported)
-        for frag in (tf_frag, crop_frag, speed_frag, rotate_frag, rs_frag, filter_frag):
+        for frag in (tf_frag, crop_frag, speed_frag, rotate_frag, rs_frag,
+                     filter_frag, comb_frag, cmp_frag):
             if frag is not None:
                 unsupported.append(UnsupportedPart(fragment=frag,
                                                    reason="outside the MVP support set"))
@@ -1897,11 +2242,69 @@ class RulesAdapter:
                           "chain — I can't combine it with the other video edits "
                           "in the same request. Should I use only the filtergraph, "
                           "or only the built-in edits?"))
+        # the MVP combines inputs as a standalone edit: a trim would fight
+        # the transition offset, and watermark/audio-replace/subtitles need
+        # the other pad's layout. Transform filters and single-stream video
+        # ops are fine — the planner chains them after the combiner pad
+        combine_conflict = None
+        if combine is not None and (trim is not None or filtergraph is not None
+                                     or watermark is not None
+                                     or audio_replace is not None
+                                     or subtitle is not None):
+            extras = []
+            if trim is not None:
+                extras.append("the trim")
+            if filtergraph is not None:
+                extras.append("the custom filtergraph")
+            if watermark is not None:
+                extras.append("the watermark")
+            if audio_replace is not None:
+                extras.append("the audio replacement")
+            if subtitle is not None:
+                extras.append("the subtitles")
+            combine_conflict = Clarification(
+                question=(f"a multi-input combine is a standalone edit in the MVP — "
+                          f"it can't share the request with "
+                          + " and ".join(extras)
+                          + ". Combine the inputs first, then add the rest in a "
+                            "follow-up?"))
+        # a comparison is an even stricter standalone analysis — it cannot
+        # share the request with ANY other edit (the planner enforces the
+        # same rule for plans built outside the NLU)
+        compare_conflict = None
+        if compare is not None and (trim is not None or filtergraph is not None
+                                     or combine is not None
+                                     or watermark is not None
+                                     or audio_replace is not None
+                                     or subtitle is not None
+                                     or filters):
+            extras = []
+            if trim is not None:
+                extras.append("the trim")
+            if filtergraph is not None:
+                extras.append("the custom filtergraph")
+            if combine is not None:
+                extras.append(f"the multi-input combine ({combine.filter})")
+            if watermark is not None:
+                extras.append("the watermark")
+            if audio_replace is not None:
+                extras.append("the audio replacement")
+            if subtitle is not None:
+                extras.append("the subtitles")
+            if filters:
+                extras.append("the filter edits")
+            compare_conflict = Clarification(
+                question=("a quality comparison is a standalone analysis — "
+                          "it can't share the request with "
+                          + " and ".join(extras)
+                          + ". Compare the clip first, then apply the rest in "
+                            "a follow-up?"))
 
         # 4. explicit clarifications win (focused, one at a time)
         for c in (trim_clar, resize_clar, crop_clar, speed_clar, rotate_clar,
-                  rs_clar, wm_clar, ar_clar, sub_clar, filter_clar, mode_conflict,
-                  graph_conflict, ambiguous):
+                  rs_clar, wm_clar, ar_clar, sub_clar, filter_clar, comb_clar,
+                  cmp_clar, mode_conflict, graph_conflict, combine_conflict,
+                  compare_conflict, ambiguous):
             if c is not None:
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -1926,7 +2329,9 @@ class RulesAdapter:
                 qsv=qsv, codec=codec, container=container, audio_codec=audio_codec,
                 audio_container=audio_container, audio_bitrate=audio_bitrate,
                 video_bitrate=video_bitrate, mode=mode, sub_dump=sub_dump,
-                filters=filters, filtergraph=filtergraph, input_ext=input_ext,
+                filters=filters, filtergraph=filtergraph, combine=combine,
+                compare=compare,
+                input_ext=input_ext,
                 video_codec_options=video_codec_opts,
                 audio_codec_options=audio_codec_opts,
             )
@@ -1961,6 +2366,14 @@ class RulesAdapter:
                 # last among the video ops, so a burned filter runs on the
                 # final dimensions (after resize/crop/rotate/speed)
                 ops.append(subtitle)
+            if combine is not None:
+                # position is cosmetic — the planner builds the combiner
+                # outside the filter chain (as a -filter_complex pad)
+                ops.append(combine)
+            if compare is not None:
+                # position is cosmetic — the planner builds the comparison
+                # graph (reference as pad 1, metric against the null muxer)
+                ops.append(compare)
             if audio_replace is not None:
                 ops.append(audio_replace)
             if audio_resample is not None:
@@ -1998,6 +2411,8 @@ class RulesAdapter:
             notes.append(ar_note)
         if sub_note:
             notes.append(sub_note)
+        if cmp_note:
+            notes.append(cmp_note)
         if lossless_note:
             notes.append(lossless_note)
         if filter_note:
@@ -2009,6 +2424,7 @@ class RulesAdapter:
         if previous_plan is None:
             if trim is None and resize is None and crop is None and speed is None \
                     and rotate is None and audio_resample is None and watermark is None \
+                    and combine is None and compare is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
                     and audio != "remove" and audio_replace is None and subtitle is None \
@@ -2209,7 +2625,9 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
                     audio_resample=None, subtitle=None, gpu=None, qsv=None, codec=None,
                     container=None, audio_codec=None, audio_container=None,
                     audio_bitrate=None, video_bitrate=None, mode=None,
-                    sub_dump=None, filters=None, filtergraph=None, input_ext=None,
+                    sub_dump=None, filters=None, filtergraph=None, combine=None,
+                    compare=None,
+                    input_ext=None,
                     video_codec_options=None, audio_codec_options=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
@@ -2499,6 +2917,20 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
             and plan.filtergraph != filtergraph:
         plan.filtergraph = filtergraph
         changed.append("filtergraph updated")
+    if combine is not None and plan.output.mode == "video":
+        prev_combine = next((o for o in plan.operations if o.type == "combine"),
+                            None)
+        if prev_combine != combine:
+            plan.operations = [o for o in plan.operations if o.type != "combine"]
+            plan.operations.append(combine)
+            changed.append(f"combine updated ({combine.filter})")
+    if compare is not None and plan.output.mode == "video":
+        prev_cmp = next((o for o in plan.operations if o.type == "compare"),
+                        None)
+        if prev_cmp != compare:
+            plan.operations = [o for o in plan.operations if o.type != "compare"]
+            plan.operations.append(compare)
+            changed.append(f"comparison updated ({compare.metric})")
 
     # registry-driven format options for the (possibly new) container
     fo = _detect_format_options(t, plan.output.container)

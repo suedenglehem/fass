@@ -332,7 +332,7 @@
   {
     "id": "bench-064",
     "instruction": "Concatenate two clips",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "needs_clarification"}
   },
   {
     "id": "bench-065",

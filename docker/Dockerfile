@@ -27,12 +27,16 @@ WORKDIR /work
 COPY fass/ /work/fass/
 COPY pyproject.toml README.md /work/
 COPY docker/entrypoint.sh /entrypoint.sh
+# M10.4: the base image links libvmaf but ships no model file; the
+# comparison plan's libvmaf metric loads this one (FASS_VMAF_MODEL)
+COPY docker/models/ /opt/vmaf-models/
 RUN chmod +x /entrypoint.sh \
     && python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir ".[api]"
 
 ENV PATH="/opt/venv/bin:$PATH" \
     FASS_CONFIG=/config/config.json \
+    FASS_VMAF_MODEL=/opt/vmaf-models/vmaf_v0.6.1.json \
     FASS_ALLOW_EXECUTE=1 \
     FASS_RUN_DIR=/log/runs \
     FASS_INPUT_DIR=/input \

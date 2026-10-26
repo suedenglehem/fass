@@ -21,7 +21,11 @@ from fass.registry import (
     bsf_errors,
     capability_errors,
     codec_option_errors,
+    comparison_filters,
+    combiner_domain,
+    combiner_filters,
     filter_expr_problems,
+    filter_options_problems,
     filtergraph_problems,
     format_option_errors,
     input_schemes,
@@ -478,10 +482,74 @@ class FilterOp(BaseModel):
         return self
 
 
+class CombinerOp(BaseModel):
+    """Join the main input with additional inputs into one output using a
+    multi-input filter (the registry 'multi_input' table): xfade, acrossfade,
+    concat, hstack, vstack, overlay (video) or amix, amerge, join (audio).
+
+    ``asset_ids`` are the extra inputs, in order — the main input stays
+    first (input pad 0). The planner probes each extra input, builds a
+    labeled -filter_complex graph and maps its outputs explicitly. At most
+    one combiner per plan; it cannot be combined with a watermark, replaced
+    audio, subtitles, a trim or a custom filtergraph (planner)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["combine"] = "combine"
+    filter: str = Field(min_length=1, max_length=64)
+    asset_ids: list[str] = Field(min_length=1, max_length=8)
+    options: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _valid_combiner(self) -> "CombinerOp":
+        if combiner_domain(self.filter) is None:
+            known = ", ".join(sorted(combiner_filters()))
+            raise ValueError(
+                f"'{self.filter}' is not a multi-input filter "
+                f"(supported: {known})")
+        for err in filter_options_problems(self.filter, self.options):
+            raise ValueError(f"combiner options rejected: {err}")
+        return self
+
+
+class CompareOp(BaseModel):
+    """Measure the quality difference between the main input and a
+    reference input with a comparison metric (the registry
+    'needs_reference' table): psnr, ssim or libvmaf.
+
+    ``reference`` is the asset id of the reference clip — it is probed and
+    becomes the second input (pad 1); the main input is pad 0. The planner
+    builds a labeled -filter_complex graph ('[0:v][1:v]psnr[cmp]'-style)
+    that runs against the null muxer: nothing is written to a file, the
+    metric summary lands in the run log (M10.4, diagnostic pattern). At
+    most one comparison per plan; it is a standalone analysis — it cannot
+    be combined with a watermark, replaced audio, subtitles, a trim or a
+    custom filtergraph (planner)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["compare"] = "compare"
+    metric: str = Field(min_length=1, max_length=64)
+    reference: str = Field(min_length=1, max_length=64)
+    options: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _valid_metric(self) -> "CompareOp":
+        if self.metric not in comparison_filters():
+            known = ", ".join(sorted(comparison_filters()))
+            raise ValueError(
+                f"'{self.metric}' is not a comparison metric "
+                f"(supported: {known})")
+        for err in filter_options_problems(self.metric, self.options):
+            raise ValueError(f"comparison options rejected: {err}")
+        return self
+
+
 Operation = Annotated[
     Union[
         ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, SubtitleOp,
-        CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp,
+        CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp, CombinerOp,
+        CompareOp,
     ],
     Field(discriminator="type"),
 ]
@@ -543,7 +611,8 @@ class EditPlan(BaseModel):
     @model_validator(mode="after")
     def _at_most_one_watermark(self) -> "EditPlan":
         for op_type in ("watermark", "audio_replace", "subtitles", "crop",
-                        "speed", "rotate", "audio_resample"):
+                        "speed", "rotate", "audio_resample", "combine",
+                        "compare"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:
                 raise ValueError(f"the MVP supports at most one {op_type} operation")
         return self
@@ -583,6 +652,17 @@ class EditPlan(BaseModel):
             raise ValueError(
                 "a custom filtergraph cannot be combined with a watermark or "
                 "burned subtitles — they own the filter graph; use one or the other"
+            )
+        if any(o.type == "combine" for o in self.operations):
+            raise ValueError(
+                "a custom filtergraph cannot be combined with a multi-input "
+                "filter (combine) — both own the filter graph; use one or the other"
+            )
+        if any(o.type == "compare" for o in self.operations):
+            raise ValueError(
+                "a custom filtergraph cannot be combined with a comparison "
+                "(compare) — the comparison owns the filter graph; use one "
+                "or the other"
             )
         self.filtergraph = g
         return self

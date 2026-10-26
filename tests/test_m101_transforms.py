@@ -234,10 +234,16 @@ def test_min_version_warning_on_old_build():
 
 
 def test_presence_warning_for_absent_filter():
+    # blackdetect_vulkan is the build-optional example: the plain (vulkan)
+    # diagnostic set exists in every build, the _vulkan variant only where
+    # the build links vulkan (absent from the 6.1.1 host). libvmaf cannot
+    # stand in — M10.4 made it a needs_reference comparison metric, and a
+    # bare -vf chain has no reference pad to feed it.
     ff = probe_ffmpeg()
-    if ff is None or "libvmaf" in ff.filters:
-        pytest.skip("libvmaf present in the local build")
-    ep = ep_for(operations=[FilterOp(domain="video", expr="libvmaf")])
+    if ff is None or "blackdetect_vulkan" in ff.filters:
+        pytest.skip("blackdetect_vulkan present in the local build")
+    ep = ep_for(operations=[FilterOp(domain="video",
+                                     expr="blackdetect_vulkan")])
     assert any("not available in the local FFmpeg build" in w
                for w in ep.warnings), ep.warnings
 

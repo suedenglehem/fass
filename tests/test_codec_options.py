@@ -6,6 +6,9 @@ exposure. Mirrors the M6 GPU test structure."""
 
 from __future__ import annotations
 
+import re
+import subprocess
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -402,4 +405,19 @@ def test_env_reports_qsv_coders():
     enc = d["encoders"]
     assert enc["video:h264_qsv"]["encoder"] == "h264_qsv"
     assert enc["video:h265_qsv"]["encoder"] == "hevc_qsv"
-    assert enc["video:h264_qsv"]["present"] is True  # 6.1.1 has QSV
+    # presence is build-level registration, not hardware availability: the
+    # dev-host build registers QSV (unusable on tr4 — AMD CPU, no Intel
+    # iGPU) while the 9.0.1 nvidia image is built without QSV — the
+    # endpoint must mirror the build, never assume
+    raw = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True
+    ).stdout
+    raw_enc = {
+        p[1]
+        for line in raw.splitlines()
+        for p in [line.split()]
+        if len(p) >= 2 and p[1] != "="
+        and re.match(r"^[A-Za-z0-9_]+$", p[1])
+    }
+    assert enc["video:h264_qsv"]["present"] is ("h264_qsv" in raw_enc)
+    assert enc["video:h265_qsv"]["present"] is ("hevc_qsv" in raw_enc)
