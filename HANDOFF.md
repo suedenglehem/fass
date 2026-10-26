@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M11.2 IN PROGRESS — §6.1–§6.6, §6.4/§6.5, §9.3, §6.7 all committed (merge 97c0552); commit 6 UI Sources panel + GET /v1/rag endpoint being committed now; RAG tab / Files tab / M11.3 held-out set delegated to workers; ablation next)
+## Current state (2026-10-26, M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) merged; M11.4 IN FLIGHT — held-out dataset merged (5308bd7), ablation harness built + run 1 (4 arms × 91) running in background; Files-tab job running on tr4-secondary; §9.4 warm budgets + determinism PASS)
 **M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
 FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
 aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
@@ -86,55 +86,79 @@ file-by-file; merged --no-ff as **97c0552**; integration recorded via
 ladd (`ladd --json integrate j_3d4505da56 --commit 97c0552…` →
 accepted). **Main suite post-merge: 1147 passed / 1 skipped.**
 
-**In flight: commit 6 — UI Sources panel + config-tab rag block +
-GET /v1/rag status endpoint.** fass/api.py: `GET /v1/rag` →
-{enabled, config: cfg.model_dump(), service} — service null when
-disabled; when enabled, probes `<url>/v1/corpora` (stdlib urllib,
-2 s timeout, optional Bearer auth) → {ok: true, …corpora payload} or
-{ok: false, error} — the endpoint NEVER 5xx's (fail-open, mirrors the
-retrieval stance). tests/test_api.py +3 (disabled default →
-enabled false + service null; enabled + dead port → service.ok false
-+ error; enabled + live → corpora passthrough via mocked urlopen).
-fass/ui.py: collapsible 'Sources' block on the Command tab rendering
-response.evidence (status/corpus badges, retrieval_ms, citation list
-with url#anchor links + component/source badges, warnings);
-config-tab RAG status block (disabled / enabled+reachable /
-enabled+unreachable states + corpus list with (loaded) marks);
-showTab('cfg') → loadRag() hook; node --check gate on the embedded JS.
-**Full main-tree suite: 1147 passed / 1 skipped (115 s).**
+**COMMITTED: commit 6 = bb9bcc0** (UI Sources panel + config-tab rag
+block + `GET /v1/rag` status endpoint — fail-open corpora probe,
+NEVER 5xx; +3 tests; suite 1147 passed / 1 skipped).
 
-**Delegated (user requests 2026-10-26):**
-- **RAG tab → tr4-secondary** (base = commit 6): web-UI tab "RAG" with
-  a query field, "query"/"clear" buttons, scrollable results. New
-  endpoint `POST /v1/rag/query` {query, top_k?} reusing
-  `fass.rag.client.search(resolved_rag(), q)` (media=None,
-  probed_version=None); RAG disabled → 200 {ok: false, error: "RAG
-  disabled — enable with FASS_RAG_ENABLED=1 + FASS_RAG_URL"} (never
-  5xx). Results = header line (corpus + corpus_match + retrieval_ms +
-  evidence_status + warnings) + chunk cards (title as url#anchor link,
-  component_type/name, option_names, score, full text). TestClient
-  tests: disabled → ok false; mocked client → chunks; empty query →
-  422. node --check gate; full suite; commit with Co-Authored-By
-  trailer.
-- **Files tab → after RAG-tab merge** (base = the RAG-tab merge commit;
-  both tabs edit the ui.py tab bar → serialized): web-UI tab "Files" —
-  2 columns for /input and /output with file sizes + dates;
-  right-click context menu with "ffprobe", "mediainfo", "1st frame";
-  result shown in a popup; "1st frame" = extract first frame as JPEG
-  360 px high, width per the first frame's aspect ratio
-  (`-frames:v 1 -vf scale=-2:360`). New endpoints: list dir; run
-  ffprobe/mediainfo (VERIFY mediainfo availability on tr4 before
-  briefing); extract frame + serve it (base64 in popup or under a
-  media path).
-- **M11.3 held-out set authoring → i7** (base = commit 6, DISJOINT
-  scope — new data file + new test file only, explicit allowed_scope):
-  ≥60 paraphrase/jargon queries, 20 ambiguity, 20 unsupported, 10
-  adversarial per the PRD M11.3 section + shape-validation test.
+**INTEGRATED: RAG tab = 15a0baa** (job j_1f86a0ad30, tr4-secondary,
+base bb9bcc0 — job d7651e5, merged --no-ff). `POST /v1/rag/query`
+{query (min 1, not whitespace-only → 422), top_k? ge 1} — disabled →
+200 {ok: false, "RAG disabled — enable with FASS_RAG_ENABLED=1 +
+FASS_RAG_URL", chunks: []}; top_k via cfg.model_copy; search wrapped
+try/except → 200 ok false (the endpoint never 5xx's); success →
+corpus_id/corpus_match/evidence_status/retrieval_ms/warnings/chunks
+pass-through. UI: fifth tab (button appended via .concat('rag') to
+keep the pinned showTab literal), input#rag-q + query/clear,
+#rag-results (70vh scroll), chunk cards (url#anchor link, component
+badge, option_names mini badges, score 3-dec, pre text), all
+server strings esc()'d. +4 tests (disabled / mocked 2-chunk
+passthrough / blank 422 / top_k captured). Worktree suite
+**1151 passed / 1 skipped** = baseline + 4. Diff reviewed
+file-by-file.
 
-Remaining M11.2: commit 9 §9.2 ablation harness (scripts/
-m11_ablation.py, 4 arms vs tr4's local vllm
-vllm-qwen38-27b-dual-max), then §9.4 close-out (live corpus +
-/v1/support doc_refs), M11.3, M11.4.
+**INTEGRATED: §9.2 held-out dataset = 5308bd7** (job j_db1025fa7f,
+i7, base bb9bcc0 — job 026472e). EXACTLY two new files:
+tests/benchmark/ablation_heldout.json — **129 entries**: 79
+paraphrase/jargon (≥60 required; M10.1 transform vocab, fully
+specified expected plans), 20 ambiguity (needs_clarification +
+note), 20 unsupported (closest-supported note), 10 adversarial
+(injection text embedded, benign expectation — the injection must
+change nothing); + tests/test_ablation_heldout.py — 13 shape tests
+(counts, ids abl-NNN in order, entry/expected key allowlists, ops ⊆
+plan.py operation vocabulary DERIVED from the schema, ready↔ops
+consistency, trim shape, no instruction occurs verbatim in
+fass/nlu/rules.py source, adversarial markers + benign status).
+Worktree suite: 1157 passed / 3 skipped + 1 KNOWN ENVIRONMENTAL
+failure (test_rag_benchmark::test_generator_deterministic —
+rag/corpus chunks gitignored, absent in clean worktrees; pre-existing,
+re-confirmed on base; the job touched nothing there).
+
+**IN FLIGHT: Files tab job j_2d6b4287ee (tr4-secondary, base
+15a0baa, scope fass/ui.py + fass/api.py + tests/test_api.py):** tab
+"Files" — two columns /input + /output (resolved via the existing
+fass/execute.py _input_dir/_output_dir: $FASS_INPUT_DIR/$FASS_OUTPUT_DIR
+→ /input|/output fallback → "" when absent), name + size + date rows;
+right-click menu "ffprobe" / "mediainfo" / "1st frame" → modal popup
+(JSON in scrollable <pre>; 1st frame = system ffmpeg `-frames:v 1
+-vf scale=-2:360` JPEG → base64 <img> + WxH caption); new endpoints
+GET /v1/files?dir, GET /v1/files/inspect?dir&file&tool (bare-basename
+guard, 400/404; mediainfo NOT installed on tr4 → 503 "not installed";
+ffprobe reuses the /v1/mediainfo logic), POST /v1/files/frame
+(fail-open ok:false + stderr tail). Monitor bk9j29x5c watching it.
+
+**IN FLIGHT: ablation run 1 (background task baaoxso2x)** —
+scripts/m11_ablation.py, 4 arms (rules / llm / llm+schemas /
+llm+schemas+evidence) × 91 requests.json entries against tr4 vLLM
+qwen3.8-27b fp8 :8091 (shares the endpoint with this session — pace
+~1.5 LLM calls/min). Out: /tmp/ablation-run1/{report.md,report.json},
+log /tmp/ablation-run1.log. Run 2 (held-out 129, the go/no-go set)
+launches after run 1.
+
+**§9.4 BUDGETS (scripts/m11_rag_budgets.py — new, uncommitted, to
+ship with commit 9):** live fass-rag service :8100 (pid 959120,
+started with FASS_RAG_DATA=rag/corpus), n=40 real benchmark queries:
+**retrieval warm p95 = 29 ms (budget ≤300) PASS; evidence body max
+= 4000 ch (budget ≤4000, +263ch fixed wrapper — the budget bounds
+the body per §6.3) PASS; RAG process RSS = 71 MB (≤4 GB) PASS.**
+Evidence: /tmp/rag-budgets/warm.json. **Determinism (the "turn RAG
+off" proof): full 91-entry benchmark through generate(rules) with
+FASS_RAG_ENABLED=1+URL vs unset → 91/91 byte-identical plans
+(excl. the harness's own latency_s wall-clock field, which is the
+only unstable field — verified by a same-env double sweep) PASS.**
+Still open: cold first-query retrieval (needs a service RESTART —
+deferred until run 1 finishes so its evidence arm doesn't lose
+queries), RAG overhead ≤400 ms + overall ≤8 s (from run 1's arm 3
+vs arm 4 latencies).
 
 **M11.1 (COMPLETE, for reference) — part A integrated as 181c1e5**
 (from tr4-secondary job j_7dea91b80b): rag/retrieval.py FTS5 lexical
@@ -192,19 +216,28 @@ suite: 1015 passed / 1 skipped** (990 + 25). dispatch_integrate is
 impossible for failed jobs — the merge commit c27a0d8 records the
 integration; the job's worktree is retained for review.
 
-**Next:** (1) commit 6 (code + 3 /v1/rag tests done, suite 1147/1,
-message `ui: M11.2 — Sources panel + RAG status block (GET /v1/rag)`);
-(2) submit RAG-tab job → tr4-secondary (base = commit 6) and M11.3
-held-out set job → i7 (base = commit 6, disjoint scope); (3) commit 9
-ablation harness (main thread while both workers run); (4) when the
-RAG-tab lands: review, full suite, merge, record integration via ladd,
-then submit the Files-tab job → the free worker. Advisory evidence
-only; registry/builder/argv gate stays sovereign; treat
-evidence_status 'supported' with skepticism per the M11.1 calibration
-note. Then M11.3 evaluation, M11.4 ablation kill criterion; and a later
-parser release for comma-grouped headings (split → component_name,
-re-ingest manuals — the parser 1.3 slot was taken by build-help
-provenance).
+**Next:** (1) run 1 completes → read report.md, sanity-check the
+4-arm table; (2) **commit 9** = scripts/m11_ablation.py +
+tests/test_m11_ablation.py (13 tests) + scripts/m11_rag_budgets.py +
+HANDOFF/PROGRESS — message `bench: M11.4 §9.2 — NLU ablation harness
+(4 arms, metrics, report) + §9.4 budget script` (+ trailer); main
+suite expected ~1165 passed / 1 skipped; (3) when Files-tab job
+j_2d6b4287ee lands → review, worktree suite, merge --no-ff,
+`ladd --json integrate j_2d6b4287ee --commit <hash>`; (4) restart the
+fass-rag service → cold first-query retrieval measurement (budget
+≤1 s); (5) **run 2** = 4 arms × held-out 129 (harness auto-picks up
+tests/benchmark/ablation_heldout.json) → the §9.2 go/no-go: arm 4
+must beat arm 3 by +5 pp parameter accuracy on the paraphrase set
+with no regression elsewhere, else ship arm 3 + static doc_ref
+citations (arm 1 rules stays default either way); (6) M11.4 close-out
+(go/no-go recorded + dual-build battery on media/titan.mp4) + §9.4
+close-out (all budgets PASS + this HANDOFF) + /savework. Standing:
+advisory evidence only — registry/builder/argv gate stays sovereign;
+treat evidence_status 'supported' with skepticism per the M11.1
+calibration note. Later: M11.3 authoring pipeline (draft generator,
+docs↔build diff, ≥3 registry entries); parser release for
+comma-grouped headings (split → component_name, re-ingest manuals —
+the parser 1.3 slot was taken by build-help provenance).
 
 ## Previous state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; M11.0 done; RAG M11.1 in flight at the time)
 **M10.6 — per-category E2E verification battery + docs.** The battery

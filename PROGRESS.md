@@ -29,24 +29,35 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   attempt 1 crashed exit 0 (report-schema rejection), attempt 2
   succeeded; worktree suite 1132/3 skipped + 1 environmental benchmark
   failure (gitignored corpus chunks absent in clean worktrees); merged
-  --no-ff as 97c0552, integration accepted via ladd). **M11.2 commit 6
-  — UI Sources panel + config-tab rag block + GET /v1/rag status
-  endpoint — in flight (about to be committed; 3 new /v1/rag
-  TestClient tests; main suite 1147 passed / 1 skipped).**
-  **Delegated (user requests 2026-10-26):** RAG tab (tr4-secondary,
-  base commit 6 — web-UI tab "RAG": query field, query/clear buttons,
-  scrollable chunk results; new endpoint POST /v1/rag/query reusing
-  fass.rag.client.search; disabled → 200 {ok:false, error}); Files
-  tab (AFTER the RAG-tab merge, base = that merge commit — 2 columns
-  /input + /output with sizes + dates, right-click menu: ffprobe /
-  mediainfo / 1st frame, result in popup, 1st frame = JPEG 360 px high
-  at first-frame aspect ratio); M11.3 held-out set authoring (i7, base
-  commit 6, disjoint scope — new data file + new test file: ≥60
-  paraphrase/jargon, 20 ambiguity, 20 unsupported, 10 adversarial).
-  **Next: commit 6, submit both worker jobs, commit 9 §9.2 ablation
-  harness (scripts/m11_ablation.py vs tr4's vllm
-  vllm-qwen38-27b-dual-max) on the main thread, Files-tab job after
-  the RAG-tab merge, then §9.4 close-out.**
+  --no-ff as 97c0552, integration accepted via ladd). **M11.2 commit 6 — UI Sources panel
+  + config-tab rag block + GET /v1/rag status — COMMITTED as
+  bb9bcc0** (suite 1147 passed / 1 skipped).
+  **Delegated (user requests 2026-10-26) — status 2026-10-26:** RAG
+  tab (tr4-secondary, j_1f86a0ad30) — INTEGRATED as 15a0baa (POST
+  /v1/rag/query + web-UI tab, 4 new TestClient tests, worktree suite
+  1151/1); M11.4 held-out set (i7, j_db1025fa7f) — INTEGRATED as
+  5308bd7 (tests/benchmark/ablation_heldout.json: 79 paraphrase + 20
+  ambiguity + 20 unsupported + 10 adversarial; 13 shape tests derived
+  from fass/schema/plan.py + held-out property vs fass/nlu/rules.py);
+  Files tab (j_2d6b4287ee) — RUNNING on tr4-secondary, base 15a0baa
+  (2 columns /input + /output, right-click ffprobe/mediainfo/1st
+  frame → popup; mediainfo 503 — not installed on tr4; monitor
+  bk9j29x5c). **M11.4 §9.2 ablation harness** built on main
+  (scripts/m11_ablation.py + tests/test_m11_ablation.py, uncommitted —
+  commit 9): 4 arms × 91 benchmark requests vs tr4 vllm
+  vllm-qwen38-27b-dual-max :8091; run 1 in background (~1.5 LLM
+  calls/min — shared with my own session; out /tmp/ablation-run1).
+  **§9.4 budgets (offline ones DONE):** warm retrieval p95 29 ms
+  (≤300), evidence body max 4000 ch + 263 ch wrapper (≤4000), RAG RSS
+  71 MB (≤4096) — scripts/m11_rag_budgets.py, /tmp/rag-budgets/warm.json;
+  determinism: rules plans byte-identical with RAG on vs off, 91/91
+  (rules path never calls RAG — pipeline.py llm-adapter-only hook).
+  **Next: ablation run 1 report → commit 9 (harness + budgets script +
+  HANDOFF/PROGRESS, suite ~1177/1 expected) → Files-tab merge + ladd
+  integrate → rag service restart → cold retrieval (≤1 s) → run 2
+  (4 arms × held-out 129) = §9.2 go/no-go (+5 pp arm 4 > arm 3 on
+  paraphrase set, no regression, else ship arm 3 + static doc_ref) →
+  M11.4 + §9.4 close-out + /savework.**
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):
