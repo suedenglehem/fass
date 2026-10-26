@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) + **Files tab (38ce046, from j_2d6b4287ee: /v1/files, /v1/files/inspect ffprobe|mediainfo, /v1/files/frame 360px JPEG, right-click menu + popup)** merged; main suite 1187/1. M11.4 IN FLIGHT — ablation run 1 (4 arms × 91, pid 1186350) running in background, then run 2 (held-out 129) for the §9.2 go/no-go. M11.3 STARTED — rag/author + rag/gaps implementation delegated to i7 (fixtures committed; I run the real-corpus drafts + registry merge myself). §9.4 warm budgets + determinism PASS; cold first-query budget still owed after both runs (rag restart then).)
+## Current state (2026-10-26, **M11.3 COMPLETE** — rag/author + rag/gaps integrated (d47f96e, job j_5c845355c5), parser rounds 1+2 on real-corpus findings (10b1fe5, 0116554), 3 real-corpus drafts verified_both / 0 option_diffs merged to **registry 2.6.0** (b122e36: ebur128 audio + signalstats + blackframe video); main suite **1209 passed / 1 skipped**. M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) + **Files tab (38ce046, from j_2d6b4287ee: /v1/files, /v1/files/inspect ffprobe|mediainfo, /v1/files/frame 360px JPEG, right-click menu + popup)** merged. M11.4 IN FLIGHT — ablation run 1 = **880 arms (220 entries × 4 arms, requests.json 91 + ablation_heldout.json 129 in ONE run — a separate run 2 was absorbed)**, pid 1186350 in background (waiter b7icgf4vl), 475/880 at 22:02, ETA ~00:45 CET. §9.4 warm budgets + determinism PASS; cold first-query budget owed after run 1 (rag restart then).)
 **M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
 FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
 aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
@@ -123,8 +123,8 @@ failure (test_rag_benchmark::test_generator_deterministic —
 rag/corpus chunks gitignored, absent in clean worktrees; pre-existing,
 re-confirmed on base; the job touched nothing there).
 
-**IN FLIGHT: Files tab job j_2d6b4287ee (tr4-secondary, base
-15a0baa, scope fass/ui.py + fass/api.py + tests/test_api.py):** tab
+**MERGED 38ce046: Files tab (job j_2d6b4287ee, tr4-secondary, base
+15a0baa, merged --no-ff, integration recorded; suite 1187/1).** tab
 "Files" — two columns /input + /output (resolved via the existing
 fass/execute.py _input_dir/_output_dir: $FASS_INPUT_DIR/$FASS_OUTPUT_DIR
 → /input|/output fallback → "" when absent), name + size + date rows;
@@ -134,15 +134,21 @@ right-click menu "ffprobe" / "mediainfo" / "1st frame" → modal popup
 GET /v1/files?dir, GET /v1/files/inspect?dir&file&tool (bare-basename
 guard, 400/404; mediainfo NOT installed on tr4 → 503 "not installed";
 ffprobe reuses the /v1/mediainfo logic), POST /v1/files/frame
-(fail-open ok:false + stderr tail). Monitor bk9j29x5c watching it.
+(fail-open ok:false + stderr tail).
 
-**IN FLIGHT: ablation run 1 (background task baaoxso2x)** —
-scripts/m11_ablation.py, 4 arms (rules / llm / llm+schemas /
-llm+schemas+evidence) × 91 requests.json entries against tr4 vLLM
+**IN FLIGHT: ablation run 1 (pid 1186350, waiter b7icgf4vl)** —
+scripts/m11_ablation.py (committed 1d543a6), 4 arms (rules / llm /
+llm+schemas / llm+schemas+evidence) × **220 entries = requests.json
+91 + ablation_heldout.json 129, both datasets in ONE run (880 arms;
+the former separate run 2 was absorbed — the §9.2 go/no-go is computed
+from the held-out subset of this report)** against tr4 vLLM
 qwen3.8-27b fp8 :8091 (shares the endpoint with this session — pace
-~1.5 LLM calls/min). Out: /tmp/ablation-run1/{report.md,report.json},
-log /tmp/ablation-run1.log. Run 2 (held-out 129, the go/no-go set)
-launches after run 1.
+~2.5 LLM calls/min). Live progress = line count of
+/tmp/ablation-run1/results.jsonl (475/880 at 22:02; ETA ~00:45 CET).
+Out: /tmp/ablation-run1/{report.md,report.json}, log
+/tmp/ablation-run1.log. Two llm_schemas rows hit the 180 s timeout —
+check whether error rows are cached in results.jsonl; if so, consider
+re-running just those arms after the report.
 
 **§9.4 BUDGETS (scripts/m11_rag_budgets.py — new, uncommitted, to
 ship with commit 9):** live fass-rag service :8100 (pid 959120,
@@ -159,6 +165,51 @@ Still open: cold first-query retrieval (needs a service RESTART —
 deferred until run 1 finishes so its evidence arm doesn't lose
 queries), RAG overhead ≤400 ms + overall ≤8 s (from run 1's arm 3
 vs arm 4 latencies).
+
+**M11.3 (COMPLETE) — authoring pipeline + registry 2.6.0 (b122e36).**
+Integrated d47f96e (job j_5c845355c5): rag/author.py (docs
+section/anchor/options parse in three markup forms, build-facts
+AVOptions parse, docs↔build option diff, classification
+verified_both/present_in/docs_only/undocumented/conflict, draft JSON +
+stdout review report; NEVER writes registry.json — test-enforced) +
+rag/gaps.py (coverage, ranked backlog, drift vs build-facts, demand
+JSONL clusters). Fixtures adb8c60/f13ae07 (ebur128/signalstats/
+blackframe, verbatim real corpus, nested-dl / grouped-dt / prose edge
+cases). Parser round 1 (10b1fe5): grouped <dt>s share one <dd>;
+alias-group <dt> ("color, c") splits on comma; prose form (c)
+"accepts the following parameters" (best-effort + PROSE review note);
+marker-without-<dl> guard; registry-kind↔build-type compat map in
+gaps. Parser round 2 (0116554): build-facts = union of EVERY
+`AVOptions:` block (alias-joined headers acompressor/sidechaincompress,
+shared-class (h|v)stack, shared component framesync) + comma-group
+section headings ("setpts, asetpts") register every listed name
+(heading_names in author find_section + gaps corpus_sections) +
+number↔duration type compat. Real-corpus drafts: all three
+verified_both, 0 option_diffs, cross-checked against build ground
+truth (captures identical across 6.1.1/9.0.1 except the 9.0.1
+"Exiting with exit code 0" footer). Registry 2.6.0 (b122e36) —
+surgical line insertion (the file is HAND-FORMATTED, never
+json.dumps-re-serialize; a round-trip gives an 8229-line diff): audio
+ebur128 (6 read-only log exports integrated/range/lra_low/lra_high/
+sample_peak/true_peak excluded from options) + video signalstats +
+video blackframe, each description/options/diagnostic + doc_ref/
+aliases/provenance as the LAST THREE KEYS (test-enforced order);
+ebur128 framelog default omitted (docs say info, build says -1);
+test count bumps (90 filters; 53 video / 37 audio; version 2.6.0).
+Suite **1209 passed / 1 skipped**. Gaps re-run: 90 registry filters,
+pilot drift [], all pilot names resolved (9.0.1 unresolved=[];
+6.1.1 unresolved=[blackdetect_vulkan] — genuine: the 6.1.1 manual
+predates the "blackdetect, blackdetect_vulkan" comma group); 31
+remaining drift rows are GENUINE registry data-quality findings
+(acompressor legacy kratio/level/rms vs 6.1.x knee/level_in/detection,
+freezedetect/silencedetect n/noise string-vs-<double>,
+adynamicequalizer 9.0.1 renames auto/mode/direction, anullsrc
+r/sample_rate string-vs-int on 9.0.1, libvmaf 9.0.1 cpuid/log_format
+removed + pool bool-vs-string, overlay.alpha 9.0.1 default
+auto-vs-straight) — documented in the report, not yet fixed.
+Backlog 496 (includes non-filter section headings like "Filtergraph
+syntax" — known cosmetic limitation). drafts/ + gaps/ are untracked
+review artifacts (reproducible via rag.author / rag.gaps).
 
 **M11.1 (COMPLETE, for reference) — part A integrated as 181c1e5**
 (from tr4-secondary job j_7dea91b80b): rag/retrieval.py FTS5 lexical
@@ -216,28 +267,33 @@ suite: 1015 passed / 1 skipped** (990 + 25). dispatch_integrate is
 impossible for failed jobs — the merge commit c27a0d8 records the
 integration; the job's worktree is retained for review.
 
-**Next:** (1) run 1 completes → read report.md, sanity-check the
-4-arm table; (2) **commit 9** = scripts/m11_ablation.py +
-tests/test_m11_ablation.py (13 tests) + scripts/m11_rag_budgets.py +
-HANDOFF/PROGRESS — message `bench: M11.4 §9.2 — NLU ablation harness
-(4 arms, metrics, report) + §9.4 budget script` (+ trailer); main
-suite expected ~1165 passed / 1 skipped; (3) when Files-tab job
-j_2d6b4287ee lands → review, worktree suite, merge --no-ff,
-`ladd --json integrate j_2d6b4287ee --commit <hash>`; (4) restart the
-fass-rag service → cold first-query retrieval measurement (budget
-≤1 s); (5) **run 2** = 4 arms × held-out 129 (harness auto-picks up
-tests/benchmark/ablation_heldout.json) → the §9.2 go/no-go: arm 4
-must beat arm 3 by +5 pp parameter accuracy on the paraphrase set
-with no regression elsewhere, else ship arm 3 + static doc_ref
-citations (arm 1 rules stays default either way); (6) M11.4 close-out
-(go/no-go recorded + dual-build battery on media/titan.mp4) + §9.4
-close-out (all budgets PASS + this HANDOFF) + /savework. Standing:
-advisory evidence only — registry/builder/argv gate stays sovereign;
-treat evidence_status 'supported' with skepticism per the M11.1
-calibration note. Later: M11.3 authoring pipeline (draft generator,
-docs↔build diff, ≥3 registry entries); parser release for
-comma-grouped headings (split → component_name, re-ingest manuals —
-the parser 1.3 slot was taken by build-help provenance).
+**Next:** (1) ablation run 1 completes (waiter b7icgf4vl fires when
+pid 1186350 exits) → read /tmp/ablation-run1/report.md + report.json
+(per-dataset tables), sanity-check the 4-arm table; §9.2 go/no-go
+from the HELD-OUT subset: arm 4 (llm+schemas+evidence) must beat arm 3
+by +5 pp parameter accuracy on paraphrase with no regression
+elsewhere, else ship arm 3 + static doc_ref citations (arm 1 rules
+stays default either way); §9.4 from the report: RAG overhead =
+arm 4 − arm 3 (≤400 ms), overall (≤8 s); check the 2 llm_schemas
+180 s timeouts (error rows cached in results.jsonl? re-run just those
+arms if worth it). (2) restart the fass-rag service (kill EXACT pid
+959120 after verifying it's still the rag server — never pkill -f;
+relaunch `FASS_RAG_DATA=rag/corpus nohup .venv/bin/python -m
+rag.server > /tmp/fass-rag-serve.log 2>&1 &`) → cold first-query
+budget `FASS_RAG_ENABLED=1 FASS_RAG_URL=http://127.0.0.1:8100
+.venv/bin/python scripts/m11_rag_budgets.py --cold --n 5 --pid
+<newpid> --out /tmp/rag-budgets/cold.json` (≤1000 ms). (3) M11.4
+close-out (go/no-go recorded + dual-build battery on media/titan.mp4)
++ §9.4 close-out (all budgets PASS + this HANDOFF) + /savework.
+Standing: advisory evidence only — registry/builder/argv gate stays
+sovereign; treat evidence_status 'supported' with skepticism per the
+M11.1 calibration note. Later: more M11.3 backlog entries (10
+diagnostic candidates present in both builds: ahistogram,
+aspectralstats, blockdetect, blurdetect, edgedetect, freezeframes,
+histogram, showvolume, thistogram, tinterlace — same author → draft →
+review → surgical-merge cycle); acompressor registry refresh
+(kratio/level/rms → knee/level_in/detection); triage the 31 genuine
+drift findings.
 
 ## Previous state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; M11.0 done; RAG M11.1 in flight at the time)
 **M10.6 — per-category E2E verification battery + docs.** The battery

@@ -51,8 +51,9 @@ def test_registry_has_the_50_new_entries():
         assert name in video, name
     for name in NEW_AUDIO:
         assert name in audio, name
-    # 51 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
-    assert len(video) == 51 and len(audio) == 36
+    # 53 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
+    # + signalstats/blackframe (M11.3 diagnostic pilot); 37 audio: 36 + ebur128
+    assert len(video) == 53 and len(audio) == 37
     # All nine combiners (M10.0: xfade/vstack/overlay/acrossfade/amerge/
     # amix/join; M10.3: concat/hstack) carry the multi_input marker.
     for name in ("concat", "hstack", "xfade", "vstack", "overlay",

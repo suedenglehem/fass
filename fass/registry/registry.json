@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.5.0",
+  "registry_version": "2.6.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -2408,6 +2408,109 @@
         "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#yadif_005fcuda", "anchor": "yadif_005fcuda", "title": "CUDA Video Filters > yadif_cuda"},
         "aliases": ["deinterlace on the gpu", "gpu deinterlace", "cuda deinterlace"],
         "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
+      },
+      "signalstats": {
+        "description": "Compute per-frame video signal statistics: Y/U/V min/avg/max, broadcast-range compliance, temporal outliers (diagnostic). 'signalstats=stat=brng' highlights out-of-range pixels.",
+        "options": {
+          "stat": {
+            "kind": "flagset",
+            "values": [
+              "tout",
+              "vrep",
+              "brng"
+            ],
+            "description": "set statistics filters; can be cumulated (default 0)"
+          },
+          "out": {
+            "kind": "choice",
+            "values": [
+              "tout",
+              "vrep",
+              "brng"
+            ],
+            "description": "output video with the specified type of pixel highlight; -1 disables (default -1)"
+          },
+          "color": {
+            "kind": "string",
+            "description": "set the highlight color (default yellow)"
+          },
+          "c": {
+            "kind": "string",
+            "description": "set the highlight color, alias of color (default yellow)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#signalstats-1",
+          "anchor": "signalstats-1",
+          "title": "Video Filters > signalstats"
+        },
+        "aliases": [
+          "signal statistics",
+          "video statistics",
+          "pixel statistics",
+          "broadcast range",
+          "broadcast range check"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "blackframe": {
+        "description": "Detect sequences of black frames: prints the ranges of frames where the percentage of pixels below the threshold exceeds the amount (diagnostic).",
+        "options": {
+          "amount": {
+            "kind": "int",
+            "range": [
+              0,
+              100
+            ],
+            "description": "the percentage of the pixels that have to be below the threshold (default 98)"
+          },
+          "threshold": {
+            "kind": "int",
+            "range": [
+              0,
+              255
+            ],
+            "description": "the threshold below which a pixel value is considered black (default 32)"
+          },
+          "thresh": {
+            "kind": "int",
+            "range": [
+              0,
+              255
+            ],
+            "description": "alias of threshold (default 32)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#blackframe",
+          "anchor": "blackframe",
+          "title": "Video Filters > blackframe"
+        },
+        "aliases": [
+          "black frames",
+          "detect black frames",
+          "find black screens",
+          "black frame detection"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
       }
     },
     "audio": {
@@ -3805,6 +3908,104 @@
         "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-37", "anchor": "Examples-37", "title": "Audio Filters > volumedetect > Examples"},
         "aliases": ["detect the volume", "volume levels", "how loud", "peak volume", "max volume"],
         "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
+      },
+      "ebur128": {
+        "description": "EBU R128 loudness measurement (diagnostic): prints momentary, short-term and integrated loudness (LUFS), loudness range (LRA) and true peak to the log. Exports integrated, range, lra_low, lra_high, sample_peak and true_peak as read-only log metrics.",
+        "options": {
+          "target": {
+            "kind": "number",
+            "range": [
+              -23,
+              0
+            ],
+            "description": "set a specific target level in LUFS used as relative zero (default -23)"
+          },
+          "meter": {
+            "kind": "number",
+            "range": [
+              9,
+              18
+            ],
+            "description": "set the EBU scale meter (default 9)"
+          },
+          "gauge": {
+            "kind": "choice",
+            "values": [
+              "momentary",
+              "shortterm"
+            ],
+            "description": "set the value displayed by the gauge (default momentary)"
+          },
+          "scale": {
+            "kind": "choice",
+            "values": [
+              "absolute",
+              "relative"
+            ],
+            "description": "sets the display scale for the loudness (default absolute)"
+          },
+          "video": {
+            "kind": "bool",
+            "description": "activate the video output (default false)"
+          },
+          "size": {
+            "kind": "string",
+            "description": "set the video size (default 640x480)"
+          },
+          "metadata": {
+            "kind": "bool",
+            "description": "inject metadata in the filtergraph (default false)"
+          },
+          "dualmono": {
+            "kind": "bool",
+            "description": "treat mono input files as dual-mono (default false)"
+          },
+          "panlaw": {
+            "kind": "number",
+            "range": [
+              -10,
+              0
+            ],
+            "description": "set a specific pan law for dual-mono files (default -3.0103)"
+          },
+          "peak": {
+            "kind": "flagset",
+            "values": [
+              "none",
+              "sample",
+              "true"
+            ],
+            "description": "set peak mode(s); can be cumulated (default 0)"
+          },
+          "framelog": {
+            "kind": "int",
+            "description": "force the frame logging level (quiet -8, info 32, verbose 40)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#ebur128-1",
+          "anchor": "ebur128-1",
+          "title": "Audio Filters > ebur128"
+        },
+        "aliases": [
+          "loudness",
+          "ebu r128",
+          "ebur 128",
+          "loudness measurement",
+          "integrated loudness",
+          "true peak",
+          "lufs"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
       }
     }
   },

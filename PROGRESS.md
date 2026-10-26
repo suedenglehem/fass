@@ -47,27 +47,46 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   **M11.4 §9.2 ablation harness — COMMITTED as 1d543a6 (commit 9):**
   scripts/m11_ablation.py + tests/test_m11_ablation.py +
   scripts/m11_rag_budgets.py + HANDOFF/PROGRESS; suite 1177/1 at
-  commit. 4 arms × 91 benchmark requests vs tr4 vllm
-  vllm-qwen38-27b-dual-max :8091; run 1 in background (pid 1186350,
-  out /tmp/ablation-run1, live progress = results.jsonl line count;
-  waiter task b7icgf4vl). **§9.4 budgets (offline ones DONE):** warm
+  commit. 4 arms × **220 entries (requests.json 91 + ablation_heldout.json
+  129, both datasets in ONE run — 880 arms; the former separate run 2
+  was absorbed, the §9.2 go/no-go is computed from the held-out subset
+  of run 1's report)** vs tr4 vllm vllm-qwen38-27b-dual-max :8091;
+  run 1 in background (pid 1186350, out /tmp/ablation-run1, live
+  progress = results.jsonl line count — 475/880 at 22:02, ETA ~00:45
+  CET; waiter task b7icgf4vl). **§9.4 budgets (offline ones DONE):** warm
   retrieval p95 29 ms (≤300), evidence body max 4000 ch + 263 ch
   wrapper (≤4000), RAG RSS 71 MB (≤4096) — scripts/m11_rag_budgets.py,
   /tmp/rag-budgets/warm.json; determinism: rules plans byte-identical
   with RAG on vs off, 91/91 (rules path never calls RAG —
-  pipeline.py llm-adapter-only hook). **M11.3 STARTED (2026-10-26):**
-  ebur128 fixture committed (tests/fixtures/rag_author/, trimmed real
-  corpus sections + build-facts, both corpora); rag/author + rag/gaps
-  implementation delegated to i7 (worker has no corpus — fixture-based
-  tests only; I run the real-corpus drafts + registry merge myself).
-  **Next: run 1 report (4-arm table + RAG-overhead/overall latencies)
-  → run 2 (4 arms × held-out 129, auto-picks
-  tests/benchmark/ablation_heldout.json) = §9.2 go/no-go (+5 pp arm 4 >
-  arm 3 on paraphrase set, no regression, else ship arm 3 + static
-  doc_ref) → integrate M11.3 job → real-corpus drafts for
-  ebur128/signalstats/blackframe → review + manual registry merge
-  (bump registry_version) → rag service restart → cold retrieval
-  (≤1 s) → M11.4 + §9.4 close-out + /savework.**
+  pipeline.py llm-adapter-only hook). **M11.3 COMPLETE (2026-10-26):** fixtures
+  adb8c60/f13ae07 (ebur128/signalstats/blackframe, verbatim real
+  corpus, edge cases); rag/author + rag/gaps integrated as d47f96e
+  (job j_5c845355c5); parser round 1 (10b1fe5: grouped <dt>s,
+  alias-group <dt> comma split, prose form (c), marker-without-<dl>
+  guard, kind↔type compat map) + round 2 (0116554: build-facts union
+  of ALL `AVOptions:` blocks — alias headers
+  acompressor/sidechaincompress, shared class (h|v)stack, shared
+  component framesync; comma-group section headings register every
+  listed name; number↔duration compat); 3 real-corpus drafts all
+  verified_both / 0 option_diffs → **registry 2.6.0 committed as
+  b122e36** (audio ebur128 + video signalstats + video blackframe,
+  surgical line insertion — hand-formatted file, never re-serialize;
+  6 read-only ebur128 log exports excluded; doc_ref/aliases/provenance
+  as last three keys; test count bumps 90 / 53-37). Suite **1209
+  passed / 1 skipped**. Gaps re-run: pilots resolved, pilot drift [];
+  31 genuine drift rows documented (acompressor legacy options,
+  freezedetect/silencedetect n+noise, adynamicequalizer/anullsrc/
+  libvmaf 9.0.1 changes, overlay.alpha 9.0.1); 6.1.1 unresolved =
+  [blackdetect_vulkan] (genuine — manual predates the comma group).
+  **Next: run 1 report (4-arm table + §9.2 go/no-go from the held-out
+  subset: +5 pp arm 4 > arm 3 on paraphrase, no regression, else ship
+  arm 3 + static doc_ref; §9.4 RAG overhead arm 4 − arm 3 ≤400 ms +
+  overall ≤8 s) → rag service restart (kill EXACT pid 959120 after
+  verifying) → cold retrieval (≤1 s, scripts/m11_rag_budgets.py
+  --cold) → M11.4 + §9.4 close-out (go/no-go + dual-build battery on
+  media/titan.mp4) + /savework. Later: more M11.3 backlog entries
+  (10 diagnostic candidates in both builds), acompressor refresh,
+  31 drift findings triage.**
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):
@@ -782,19 +801,25 @@ and forgotten), #318/#316 (forgotten, same chain).
 ## 8. Pending user decisions + next unfinished task
 
 **Next unfinished task (2026-10-26, current):**
-**M11.2 — fass integration of the RAG advisory layer** (PRD M11.2):
-advisory evidence only — the registry/builder/argv gate stays sovereign.
-Calibration constraints from the M11.1B benchmark (dataset.json notes):
-(1) evidence_status 'supported' is over-claimed for out-of-domain queries
-(bm25 cannot separate them, 0–16 token overlap) — the advisory layer must
-not treat lexical 'supported' as ground truth; the no-fabrication check
-relies on exact_match verifiability; (2) the 21 residual recall8 misses
-are genuine NL lexical gaps (inflection, compounding, common-word
-dilution, sibling-component dominance, synonymy) — no boost rescues them
-without harming precision; M11.2 must tolerate them. After M11.2:
-M11.3 authoring, M11.4 ablation kill criterion; later parser release for
-comma-grouped headings (split → component_name, re-ingest manuals —
-parser 1.3 was taken by build-help provenance).
+**M11.4 close-out** (PRD M11.4) — M11.2 (advisory RAG layer, all 9
+commits, UI tabs) and M11.3 (authoring pipeline rag/author + rag/gaps,
+parser rounds, registry 2.6.0) are COMPLETE on main. Ablation run 1
+(pid 1186350, 880 arms = 4 arms × 220 entries, both datasets) is in
+background (waiter b7icgf4vl; 475/880 at 22:02, ETA ~00:45 CET).
+Standing constraints from M11.1B/M11.2 that the close-out must respect:
+advisory evidence only — the registry/builder/argv gate stays
+sovereign; evidence_status 'supported' is over-claimed for
+out-of-domain queries (bm25 cannot separate them) — the no-fabrication
+check relies on exact_match verifiability; the 21 residual recall8
+misses are genuine NL lexical gaps — tolerated by the advisory layer.
+§9.2 go/no-go from the held-out subset of the run 1 report: +5 pp arm 4
+> arm 3 on paraphrase, no regression, else ship arm 3 + static doc_ref
+citations (arm 1 rules stays default either way). Then: rag service
+restart → cold retrieval budget (≤1 s) → dual-build battery on
+media/titan.mp4 → §9.4 close-out + /savework. Later backlog: more
+M11.3 registry entries (10 diagnostic candidates in both builds),
+acompressor refresh, 31 genuine drift findings triage. (The parser
+release for comma-grouped headings is DONE — 0116554 heading_names.)
 
 **Decisions pending:**
 1. **channelsplit** — defer multi-output export (current plan: in-graph only),
