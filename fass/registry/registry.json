@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.6.0",
+  "registry_version": "2.7.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -2511,6 +2511,579 @@
           ],
           "reviewed": true
         }
+      },
+      "edgedetect": {
+        "description": "Detect and draw edges using the Canny edge detection algorithm (diagnostic).",
+        "options": {
+          "low": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the low Canny threshold, must be <= high (default 0.0784314)"
+          },
+          "high": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set the high Canny threshold (default 0.196078)"
+          },
+          "mode": {
+            "kind": "choice",
+            "values": [
+              "wires",
+              "colormix",
+              "canny"
+            ],
+            "description": "define the drawing mode (default wires)"
+          },
+          "planes": {
+            "kind": "flagset",
+            "values": [
+              "y",
+              "u",
+              "v",
+              "r",
+              "g",
+              "b"
+            ],
+            "description": "select planes for filtering (default y+u+v+r+g+b)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#edgedetect",
+          "anchor": "edgedetect",
+          "title": "Video Filters > edgedetect"
+        },
+        "aliases": [
+          "canny edge detection",
+          "edge detection",
+          "canny edges"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "freezeframes": {
+        "description": "Freeze video frames, replacing the frozen range with a frame from the second input (diagnostic).",
+        "options": {
+          "first": {
+            "kind": "int",
+            "range": [
+              0,
+              9223372036854775807
+            ],
+            "description": "set the number of the first frame from which to start freezing (default 0)"
+          },
+          "last": {
+            "kind": "int",
+            "range": [
+              0,
+              9223372036854775807
+            ],
+            "description": "set the number of the last frame at which to end freezing (default 0)"
+          },
+          "replace": {
+            "kind": "int",
+            "range": [
+              0,
+              9223372036854775807
+            ],
+            "description": "set the frame number from the second input used to replace the frozen frames (default 0)"
+          }
+        },
+        "diagnostic": true,
+        "multi_input": 2,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#freezeframes",
+          "anchor": "freezeframes",
+          "title": "Video Filters > freezeframes"
+        },
+        "aliases": [
+          "freeze frames",
+          "freeze video frame",
+          "freeze frame"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "thistogram": {
+        "description": "Compute and draw a color distribution histogram for the input video across time (diagnostic).",
+        "options": {
+          "width": {
+            "kind": "int",
+            "range": [
+              0,
+              8192
+            ],
+            "description": "set width of single color component output; 0 picks the input width and also sets how many past histograms to keep (default 0)"
+          },
+          "w": {
+            "kind": "int",
+            "range": [
+              0,
+              8192
+            ],
+            "description": "alias of width (default 0)"
+          },
+          "display_mode": {
+            "kind": "choice",
+            "values": [
+              "stack",
+              "parade",
+              "overlay"
+            ],
+            "description": "set display mode (default stack)"
+          },
+          "d": {
+            "kind": "choice",
+            "values": [
+              "stack",
+              "parade",
+              "overlay"
+            ],
+            "description": "alias of display_mode (default stack)"
+          },
+          "levels_mode": {
+            "kind": "choice",
+            "values": [
+              "linear",
+              "logarithmic"
+            ],
+            "description": "set mode, linear or logarithmic (default linear)"
+          },
+          "m": {
+            "kind": "choice",
+            "values": [
+              "linear",
+              "logarithmic"
+            ],
+            "description": "alias of levels_mode (default linear)"
+          },
+          "components": {
+            "kind": "int",
+            "range": [
+              1,
+              15
+            ],
+            "description": "set what color components to display (default 7)"
+          },
+          "c": {
+            "kind": "int",
+            "range": [
+              1,
+              15
+            ],
+            "description": "alias of components (default 7)"
+          },
+          "bgopacity": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set background opacity (default 0.9)"
+          },
+          "b": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "alias of bgopacity (default 0.9)"
+          },
+          "envelope": {
+            "kind": "bool",
+            "description": "show envelope (default false)"
+          },
+          "e": {
+            "kind": "bool",
+            "description": "alias of envelope (default false)"
+          },
+          "ecolor": {
+            "kind": "string",
+            "description": "set envelope color (default gold)"
+          },
+          "ec": {
+            "kind": "string",
+            "description": "alias of ecolor (default gold)"
+          },
+          "slide": {
+            "kind": "choice",
+            "values": [
+              "frame",
+              "replace",
+              "scroll",
+              "rscroll",
+              "picture"
+            ],
+            "description": "set slide mode (default replace)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#thistogram",
+          "anchor": "thistogram",
+          "title": "Video Filters > thistogram"
+        },
+        "aliases": [
+          "temporal histogram",
+          "time histogram",
+          "histogram over time"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "histogram": {
+        "description": "Compute and display a color histogram of the video: foreground/background histograms over the pixel value range with an optional color scale (diagnostic).",
+        "options": {
+          "level_height": {
+            "kind": "int",
+            "range": [
+              50,
+              2048
+            ],
+            "description": "set level height (default 200)"
+          },
+          "scale_height": {
+            "kind": "int",
+            "range": [
+              0,
+              40
+            ],
+            "description": "set scale height (default 12)"
+          },
+          "display_mode": {
+            "kind": "choice",
+            "values": [
+              "overlay",
+              "parade",
+              "stack"
+            ],
+            "description": "set display mode (default stack)"
+          },
+          "d": {
+            "kind": "choice",
+            "values": [
+              "overlay",
+              "parade",
+              "stack"
+            ],
+            "description": "alias of display_mode (default stack)"
+          },
+          "levels_mode": {
+            "kind": "choice",
+            "values": [
+              "linear",
+              "logarithmic"
+            ],
+            "description": "set levels mode (default linear)"
+          },
+          "m": {
+            "kind": "choice",
+            "values": [
+              "linear",
+              "logarithmic"
+            ],
+            "description": "alias of levels_mode (default linear)"
+          },
+          "components": {
+            "kind": "int",
+            "range": [
+              1,
+              15
+            ],
+            "description": "set color components to display (default 7)"
+          },
+          "c": {
+            "kind": "int",
+            "range": [
+              1,
+              15
+            ],
+            "description": "alias of components (default 7)"
+          },
+          "fgopacity": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set foreground opacity (default 0.7)"
+          },
+          "f": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "alias of fgopacity (default 0.7)"
+          },
+          "bgopacity": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set background opacity (default 0.5)"
+          },
+          "b": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "alias of bgopacity (default 0.5)"
+          },
+          "colors_mode": {
+            "kind": "choice",
+            "values": [
+              "whiteonblack",
+              "blackonwhite",
+              "whiteongray",
+              "blackongray",
+              "coloronblack",
+              "coloronwhite",
+              "colorongray",
+              "blackoncolor",
+              "whiteoncolor",
+              "grayoncolor"
+            ],
+            "description": "set colors mode (default whiteonblack)"
+          },
+          "l": {
+            "kind": "choice",
+            "values": [
+              "whiteonblack",
+              "blackonwhite",
+              "whiteongray",
+              "blackongray",
+              "coloronblack",
+              "coloronwhite",
+              "colorongray",
+              "blackoncolor",
+              "whiteoncolor",
+              "grayoncolor"
+            ],
+            "description": "alias of colors_mode (default whiteonblack)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#histogram",
+          "anchor": "histogram",
+          "title": "Video Filters > histogram"
+        },
+        "aliases": [
+          "color histogram",
+          "pixel histogram",
+          "video histogram",
+          "histogram of the video"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "blockdetect": {
+        "description": "Detect block-like artifacts: searches for periodic pixel grids between period_min and period_max and logs the detected periods (diagnostic).",
+        "options": {
+          "period_min": {
+            "kind": "int",
+            "range": [
+              2,
+              32
+            ],
+            "description": "minimum period to search for (default 3)"
+          },
+          "period_max": {
+            "kind": "int",
+            "range": [
+              2,
+              64
+            ],
+            "description": "maximum period to search for (default 24)"
+          },
+          "planes": {
+            "kind": "int",
+            "range": [
+              0,
+              15
+            ],
+            "description": "set planes to filter, docs 'first only' = first plane (default 1)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#blockdetect",
+          "anchor": "blockdetect",
+          "title": "Video Filters > blockdetect"
+        },
+        "aliases": [
+          "block detection",
+          "block artifacts",
+          "detect blockiness",
+          "detect block artifacts"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "blurdetect": {
+        "description": "Detect blurriness: Canny-thresholds edges (low/high) and measures local-maxima density with block-based pooling (diagnostic).",
+        "options": {
+          "high": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set high threshold (default 0.117647)"
+          },
+          "low": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set low threshold (default 0.0588235)"
+          },
+          "radius": {
+            "kind": "int",
+            "range": [
+              1,
+              100
+            ],
+            "description": "search radius for maxima detection (default 50)"
+          },
+          "block_pct": {
+            "kind": "int",
+            "range": [
+              1,
+              100
+            ],
+            "description": "block pooling threshold when calculating blurriness (default 80)"
+          },
+          "block_width": {
+            "kind": "int",
+            "range": [
+              -1,
+              2147483647
+            ],
+            "description": "block size for block-based abbreviation of blurriness (default -1)"
+          },
+          "block_height": {
+            "kind": "int",
+            "range": [
+              -1,
+              2147483647
+            ],
+            "description": "block size for block-based abbreviation of blurriness (default -1)"
+          },
+          "planes": {
+            "kind": "int",
+            "range": [
+              0,
+              15
+            ],
+            "description": "set planes to filter, docs 'first only' = first plane (default 1)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#blurdetect",
+          "anchor": "blurdetect",
+          "title": "Video Filters > blurdetect"
+        },
+        "aliases": [
+          "blur detection",
+          "detect blur",
+          "blurriness",
+          "blur metric"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "tinterlace": {
+        "description": "Interlace or de-interlace: combine or separate the top and bottom fields (merge, drop, pad or interleave).",
+        "options": {
+          "mode": {
+            "kind": "choice",
+            "values": [
+              "merge",
+              "drop_even",
+              "drop_odd",
+              "pad",
+              "interleave_top",
+              "interleave_bottom",
+              "interlacex2",
+              "mergex2"
+            ],
+            "description": "select interlace mode (default merge)"
+          }
+        },
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#tinterlace",
+          "anchor": "tinterlace",
+          "title": "Video Filters > tinterlace"
+        },
+        "aliases": [
+          "interlacing",
+          "interlace fields",
+          "merge fields",
+          "interleave fields"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
       }
     },
     "audio": {
@@ -2531,84 +3104,125 @@
       "apad": { "description": "pad with silence: 'apad=pad_dur=2'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-15", "anchor": "Examples-15", "title": "Audio Filters > apad > Examples"}, "aliases": ["pad the audio", "apad", "pad with silence", "extend with silence"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "atrim": { "description": "trim audio: 'atrim=start=5:end=20'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#atrim", "anchor": "atrim", "title": "Audio Filters > atrim"}, "aliases": ["trim the audio", "audio trim", "cut the audio from"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "acompressor": {
-        "description": "Audio compressor: 'acompressor=level=3:ratio=8' (present in both tested builds).",
+        "description": "Audio compressor: reduce the dynamic range of a signal (audio).",
         "options": {
-          "level": {
+          "level_in": {
             "kind": "number",
             "range": [
-              0,
-              100
+              0.015625,
+              64
             ],
-            "description": "level of compression in dB <double> default 1"
+            "description": "set input gain (default 1)"
           },
-          "attack": {
-            "kind": "number",
-            "range": [
-              0,
-              3600000
+          "mode": {
+            "kind": "choice",
+            "values": [
+              "downward",
+              "upward"
             ],
-            "description": "attack in ms <double> default 20"
+            "description": "set the mode of compressor operation (default downward)"
           },
-          "release": {
+          "threshold": {
             "kind": "number",
             "range": [
-              0,
-              3600000
-            ],
-            "description": "release in ms <double> default 250"
-          },
-          "makeup": {
-            "kind": "number",
-            "range": [
-              0,
-              100
-            ],
-            "description": "makeup gain in dB <double> default 1"
-          },
-          "knee": {
-            "kind": "number",
-            "range": [
-              0,
-              10
-            ],
-            "description": "hard knee ratio <double> default 3"
-          },
-          "kratio": {
-            "kind": "number",
-            "range": [
-              0,
-              10
-            ],
-            "description": "size of soft knee in dB <double> default 2"
-          },
-          "rms": {
-            "kind": "number",
-            "range": [
-              0,
+              0.000976563,
               1
             ],
-            "description": "window for RMS detection <double> default 0"
+            "description": "set the level above which gain reduction is applied (default 0.125)"
           },
           "ratio": {
             "kind": "number",
             "range": [
               1,
-              100
+              20
             ],
-            "description": "compression ratio <double> default 10"
+            "description": "set the ratio by which the signal is reduced (default 2)"
           },
-          "threshold": {
+          "attack": {
             "kind": "number",
             "range": [
-              -100,
-              0
+              0.01,
+              2000
             ],
-            "description": "compression threshold in dB <double> default 0"
+            "description": "set the milliseconds the signal has to rise above the threshold before gain reduction starts (default 20)"
+          },
+          "release": {
+            "kind": "number",
+            "range": [
+              0.01,
+              9000
+            ],
+            "description": "set the milliseconds the signal has to fall below the threshold before reduction is decreased again (default 250)"
+          },
+          "makeup": {
+            "kind": "number",
+            "range": [
+              1,
+              64
+            ],
+            "description": "set the amount by which the signal is amplified after processing (default 1)"
+          },
+          "knee": {
+            "kind": "number",
+            "range": [
+              1,
+              8
+            ],
+            "description": "curve the sharp knee around the threshold to enter gain reduction more softly (default 2.82843)"
+          },
+          "link": {
+            "kind": "choice",
+            "values": [
+              "average",
+              "maximum"
+            ],
+            "description": "choose whether the average level of all channels or the louder (maximum) channel affects the reduction (default average)"
+          },
+          "detection": {
+            "kind": "choice",
+            "values": [
+              "peak",
+              "rms"
+            ],
+            "description": "set the detection mode, exact signal (peak) or RMS (default rms)"
+          },
+          "level_sc": {
+            "kind": "number",
+            "range": [
+              0.015625,
+              64
+            ],
+            "description": "set sidechain gain (default 1; shared AVOptions block with sidechaincompress, undocumented under acompressor)"
+          },
+          "mix": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set how much of the compressed signal to use in the output (default 1)"
           }
         },
-        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands", "anchor": "Commands", "title": "Audio Filters > acompressor > Commands"},
-        "aliases": ["compress the audio", "compressor", "audio compression", "compress the dynamic range"],
-        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#acompressor",
+          "anchor": "acompressor",
+          "title": "Audio Filters > acompressor"
+        },
+        "aliases": [
+          "compress the audio",
+          "compressor",
+          "audio compression",
+          "compress the dynamic range"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
       },
       "acrossfade": {
         "description": "Cross fade two input audio streams.",
@@ -3996,6 +4610,325 @@
           "integrated loudness",
           "true peak",
           "lufs"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "ahistogram": {
+        "description": "Convert input audio to a video output, displaying the volume histogram (diagnostic).",
+        "options": {
+          "dmode": {
+            "kind": "choice",
+            "values": [
+              "single",
+              "separate"
+            ],
+            "description": "set how the histogram is calculated (default single)"
+          },
+          "rate": {
+            "kind": "string",
+            "description": "set frame rate in frames per second (default 25)"
+          },
+          "r": {
+            "kind": "string",
+            "description": "alias of rate (default 25)"
+          },
+          "size": {
+            "kind": "string",
+            "description": "set the video size for the output (default hd720)"
+          },
+          "s": {
+            "kind": "string",
+            "description": "alias of size (default hd720)"
+          },
+          "scale": {
+            "kind": "choice",
+            "values": [
+              "log",
+              "sqrt",
+              "cbrt",
+              "lin",
+              "rlog"
+            ],
+            "description": "set display scale (default log)"
+          },
+          "ascale": {
+            "kind": "choice",
+            "values": [
+              "log",
+              "lin"
+            ],
+            "description": "set amplitude scale (default log)"
+          },
+          "acount": {
+            "kind": "int",
+            "range": [
+              -1,
+              100
+            ],
+            "description": "set how many frames to accumulate in the histogram, -1 accumulates all (default 1)"
+          },
+          "rheight": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set histogram ratio of window height (default 0.1)"
+          },
+          "slide": {
+            "kind": "choice",
+            "values": [
+              "replace",
+              "scroll"
+            ],
+            "description": "set sonogram sliding (default replace)"
+          },
+          "hmode": {
+            "kind": "choice",
+            "values": [
+              "abs",
+              "sign"
+            ],
+            "description": "set histogram mode (default abs)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#ahistogram",
+          "anchor": "ahistogram",
+          "title": "Audio Filters > ahistogram"
+        },
+        "aliases": [
+          "audio histogram",
+          "volume histogram",
+          "audio level histogram"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "aspectralstats": {
+        "description": "Display frequency domain statistical information about the audio channels, stored as per-channel frame metadata (diagnostic).",
+        "options": {
+          "win_size": {
+            "kind": "int",
+            "range": [
+              32,
+              65536
+            ],
+            "description": "set the window length in samples (default 2048)"
+          },
+          "win_func": {
+            "kind": "choice",
+            "values": [
+              "rect",
+              "bartlett",
+              "hann",
+              "hanning",
+              "hamming",
+              "blackman",
+              "welch",
+              "flattop",
+              "bharris",
+              "bnuttall",
+              "bhann",
+              "sine",
+              "nuttall",
+              "lanczos",
+              "gauss",
+              "tukey",
+              "dolph",
+              "cauchy",
+              "parzen",
+              "poisson",
+              "bohman",
+              "kaiser"
+            ],
+            "description": "set window function (default hann)"
+          },
+          "overlap": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set window overlap (default 0.5)"
+          },
+          "measure": {
+            "kind": "flagset",
+            "values": [
+              "none",
+              "all",
+              "mean",
+              "variance",
+              "centroid",
+              "spread",
+              "skewness",
+              "kurtosis",
+              "entropy",
+              "flatness",
+              "crest",
+              "flux",
+              "slope",
+              "decrease",
+              "rolloff"
+            ],
+            "description": "select the parameters which are measured (default all)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#aspectralstats",
+          "anchor": "aspectralstats",
+          "title": "Audio Filters > aspectralstats"
+        },
+        "aliases": [
+          "spectral statistics",
+          "audio spectrum statistics",
+          "frequency statistics"
+        ],
+        "provenance": {
+          "corpus_id": "ffmpeg-9.0.1",
+          "option_source": "both",
+          "verified_builds": [
+            "6.1.1",
+            "9.0.1"
+          ],
+          "reviewed": true
+        }
+      },
+      "showvolume": {
+        "description": "Convert input audio volume to a video output (diagnostic).",
+        "options": {
+          "rate": {
+            "kind": "string",
+            "description": "set video rate (default 25)"
+          },
+          "r": {
+            "kind": "string",
+            "description": "alias of rate (default 25)"
+          },
+          "b": {
+            "kind": "int",
+            "range": [
+              0,
+              5
+            ],
+            "description": "set border width (default 1)"
+          },
+          "w": {
+            "kind": "int",
+            "range": [
+              80,
+              8192
+            ],
+            "description": "set channel width (default 400)"
+          },
+          "h": {
+            "kind": "int",
+            "range": [
+              1,
+              900
+            ],
+            "description": "set channel height (default 20)"
+          },
+          "f": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set fade (default 0.95)"
+          },
+          "c": {
+            "kind": "string",
+            "description": "set volume color expression; may use VOLUME, PEAK and CHANNEL (default PEAK*255+floor((1-PEAK)*255)*256+0xff000000)"
+          },
+          "t": {
+            "kind": "bool",
+            "description": "if set, displays channel names (default true)"
+          },
+          "v": {
+            "kind": "bool",
+            "description": "if set, displays volume values (default true)"
+          },
+          "dm": {
+            "kind": "number",
+            "range": [
+              0,
+              9000
+            ],
+            "description": "duration in seconds the max value line is shown, 0 disables (default 0)"
+          },
+          "dmc": {
+            "kind": "string",
+            "description": "set color of the max value line (default orange)"
+          },
+          "o": {
+            "kind": "choice",
+            "values": [
+              "h",
+              "v"
+            ],
+            "description": "set orientation, horizontal or vertical (default h)"
+          },
+          "s": {
+            "kind": "int",
+            "range": [
+              0,
+              5
+            ],
+            "description": "set step size, 0 disables stepping (default 0)"
+          },
+          "p": {
+            "kind": "number",
+            "range": [
+              0,
+              1
+            ],
+            "description": "set background opacity (default 0)"
+          },
+          "m": {
+            "kind": "choice",
+            "values": [
+              "p",
+              "r"
+            ],
+            "description": "set metering mode, peak or rms (default p)"
+          },
+          "ds": {
+            "kind": "choice",
+            "values": [
+              "lin",
+              "log"
+            ],
+            "description": "set display scale, linear or log (default lin)"
+          }
+        },
+        "diagnostic": true,
+        "doc_ref": {
+          "url": "https://ffmpeg.org/ffmpeg-filters.html#showvolume",
+          "anchor": "showvolume",
+          "title": "Audio Filters > showvolume"
+        },
+        "aliases": [
+          "volume display",
+          "audio to video volume",
+          "volume visualization"
         ],
         "provenance": {
           "corpus_id": "ffmpeg-9.0.1",

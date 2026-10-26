@@ -173,8 +173,8 @@ def test_chain_order_preserved(gen):
 
 
 def test_argv_carries_the_filter(gen):
-    argv = argv_for(operations=[FilterOp(domain="audio", expr="acompressor=level=3")])
-    assert "-af" in argv and argv[argv.index("-af") + 1] == "acompressor=level=3"
+    argv = argv_for(operations=[FilterOp(domain="audio", expr="acompressor=level_in=3")])
+    assert "-af" in argv and argv[argv.index("-af") + 1] == "acompressor=level_in=3"
     assert execute.validate_argv(argv) == []
 
 
@@ -268,6 +268,6 @@ def test_chain_filter_names():
 def test_acompressor_spelling_is_the_ffmpeg_name():
     # M10.0 shipped 'acompresor' — the probe reported it absent; the real
     # filter name is 'acompressor' (present in both tested builds)
-    assert filter_expr_problems("acompressor=level=3") == []
+    assert filter_expr_problems("acompressor=level_in=3") == []
     ff = probe_ffmpeg()
     assert ff is not None and "acompressor" in ff.filters

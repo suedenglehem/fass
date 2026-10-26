@@ -1,7 +1,7 @@
 """M10.3 combiners: multi-input filters through labeled -filter_complex.
 
 Layers, cheapest first:
-- registry: the nine combiner entries and their option schemas
+- registry: the ten combiner entries and their option schemas
 - schema:   CombinerOp validation inside the Operation union
 - planner:  graph shape, pad labels, stream maps, semantic rejections
   (probes are monkeypatched with fake MediaInfo — argv shape only)
@@ -40,7 +40,9 @@ from tests.conftest import make_media
 ADAPTER = get_adapter("rules")
 
 COMBINERS = {
-    "video": ["xfade", "concat", "hstack", "vstack", "overlay"],
+    # freezeframes (M11.4): a genuine two-input filter — it freezes frames
+    # using a frame from the second input
+    "video": ["xfade", "concat", "hstack", "vstack", "overlay", "freezeframes"],
     "audio": ["acrossfade", "amix", "amerge", "join"],
 }
 
@@ -86,7 +88,9 @@ def _fc(argv):
 
 # ---------------------------------------------------------------- registry
 
-def test_combiner_set_is_nine():
+def test_combiner_set_is_ten():
+    # 9 (M10.0/M10.3) + freezeframes (M11.4) = the registry's full
+    # multi_input set: a filter the planner can build generically
     got = combiner_filters()
     assert sorted(got) == sorted(sum(COMBINERS.values(), []))
     assert all("multi_input" in spec for spec in got.values())
@@ -94,7 +98,7 @@ def test_combiner_set_is_nine():
 
 def test_combiner_exact_two_inputs():
     specs = filter_specs()
-    for name in ("xfade", "acrossfade", "overlay"):
+    for name in ("xfade", "acrossfade", "overlay", "freezeframes"):
         assert specs[name]["multi_input"] == 2
     for name in ("concat", "hstack", "vstack", "amix", "amerge", "join"):
         assert specs[name]["multi_input"] == 0  # variadic: 0 = "at least 2"

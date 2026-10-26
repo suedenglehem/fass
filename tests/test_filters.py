@@ -38,6 +38,9 @@ NEW_VIDEO = [
 DIAGNOSTIC = [
     "bbox", "blackdetect", "cropdetect", "freezedetect", "idet", "showinfo",
     "ashowinfo", "astats", "silencedetect", "volumedetect",
+    # M11.4 review merge
+    "edgedetect", "freezeframes", "thistogram", "histogram", "blockdetect",
+    "blurdetect", "ahistogram", "aspectralstats", "showvolume",
 ]
 KINDS = {"choice", "number", "int", "rational", "bool", "flagset", "string"}
 
@@ -51,13 +54,17 @@ def test_registry_has_the_50_new_entries():
         assert name in video, name
     for name in NEW_AUDIO:
         assert name in audio, name
-    # 53 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
-    # + signalstats/blackframe (M11.3 diagnostic pilot); 37 audio: 36 + ebur128
-    assert len(video) == 53 and len(audio) == 37
-    # All nine combiners (M10.0: xfade/vstack/overlay/acrossfade/amerge/
-    # amix/join; M10.3: concat/hstack) carry the multi_input marker.
+    # 60 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
+    # + signalstats/blackframe (M11.3 diagnostic pilot)
+    # + edgedetect/freezeframes/thistogram/histogram/blockdetect/blurdetect/
+    #   tinterlace (M11.4 review merge); 40 audio: 36 + ebur128
+    #   + ahistogram/aspectralstats/showvolume (M11.4)
+    assert len(video) == 60 and len(audio) == 40
+    # All ten combiners (M10.0: xfade/vstack/overlay/acrossfade/amerge/
+    # amix/join; M10.3: concat/hstack; M11.4: freezeframes) carry the
+    # multi_input marker.
     for name in ("concat", "hstack", "xfade", "vstack", "overlay",
-                 "acrossfade", "amerge", "amix", "join"):
+                 "freezeframes", "acrossfade", "amerge", "amix", "join"):
         spec = video.get(name) or audio.get(name)
         assert spec is not None and "multi_input" in spec, name
     assert int(REGISTRY["registry_version"].split(".")[1]) >= 2
@@ -96,7 +103,7 @@ def test_category_flags():
 
 def test_options_valid_examples():
     ok = [
-        ("acompressor", {"level": "3", "ratio": "8"}),
+        ("acompressor", {"level_in": "3", "ratio": "8"}),
         ("xfade", {"transition": "fade", "duration": "1", "offset": "5"}),
         ("amix", {"inputs": "2", "duration": "longest", "normalize": "0"}),
         ("yadif", {"mode": "send_frame", "parity": "auto", "deint": "all"}),
@@ -120,8 +127,8 @@ def test_options_valid_examples():
 
 def test_options_invalid_examples():
     bad = [
-        ("acompressor", {"level": "999"}, "above the maximum"),
-        ("acompressor", {"level": "-1"}, "below the minimum"),
+        ("acompressor", {"level_in": "999"}, "above the maximum"),
+        ("acompressor", {"level_in": "-1"}, "below the minimum"),
         ("xfade", {"transition": "bogus"}, "is not one of"),
         ("amix", {"inputs": "0"}, "below the minimum"),
         ("astats", {"metadata": "2"}, "expected 0 or 1"),
@@ -147,14 +154,14 @@ def test_name_only_filters_pass_through():
 # ------------------------------------------------------- expression wiring
 
 def test_expr_instances_get_option_validation():
-    assert filter_expr_problems("acompressor=level=3") == []
-    probs = filter_expr_problems("acompressor=level=999")
+    assert filter_expr_problems("acompressor=level_in=3") == []
+    probs = filter_expr_problems("acompressor=level_in=999")
     assert probs and "above the maximum" in probs[0]
-    probs = filter_expr_problems("acompressor=level=1:level=2")
+    probs = filter_expr_problems("acompressor=level_in=1:level_in=2")
     assert probs and "twice" in probs[0]
     probs = filter_expr_problems("astats=1:2:3:4:5:6:7")
     assert probs and "too many positional" in probs[0]
-    probs = filter_expr_problems("acompressor=level=1::ratio=2")
+    probs = filter_expr_problems("acompressor=level_in=1::ratio=2")
     assert probs and "empty argument" in probs[0]
 
 
@@ -181,7 +188,7 @@ def _vf_argv(expr: str) -> list[str]:
 
 
 def test_argv_gate_accepts_valid_filter_options():
-    assert execute.validate_argv(_vf_argv("acompressor=level=3")) == []
+    assert execute.validate_argv(_vf_argv("acompressor=level_in=3")) == []
     assert execute.validate_argv(_vf_argv("yadif=mode=send_frame")) == []
     assert execute.validate_argv(
         ["ffmpeg", "-i", "a.mp4", "-i", "b.mp4",
@@ -218,7 +225,7 @@ def test_argv_gate_xfade_settb_normalization():
 
 
 def test_argv_gate_rejects_invalid_filter_options():
-    errs = execute.validate_argv(_vf_argv("acompressor=level=999"))
+    errs = execute.validate_argv(_vf_argv("acompressor=level_in=999"))
     assert errs and "above the maximum" in errs[0]
     errs = execute.validate_argv(_vf_argv("xfade=transition=bogus"))
     assert errs and "is not one of" in errs[0]
