@@ -17,7 +17,71 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M11.0 — RAG corpus foundation, COMPLETE; M10.5 DUAL-BUILD VERIFIED)
+## Current state (2026-10-26, M10.6 — host 6.1.1 21/21 with validation gate; i7 9.0.1 final re-verification running at the fix commit)
+**M10.6 — per-category E2E verification battery + docs.** The battery
+(`scripts/m10_battery.sh local|docker` → `scripts/m10_battery.py`) has
+21 cases across every M10 category (resize/crop/rotate/speed/trim/
+watermark/audio/codec/GPU/combiners xfade+concat+hstack/comparison
+psnr+ssim+libvmaf/two-pass stabilize/fdk VBR). Each case generates
+through the REAL pipeline (rules adapter, preflight on), checks its
+needles as substrings of the rendered argv, then EXECUTES on the real
+ffmpeg of the build. Build-gated cases (fdk_aac VBR, libvmaf,
+scale_cuda) expect a preflight warning + skip on 6.1.1 and RUN on 9.0.1.
+
+- **Host 6.1.1: battery 21/21 (validate_argv gate now active), M8
+  battery 10/10, suite 953 passed / 1 skipped** (skip = node JS
+  check).
+- **i7 9.0.1 attempt 1** (job j_e478994233, image d3bae5d1aba6): suite
+  green (946/1) but battery 17/21 — xfade/concat/psnr/libvmaf failed
+  with "could not be probed": the planner probed combiner extra inputs,
+  the combiner main fallback, and the comparison reference with the RAW
+  bare filename instead of resolving against the input volume (fatal in
+  the container, inputs live in /input). GENUINE BUG, fixed in
+  **b989e31**: 4 probe sites wrapped in `resolve_input_name` (the
+  mechanism pipeline.py already used for the main asset) + 3 regression
+  tests (both media tests proven to FAIL on the unfixed planner).
+- **Web-UI `-i <file>` input convention** (same commit): inputs may be
+  written `-i <file>` — the API strips the prefix server-side
+  (`_strip_i_prefix`, fass/api.py) before planning, so every API client
+  gets it; streams/source specs pass through untouched; UI placeholders
+  document the form. Bare names resolve against $FASS_INPUT_DIR /
+  /input at probe time AND run time.
+- **i7 9.0.1 attempt 2** (job j_0a8a17f0c1, image fass:m106b at
+  b989e31): suite 949/1 skipped, battery 19/21 — the probe bug is
+  fixed; xfade + concat now trip the API's argv gate, exposing two
+  more GENUINE build-independent bugs: (1) `settb` (emitted by the
+  planner for every xfade input normalization) was missing from the
+  filter allowlist; (2) the validator's filtergraph parser stripped
+  only TWO leading input labels, so the 4-pad concat graph misparsed
+  ("'[1:v][1:a]concat' is not a filter name" — the "(in ...)" context
+  prints the instance AFTER one label was already stripped, which
+  masked the real shape). Both reproduce on the host — the local
+  battery had been bypassing `validate_argv` (docker mode enforces
+  it at /v1/runs), so the earlier host 21/21 was hollow for
+  xfade/concat.
+- **Fixed in this commit (M10.6 bugfix):** `settb` registry entry +
+  docs_provenance (51 video + 36 audio = 87);
+  `loader._validate_instance` strips ALL leading labels; the local
+  battery runs `validate_argv` on every generated argv before
+  executing (both modes share acceptance semantics); 2 regression
+  tests. Host re-run: battery 21/21 with the gate ACTIVE, suite
+  953/1 skipped.
+- **Final i7 21/21 re-verification RUNNING** (resubmitted at this
+  commit; expect suite 953/1 skipped + battery 21/21 with
+  fdk_vbr4/libvmaf/scale_cuda executing).
+- **M11.1 part A SUCCEEDED** on tr4-secondary (job j_7dea91b80b,
+  branch dispatch/j_7dea91b80b, base b989e31): `rag/retrieval.py`
+  FTS5 lexical core + `rag/server.py` fass-rag FastAPI service (PRD
+  §5.4/5.5) + tests; integration pending (review diff, full suite,
+  dispatch_integrate). Part B = §9.1 benchmark + gates +
+  lexical-vs-hybrid decision (dataset under rag/benchmark/).
+
+**Next:** i7 21/21 → real container numbers in README/DEVELOPMENT/
+HANDOFF evidence lines + commit → M11.1 integration (part A branch) +
+part B (benchmark dataset: 84 exact + 50 option-level + 60 NL + 10
+version-mismatch + 5 insufficient).
+
+## Previous state (2026-10-26, M11.0 — RAG corpus foundation, COMPLETE; M10.5 DUAL-BUILD VERIFIED)
 **M11.0 — pinned corpora + parser 1.1 + chunker + ingest CLI** (PRD
 §10.3; committed e1ff741 + c9e4f55 + 0081cd3). RAG corpus foundation for
 `ffmpeg-assistant-rag-prd.md` — advisory evidence layer only, no fass

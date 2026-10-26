@@ -1051,9 +1051,11 @@ def _strip_trailing_labels(s: str) -> str:
 
 def _validate_instance(inst: str, problems: list[str]) -> None:
     """One filter instance: 'name', 'name=args', plus optional input/output
-    '[label]'s — stripped before the name/argument split."""
+    '[label]'s — stripped before the name/argument split. Multi-input
+    filters (concat, xfade, hstack) carry one input label per pad, so ALL
+    leading labels are stripped, not just one."""
     s = inst
-    if s.startswith("["):
+    while s.startswith("["):
         end = s.find("]")
         if end < 0:
             problems.append(f"unterminated label in '{s[:40]}'")

@@ -30,6 +30,7 @@ import json
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -164,6 +165,16 @@ def _retarget(argv: list[str], outdir: Path) -> list[str]:
 
 def local_run(argvs: list[list[str]], outdir: Path):
     """Run every step in order, one cwd (the final output's dir)."""
+    from fass.execute import validate_argv
+    # the API's /v1/runs gate: no argv is executed that fails the registry
+    # validator. Local mode used to bypass this, so the host 21/21 was
+    # hollow for xfade/concat (M10.6 i7 cross-check, 2026-10-26) — run the
+    # same gate here so both modes share acceptance semantics
+    for i, argv in enumerate(argvs):
+        problems = validate_argv(argv)
+        if problems:
+            return False, (i, "refusing to run — argv failed validation: "
+                              + "; ".join(problems))
     for i, argv in enumerate(argvs):
         p = subprocess.run(_retarget(argv, outdir), cwd=str(outdir),
                            capture_output=True, text=True, timeout=600)
@@ -180,14 +191,24 @@ def api(url: str, method: str, body: dict | None = None) -> dict:
     req = urllib.request.Request(
         url, data=json.dumps(body).encode() if body is not None else None,
         headers={"content-type": "application/json"}, method=method)
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        # an API refusal (422 = the /v1/runs validation gate) is EVIDENCE,
+        # not a crash: surface the server's message verbatim
+        raise ValueError(
+            f"HTTP {e.code} from {url}: "
+            f"{e.read().decode(errors='replace')}") from None
 
 
 def docker_generate(base: str, instruction: str, assets: dict[str, str]):
     body = {"instruction": instruction, "assets": assets,
             "adapter": "rules", "preflight": True}
-    d = api(f"{base}/v1/commands", "POST", body)
+    try:
+        d = api(f"{base}/v1/commands", "POST", body)
+    except ValueError as e:  # an API error is a failed case, not a crash
+        return None, {"status": "api-error", "errors": [str(e)]}, None
     if d.get("status") != "ready" or not d.get("arguments"):
         return None, d, None
     steps = [s["arguments"] for s in d.get("steps", [])] if d.get("steps") \
@@ -199,11 +220,19 @@ def docker_run(base: str, argv: list[str], steps: list[list[str]] | None):
     body = {"arguments": argv, "timeout": 600}
     if steps:
         body["steps"] = steps
-    d = api(f"{base}/v1/runs", "POST", body)
+    try:
+        d = api(f"{base}/v1/runs", "POST", body)
+    except ValueError as e:
+        # the validation gate refused the argv (422): the server's message
+        # is the failure detail — report it and keep running the battery
+        return False, (0, str(e))
     run_id = d["run"]["id"]
     deadline = time.time() + 640
     while time.time() < deadline:
-        rec = api(f"{base}/v1/runs/{run_id}", "GET")
+        try:
+            rec = api(f"{base}/v1/runs/{run_id}", "GET")
+        except ValueError as e:
+            return False, (None, str(e))
         if rec["status"] != "running":
             tail = ""
             try:

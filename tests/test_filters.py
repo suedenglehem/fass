@@ -51,7 +51,8 @@ def test_registry_has_the_50_new_entries():
         assert name in video, name
     for name in NEW_AUDIO:
         assert name in audio, name
-    assert len(video) == 50 and len(audio) == 36
+    # 51 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
+    assert len(video) == 51 and len(audio) == 36
     # All nine combiners (M10.0: xfade/vstack/overlay/acrossfade/amerge/
     # amix/join; M10.3: concat/hstack) carry the multi_input marker.
     for name in ("concat", "hstack", "xfade", "vstack", "overlay",
@@ -186,6 +187,33 @@ def test_argv_gate_accepts_valid_filter_options():
          "-filter_complex", "[0:v][1:v]xfade=transition=fade:duration=1:offset=5",
          "out.mp4"]
     ) == []
+
+
+def test_argv_gate_multi_input_label_concat():
+    # M10.6 i7 cross-check regression: the concat graph carries one input
+    # label PER PAD (4 here) — the validator used to strip only the first
+    # two and fail with "'[1:v][1:a]concat' is not a filter name"
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-i", "b.mp4",
+         "-filter_complex",
+         "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[cv][ca]",
+         "-map", "[cv]", "-map", "[ca]", "out.mp4"]
+    ) == []
+
+
+def test_argv_gate_xfade_settb_normalization():
+    # M10.6 i7 cross-check regression: the planner normalizes xfade inputs
+    # with settb=AVTB; 'settb' must be in the allowlist (the entry was
+    # missing and every xfade plan failed /v1/runs validation)
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-i", "b.mp4",
+         "-filter_complex",
+         "[0:v]fps=25,format=yuv420p,settb=AVTB[c0];"
+         "[1:v]fps=25,format=yuv420p,settb=AVTB[c1];"
+         "[c0][c1]xfade=transition=fade:duration=10:offset=0.079[cv]",
+         "-map", "[cv]", "out.mp4"]
+    ) == []
+    assert "settb" in all_filter_names()
 
 
 def test_argv_gate_rejects_invalid_filter_options():

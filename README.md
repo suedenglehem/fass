@@ -63,6 +63,22 @@ inputs is what makes "replace the audio with song.mp3" work.
   all-diagnostic plan decodes through the filters and discards the stream
   (`-f null -`, no output file), raising the log level to info so the
   results land in the run log
+- **Combiners** — two typed inputs through a labeled filter graph:
+  `crossfade a.mp4 and b.mp4` (xfade; offset computed from the first
+  input's duration, a "2-second crossfade" sets the transition duration;
+  "crossfade the audio" → acrossfade), `stack them side by side /
+  vertically` (hstack / vstack), `concatenate a.mp4 and b.mp4` (concat;
+  "without the audio" drops it), `mix the audio` (amix), `merge the
+  audio tracks` (amerge), `join the audio to 5.1` (join), "join / merge
+  the two videos" = end-to-end
+- **Quality comparison** — `compare a.mp4 against b.mp4 with psnr`
+  (also ssim; libvmaf on builds that ship the filter + model): the
+  reference clip is the second input, the metric runs frame by frame,
+  the summary lands in the run log (null muxer — nothing is written)
+- **Two-pass stabilization** — `stabilize the shaky clip`: a
+  vidstabdetect pass measures the shake into a `.trf` next to the
+  output, the final pass applies vidstabtransform — the response
+  carries the plan's `steps` and the execution layer runs them in order
 - **Container conversion** — a broad, codec-matrix-validated set: video in
   MP4 / MOV / MKV / WebM / MPEG-TS / MXF / AVI / FLV / GIF / WebP with H.264 /
   H.265 / VP9 / MPEG-2 / ProRes / MJPEG, audio in MP3 / AAC / FLAC / Opus /
@@ -80,7 +96,11 @@ inputs is what makes "replace the audio with song.mp3" work.
   (8-bit / 10-bit / 4:4:4), H.264 profile & preset, audio resampling (sample
   rate / channels), and **per-encoder options**: NVENC / QSV rate control,
   ProRes profile, x264 / x265 / VVC tuning, encoder-specific flags — plus
-  **GPU encoding** (nvenc) when a deployment exposes a GPU
+  **GPU encoding** (nvenc) when a deployment exposes a GPU, and the
+  **GPU filter-consume rule**: `resize to 1080p on the gpu` picks the
+  CUDA filter (`scale_cuda`) and keeps the encoder CPU — the GPU mention
+  is absorbed by the filter; an explicit encoder word (`nvenc`)
+  re-enables GPU encoding
 - **Muxer / format options** — `+faststart`, HLS segment settings
   (`hls_time`, segment type), MPEG-TS flags, MP3 ID3 tags, …, validated
   against the plan's actual output container

@@ -136,16 +136,67 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (gate mini-run used bare `libvmaf`, which fails to init without a
   compiled-in model → now resolves the model via `vmaf_model_path()`
   exactly as the planner does).
-- **Next task:** **M10.6** — verification & docs: per-category E2E battery
-  on `media/titan.mp4` (host 6.1.1 + i7 docker 9.0.1), full suite on both
-  builds, i7-host suite via dispatcher job, README/DEVELOPMENT/HANDOFF
-  updates. **M11 RAG per `ffmpeg-assistant-rag-prd.md`** — M11.0 pinned
-  corpora COMPLETE (above); next = **M11.1 retrieval API** (embed +
-  retrieve + rank over the chunk store, retrieval benchmark, re-measure
-  the token heuristic against the real embedding tokenizer) → M11.2 fass
-  integration (advisory evidence only — the registry/builder/argv gate
-  remain sovereign) → M11.3 authoring pipeline → M11.4 ablation kill
-  criterion.
+- **M10.6 verification IN PROGRESS 2026-10-26** (host half DONE):
+  per-category E2E battery `scripts/m10_battery.sh local|docker` →
+  `scripts/m10_battery.py`, 21 cases across all M10 categories
+  trim/resize/grayscale/watermark/speed/prores/opus/fdk_vbr4/rotate/
+  acompressor/yadif/loudnorm/blackdetect/volumedetect/xfade/concat/
+  psnr/libvmaf/stabilize (two-pass)/h264_metadata bsf/scale_cuda);
+  generates through the REAL pipeline (rules adapter, preflight
+  on), checks needles as substrings of the rendered argv, then EXECUTES
+  against the real ffmpeg of each build. Build-gated cases (fdk_aac VBR,
+  libvmaf, scale_cuda) expect a preflight warning + skip on the 6.1.1
+  host and RUN on 9.0.1. **Host 6.1.1: battery 21/21, M8 battery 10/10,
+  suite 949 passed / 1 skipped** (skip = node JS check). i7 9.0.1 first
+  attempt (job j_e478994233, image d3bae5d1aba6): suite green
+  (946/1 skipped at the time) but battery 17/21 — the 4 multi-input
+  cases (xfade, concat, psnr, libvmaf) failed with "could not be probed":
+  a GENUINE BUG, the planner probed combiner extra inputs, the combiner
+  main fallback, and the comparison reference with the RAW bare filename
+  (cwd-relative) instead of resolving against the input volume — fatal
+  in the container where inputs live in /input. **Fixed in b989e31**:
+  the 4 planner probe sites wrapped in `resolve_input_name` (same
+  mechanism pipeline.py:265 already used for the main asset) + 3
+  regression tests (both media tests proven to FAIL on the unfixed
+  planner) + **web-UI `-i <file>` input convention** (user ask): the API
+  strips the `-i ` prefix from any asset path before planning
+  (`_strip_i_prefix` in fass/api.py — server-side, so every API client
+  gets it; streams/source specs pass through untouched); bare names
+  resolve against $FASS_INPUT_DIR / /input at probe time AND run time.
+  **i7 9.0.1 attempt 2** (job j_0a8a17f0c1, image fass:m106b at
+  b989e31): suite 949 passed / 1 skipped, battery 19/21 — the probe
+  bug is gone; xfade + concat now fail the API's `/v1/runs` argv gate:
+  (1) the planner always normalizes xfade inputs with `settb=AVTB` but
+  `settb` was missing from the registry filter allowlist; (2) the
+  validator's filtergraph parser stripped only TWO leading input
+  labels, so the 4-pad concat graph `[0:v][0:a][1:v][1:a]concat=...`
+  misparsed ("'[1:v][1:a]concat' is not a filter name" — the error's
+  "(in ...)" context prints the instance AFTER one label was already
+  stripped, which initially masked the real shape). Both bugs are
+  BUILD-INDEPENDENT and reproduce on the host — the local battery had
+  been bypassing `validate_argv` (docker mode enforces it at
+  /v1/runs), so the earlier host 21/21 was hollow for xfade/concat.
+  **Fixed in this commit**: `settb` registry entry + docs_provenance
+  URL (51 video / 36 audio = 87); `loader._validate_instance` strips
+  ALL leading labels; the local battery now runs `validate_argv` on
+  every generated argv before executing (local + docker share
+  acceptance semantics); 2 regression tests (4-pad concat graph,
+  xfade settb chain) + count assertion updated; DEVELOPMENT filter
+  count 86→87. **Host 6.1.1 re-run: battery 21/21 with the gate
+  ACTIVE, suite 953 passed / 1 skipped.** Final i7 21/21
+  re-verification resubmitted at this commit; docs evidence lines
+  then get the real container numbers.
+- **Next task:** **M10.6** — final i7 21/21 re-verification running at
+  the fix commit (expect suite 953/1 skipped, battery 21/21 with
+  fdk_vbr4/libvmaf/scale_cuda executing); on success: DEVELOPMENT
+  Testing evidence line + README/HANDOFF i7 numbers + commit, then
+  **M11.1 retrieval API** per the PRD — part A = FTS5
+  lexical core + fass-rag service, DISPATCHED to tr4-secondary (job
+  j_7dea91b80b at b989e31); part B = §9.1 benchmark (84 exact + 50
+  option-level + 60 NL + 10 version-mismatch + 5 insufficient) + gates
+  + lexical-vs-hybrid decision recorded → M11.2 fass integration
+  (advisory evidence only — the registry/builder/argv gate remain
+  sovereign) → M11.3 authoring pipeline → M11.4 ablation kill criterion.
 - **Planning 2026-10-25 (later session): joint PRD delivered** —
   `ffmpeg-assistant-rag-prd.md` merges the assistant scope with the
   documentation-RAG idea. Verdict: RAG is viable as an **advisory evidence

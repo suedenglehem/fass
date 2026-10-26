@@ -173,15 +173,67 @@ assets are local paths or allowlisted stream URLs the client binds.
   `hevc_mp4toannexb`; remuxing AAC out of mpegts into mp4/mov strips the
   ADTS header with `aac_adtstoasc` (added only when audio is kept — the
   codec is known from the probe, so copy mode always has it).
+- **Combiners (M10.3)** — two typed inputs through a labeled
+  `-filter_complex` graph (the `combine` op; registry markers
+  `multi_input` on all nine: `xfade`, `concat`, `hstack`, `vstack`,
+  `overlay`, `acrossfade`, `amerge`, `amix`, `join`):
+  - *crossfade* — `crossfade a.mp4 and b.mp4`: video `xfade` (fade
+    transition), `offset = duration of the FIRST input − transition
+    duration`, computed from the ffprobe of input 1 — the plan computes
+    it, never asks the user; "a 2-second crossfade" / "over 1.5s" set
+    the duration; "crossfade the audio" → `acrossfade`. An audio-only
+    second file is a named *unsupported fragment* (xfade needs video
+    from every input).
+  - *stack* — `stack them side by side` → `hstack`, `stack them
+    vertically` → `vstack`; a bare "stack" is `needs_clarification`
+    (which direction?).
+  - *concatenate* — `concatenate a.mp4 and b.mp4` / "end to end" →
+    `concat` (second input pads the layout); "without the audio" →
+    `a=0` + a note. "join / merge the two videos" also means
+    end-to-end.
+  - *mix / merge / join (audio)* — `mix the audio` → `amix`;
+    `merge the audio tracks` → `amerge`; `join the audio to stereo /
+    quad / 5.1` → `join` with `channel_layout` (a bare "join the audio"
+    asks for the layout).
+  - *overlay* — a second VIDEO input with "overlay" (a named image is
+    a watermark, not an overlay input) → `overlay` on the graph.
+- **Comparison (M10.4)** — `compare a.mp4 against b.mp4 with psnr`
+  (also `ssim`, `libvmaf`): the reference clip is the second input,
+  the metric compares the two video streams frame by frame and the
+  summary lands in the run log. A comparison rides the M10.2
+  diagnostic path (null muxer, loglevel info — nothing is written).
+  Mismatched sizes: the reference is scaled to the main's size with a
+  visible warning. `libvmaf` needs the filter **and** a model: the
+  docker image vendors one (`/opt/vmaf-models`); on a build without
+  the filter the preflight warns and the command will not start
+  (psnr/ssim are available on every build).
+- **Two-pass stabilization (M10.5)** — `stabilize the shaky clip`:
+  pass 1 runs `vidstabdetect=result=<trf>` through a null muxer (the
+  `.trf` is a bare name, `<output-stem>.vidstab.trf`, written next to
+  the FINAL output); the final pass prepends
+  `vidstabtransform=input=<trf>` to the vf chain. Both passes execute
+  in ONE cwd (the output's dir). The response carries `steps` — every
+  pass's argv, final last — and `POST /v1/runs` accepts `steps`
+  (the per-run timeout applies per step; max 8 passes). Conflicts
+  (all `PlanError`, the same-frames rule): trim, speed, video-domain
+  filters, audio replacement, watermark with asset, bsf, multi-input
+  combine, stream destination. Allowed alongside: resize, grayscale,
+  rotate, audio filters, audio resample.
+- **GPU filter-consume rule (M10.5)** — a CUDA filter absorbs the GPU
+  mention: `resize … on the gpu` → `scale_cuda` with the encoder on
+  CPU (a "not the encoder" note in defaults); `deinterlace on the gpu`
+  → `yadif_cuda`. An explicit encoder word (`nvenc`, or gpu/nvidia/
+  hw-acc within 40 chars of an encode word) re-enables nvenc; a bare
+  GPU mention with no CUDA filter keeps the M6 nvenc behavior.
 - **Audio keep/remove** and **compositions** of any of the above, in the
   order the user stated them.
 
 Ambiguity is a first-class result: `needs_clarification` with specific
 questions (`make it smaller`, `make it exactly 5 MB`, `re-encode lossless`,
 `keep the last 10 seconds` without a known duration). Out-of-scope requests
-(`extract to mp3`, `extract the subtitles`, `concatenate two videos`) return
-`unsupported` with the reason and the support summary — **never a silent
-partial plan**.
+(`extract to mp3`, `extract the subtitles`, `add a second watermark`)
+return `unsupported` with the reason and the support summary —
+**never a silent partial plan**.
 
 ## FFmpeg component coverage
 
@@ -199,7 +251,7 @@ truth; availability on the installed build is checked by `fass env` /
 | Muxers & demuxers | Container matrix (mp4 / mov / mkv / webm / mpegts / flv; rtsp / srt stream-only) + explicit `-f` for stream destinations | `containers`, `matrix`, `streaming.output` |
 | Protocols | Allowlisted URL schemes in and out (http(s), rtmp(s), rtsp(s), srt, udp, rtp, tcp, tls) | `streaming.input_schemes`, `streaming.output` |
 | Input/output devices | Input sources `lavfi` / `v4l2` / `alsa` / `dshow` / `avfoundation` / `x11grab`; audio-only output devices (`alsa`, `pulse`) | `sources` |
-| Filters | 84 registry-allowlisted filters (30 video + 20 audio added at M10.0: dynamics EQ/compression, diagnostics, combiners, comparisons, GPU variants). Entries with an `options` schema get per-option validation (kinds, ranges, choices) in `filter_expr_problems`, the plan schema and the argv gate; category flags `diagnostic` / `multi_input` / `needs_reference` / `gpu` / `min_version`; per-build presence probed in `fass env`, full table in `/v1/support` | `filters`; `registry/loader.py` `filter_options_problems`; `builder/` filter graphs |
+| Filters | 87 registry-allowlisted filters (51 video + 36 audio — 84 added at M10.0: dynamics / EQ / compression, transforms, diagnostics, comparisons, GPU variants; `concat` / `hstack` added at M10.3; `settb` added at M10.6 — the planner emits it when normalizing xfade inputs and the missing entry failed every xfade plan at the argv gate). Entries with an `options` schema get per-option validation (kinds, ranges, choices) in `filter_expr_problems`, the plan schema and the argv gate; category flags `diagnostic` / `multi_input` / `needs_reference` / `gpu` / `min_version`; per-build presence probed in `fass env`, full table in `/v1/support` | `filters`; `registry/loader.py` `filter_options_problems`; `builder/` filter graphs |
 
 ## Validation levels
 
@@ -275,6 +327,32 @@ tests/
 Tests assert on **plans** (what) and **argv shape** (how), plus adversarial
 round-trips of hostile filenames and instruction-injection payloads.
 
+**Per-category E2E batteries** — generate through the REAL pipeline
+(rules adapter, preflight on) and then EXECUTE the generated argv:
+
+- `scripts/m8_battery.sh local|docker` — M8 codec options (10 cases)
+- `scripts/m10_battery.sh local|docker` — one case per capability
+  category (21 cases): trim / resize / grayscale / watermark / speed /
+  prores / opus / fdk_aac / rotate / acompressor / yadif / loudnorm /
+  blackdetect / volumedetect / xfade / concat / psnr / libvmaf /
+  stabilize (two-pass) / h264_metadata bsf / scale_cuda.
+
+`local` runs `generate()` in-process and executes the argv with the
+host ffmpeg; `docker` drives a RUNNING fass API (its `/v1/commands` +
+`/v1/runs` — the container's ffmpeg). Build-gated features expect the
+preflight warning and skip execution on the build that lacks them
+(fdk_aac / libvmaf / scale_cuda on 6.1.1); device-missing failures
+(no CUDA device) are SKIPs, not FAILs. Local mode enforces the same
+`validate_argv` gate as the API's `/v1/runs` before executing — both
+modes share acceptance semantics (added at M10.6: the local battery
+used to bypass the gate, so the host pass was hollow for xfade/concat
+until the i7 9.0.1 cross-check exposed it). M10.6 dual-build evidence:
+host 6.1.1 21/21 with the gate active (gated cases skip on the host);
+i7 9.0.1: 17/21 (planner probe bug, fixed in b989e31) → 19/21 (settb
+missing from the filter allowlist + the validator's two-input-label
+limit on the 4-pad concat graph — both build-independent, fixed at
+M10.6); final 21/21 container run in progress.
+
 ## Roadmap
 
 - [x] 50-request benchmark suite — 89 requests in `tests/benchmark/`
@@ -318,9 +396,30 @@ round-trips of hostile filenames and instruction-injection payloads.
   multi_input, needs_reference, gpu, min_version), option validation in
   expr/schema/argv-gate layers, per-build presence in `/v1/env`, full
   table in `/v1/support`
-- [ ] M10.1–M10.5: transform NLU phrasing, diagnostic plan mode, combiner
-  graphs, comparison inputs, two-pass vidstab / GPU / anullsrc
-- [ ] deferred (PRD §5): concatenation, transitions, audio
-  mixing, HDR, batch processing
+- [x] M10.1 transform filters — NLU phrasing + planner for ~20 audio /
+  ~15 single-chain video filters, semantic-trap warnings, `doc_ref` +
+  `aliases` + provenance on every new registry entry
+- [x] M10.2 diagnostic filters — `-f null -` + loglevel-info plan mode
+  (silencedetect / volumedetect / astats / idet / …)
+- [x] M10.3 combiners — nine multi-input filters as labeled
+  `-filter_complex` graphs, xfade offset math, two-input NLU phrasings
+- [x] M10.4 comparison — psnr / ssim / libvmaf against a reference
+  input, vendored libvmaf model in the docker image
+- [x] M10.5 two-pass vidstab (`stabilize`), GPU filter-consume rule,
+  channelsplit-in-graph, anullsrc source specs, multi-pass `steps`
+  end-to-end (plan → response → API → execute)
+- [x] M10.6 verification + docs — dual-build E2E battery
+  (`scripts/m10_battery.sh`: 21 categories × 6.1.1 host + 9.0.1
+  container, plus the M8 regression) and these README / DEVELOPMENT /
+  HANDOFF updates
+- [x] M11.0 RAG corpus foundation — pinned corpora (6.1.1 + 9.0.1
+  docs), parser 1.1, structure-first chunker, ingest CLI with
+  immutable generations (`rag/`; 36 tests)
+- [ ] M11.1 retrieval API — FTS5 lexical baseline + exact component
+  lookup + fass-rag service, §9.1 retrieval benchmark (gates: top-1
+  ≥95%, Recall@8 ≥90%, citation traceability 100%), lexical-vs-hybrid
+  decision recorded
+- [ ] deferred (PRD §5): multiple watermarks, HDR workflows, batch
+  processing
 
 Spec: `ffmpeg-assistant-prd.md`
