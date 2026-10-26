@@ -5,8 +5,21 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state:** M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5
-  dual-build verified, M11.0 committed this milestone). **M10.5 two-pass
+- **Last state (2026-10-26, M11.2 in progress):** **M11.1 COMPLETE**
+  (181c1e5 retrieval core + fass-rag service; 0ccdb7f §9.1 benchmark, ALL
+  9 gates green — exact_top1 1.0, recall8 0.9095, warm_p95 ~43 ms).
+  **M11.2 commits landed on main:** d60c167 §6.6 RagConfig + FASS_RAG_*
+  env; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref + aliases +
+  provenance, 87 filters); 56324af §6.2 query builder + fail-open
+  client; d005578 §6.2 FIX (alias mentions now resolve to canonical
+  registry keys — matched text was leaking into component_names);
+  9bd4401 §6.3 evidence block + LLM user-turn augmentation. **Next:
+  M11.2 commit 5 — §6.4/§6.5 pipeline RAG hook + citation derivation**
+  (citations.py + pipeline.py + 19 tests; suite 1100 passed / 1
+  skipped), then commit 6 UI Sources panel, 7 deployment overlay, 8
+  §9.3 safety-gate tests, 9 §9.2 ablation harness.
+- **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
+  verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):
   `stabilize the shaky clip` / `remove the camera shake` / `get rid of the
   shaky handheld look` → `StabilizeOp`; the planner builds a two-pass
@@ -239,9 +252,9 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 
 | fact | value |
 |---|---|
-| git | `main` = `origin/main` = **4ff3393** (`M10.2: diagnostic filters — NLU phrasing, diagnostic plan mode, null-muxer gate`); origin = `git@github.com:suedenglehem/fass.git` |
-| working tree | `M docker/compose.yaml` (local opt-ins: docker.sock mount + `FASS_DOCKER_MANAGE=1` uncommented, uncommitted by design) + untracked `.resume`, `PROGRESS.md`, `ffmpeg-rag-prd.md` (source idea), `ffmpeg-assistant-rag-prd.md` (joint PRD, 2026-10-25) |
-| test baseline | **783 passed** (738 M10.1 baseline + 45 M10.2 diagnostic tests) — verified 2026-10-25 on local 6.1.1 (75 s); docker 9.0.1 E2E 12/12 generation + 11/11 live runs on titan.mp4 (diagnostic results verified in run logs) |
+| git | `main` = **c27a0d8** (merge of M10.7 web work, 2026-10-26); `origin/main` = **aa0e534** (M10.5) — commits up to c27a0d8 are LOCAL ONLY, push only when asked. Unpushed since aa0e534 (17 commits): M11.0 corpus foundation (36510a8, e1ff741, c9e4f55, 0081cd3), parser 1.2 (58b889c), M11.1A (88b1f7b, 181c1e5), M10.6 battery + fixes (fb2bc82, b989e31, a3528f5, c866f64, 88cd63b, 6ff28f1, 801ec1e), M11.1B (0ccdb7f), M10.7 web (bcb60e8, merge c27a0d8) |
+| working tree | clean except untracked `.resume`; RAG corpus data under rag/corpus/* is gitignored (rebuilt by rag/tools/build_corpus.sh, recipe rag/corpus/BUILD-RECIPE.md); rag/benchmark/results.json gitignored |
+| test baseline | **1015 passed / 1 skipped** (115 s, tr4 host 6.1.1, 2026-10-26) — includes 25 M10.7 webinfo tests + the RAG benchmark gate run (skipif-guarded on the gitignored corpus) |
 | local machine | `/dd2/andrei/fass`, host ffmpeg **6.1.1-3ubuntu5**, `.venv` present, `media/titan.mp4` (20 s test clip) |
 | i7 (192.168.0.33) | `ssh i7`; repo mirror at the SAME path `/dd2/andrei/fass` (HEAD **5354cc7** per the M10.0 push; not re-probed this session; true git mirror, github remote); host ffmpeg **6.1.1-3ubuntu5**; `.venv` present (pytest 9.1.1); docker deployment: containers **fass** + **fass-worker** (image `fass:latest`, FFmpeg **9.0.1**). **OFFLINE 2026-10-26** (no route to host; dispatcher backend offline) — i7's role (docker 9.0.1 E2E) temporarily taken over by tr4 rebuilding the same Dockerfile |
 | tr4 (192.168.0.30) | `ssh tr4`; hostname **b760one**; repo mirror at the SAME path `/dd2/andrei/fass`, HEAD **5354cc7** (synced from i7 2026-10-25; suite **683 passed / 86 s**), host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3; docker runs **vllm-qwen38-27b-dual-max** + **facecat-db** (no fass containers); 3 GPUs (3090, 3080 Ti, 3090); **ONLINE 2026-10-26** — synced 5354cc7 → **4ff3393** (M10.2) via `git fetch origin && git reset --hard origin/main`; docs re-copied from i7; suite **783 passed / 63 s** verified on tr4 2026-10-26; docker/ untouched (canonical tracked compose); handoff details in §3 "tr4 handoff details" |
@@ -717,6 +730,21 @@ and forgotten), #318/#316 (forgotten, same chain).
 ---
 
 ## 8. Pending user decisions + next unfinished task
+
+**Next unfinished task (2026-10-26, current):**
+**M11.2 — fass integration of the RAG advisory layer** (PRD M11.2):
+advisory evidence only — the registry/builder/argv gate stays sovereign.
+Calibration constraints from the M11.1B benchmark (dataset.json notes):
+(1) evidence_status 'supported' is over-claimed for out-of-domain queries
+(bm25 cannot separate them, 0–16 token overlap) — the advisory layer must
+not treat lexical 'supported' as ground truth; the no-fabrication check
+relies on exact_match verifiability; (2) the 21 residual recall8 misses
+are genuine NL lexical gaps (inflection, compounding, common-word
+dilution, sibling-component dominance, synonymy) — no boost rescues them
+without harming precision; M11.2 must tolerate them. After M11.2:
+M11.3 authoring, M11.4 ablation kill criterion; later parser release for
+comma-grouped headings (split → component_name, re-ingest manuals —
+parser 1.3 was taken by build-help provenance).
 
 **Decisions pending:**
 1. **channelsplit** — defer multi-output export (current plan: in-graph only),

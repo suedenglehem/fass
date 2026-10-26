@@ -17,7 +17,104 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; web-UI job delegated (j_dc6d73d9dd); VMAF model provenance verified; RAG M11.1 in flight)
+## Current state (2026-10-26, M11.2 IN PROGRESS — §6.1–§6.5 + §6.6 committed; UI / deployment / safety-gate / ablation next)
+**M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
+FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
+aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
+builder (mentioned/jargon/media-facts/corpus-selection) + fail-open RAG
+client; **d005578 §6.2 FIX** — `mentioned_components` was appending the
+matched TEXT as the component name, so reviewed aliases ('remove
+silence', 'deinterlace') leaked into component_names; the name map now
+carries (type, canonical registry name), canonicals registered before
+aliases can shadow them; 9bd4401 §6.3 evidence block (delimited
+`<<<EVIDENCE`, untrusted preamble, budget-bounded, explicit
+`[truncated]`) + LLM prompt augmentation (block in the USER TURN, static
+system-prompt paragraph only, schema unchanged).
+**In flight: commit 5 — §6.4/§6.5 pipeline RAG hook + citation
+derivation.** fass/rag/citations.py (used_components / _matches /
+chunk_citation / derive_citations — retrieved chunk wins, highest
+score; filter-only registry doc_ref fallback `source:
+"registry_doc_ref"`; unused chunks dropped) + pipeline.py (GenerationResponse.evidence;
+retrieval ONLY on the llm adapter when resolved_rag().enabled; evidence
+kwarg into adapter.parse only when the block exists;
+build_evidence on ready — status "unavailable"/evidence_status/
+"insufficient" with RAG, "static" without; `_closest_supported`
+fail-open note on UNSUPPORTED — status never changed). 19 new tests
+(tests/test_rag_citations.py 13, tests/test_pipeline_rag.py 6).
+**Full suite green: 1100 passed / 1 skipped.** Remaining M11.2:
+commit 6 UI Sources panel + config-tab rag block; commit 7 deployment
+(Dockerfile.rag + rag/health.py + compose.rag.yaml overlay, profile
+"rag", /dd2/andrei/fass/docker-data/rag:/data, 0.0.0.0:8100); commit 8
+§9.3 safety-gate tests; commit 9 §9.2 ablation harness
+(scripts/m11_ablation.py, 4 arms vs tr4's local vllm
+vllm-qwen38-27b-dual-max). Then §9.4 close-out (live corpus +
+/v1/support doc_refs), M11.3, M11.4.
+
+**M11.1 (COMPLETE, for reference) — part A integrated as 181c1e5**
+(from tr4-secondary job j_7dea91b80b): rag/retrieval.py FTS5 lexical
+retrieval core + rag/server.py fass-rag FastAPI service (PRD §5.4/5.5)
++ tests.
+
+**M11.1 part B — committed as 0ccdb7f.** PRD §9.1 benchmark:
+deterministic query generator (rag/benchmark/generate_queries.py) → 243
+queries (87 exact / 79 option / 62 hand-authored NL / 10 corpus-diff
+mismatch / 5 insufficient) committed as rag/benchmark/{queries.jsonl,
+dataset.json}; two-pass runner (rag/benchmark/run_benchmark.py):
+RANKING top-8 + SERVICE (TestClient top-6/4000). **All 9 §9.1 gates
+PASS:** exact_top1 1.0 (≥0.95), recall8 0.9095 (≥0.90; the 21 residual
+misses are all-NL genuine lexical gaps — documented in dataset.json, the
+M11.2 advisory layer must tolerate them), citation 1.0, version 1.0,
+no_fabricated_syntax 1.0, mismatch_no_leak 1.0 (TEXT-level novelty
+filter), persistence identical, warm_p95 ~43 ms (≤300), cold_first ~24 ms
+(≤1000). Changes: `_expand` gap-fill (seeds keep slots; top-3 seeds pull
+parent/adjacent chunks, budget-aware, EXPANSION_SCORE_FACTOR 0.9);
+build-help provenance (source_url build-help://{corpus}/{file}, anchor
+{stem}-{i}) + _validate_chunks non-empty source_url/anchor;
+PARSER_VERSION 1.3 (build-facts manifests); candidate-set union of
+exact-name component chunks gated to ≤3-token queries
+(COMPONENT_UNION_MAX_TOKENS — rescues mm-opt-* recall without flooding
+long NL sentences); tests/test_rag_benchmark.py (determinism, shape,
+skipif-guarded full-gates run). **Host full suite: 990 passed / 1
+skipped.** Calibration note: evidence_status 'supported' is
+over-claimed for out-of-domain queries (bm25 cannot separate them, 0–16
+token overlap) — the no-fabrication gate checks exact_match
+verifiability instead; M11.2 must not treat lexical 'supported' as
+ground truth.
+
+**Web-UI job j_dc6d73d9dd (tr4-secondary) — work rescued, merged as
+c27a0d8 (branch commit bcb60e8).** The job FAILED as invalid_result —
+the worker's result report used its own vocabulary (outcome 'success',
+acceptance 'CONFIRMED', tests[].status None) instead of the schema
+enums; the work itself was complete and passing (978 passed / 1 skipped
+in the worktree). Rescued manually: diff reviewed (scope clean — only
+fass/{api,ui,execute,pipeline}.py + tests/test_webinfo.py), verified
+-loglevel verbose at argv index 3 on EVERY pass of multi-pass plans,
+node --check on the embedded JS OK, merged --no-ff into main. M10.7
+features: 'verbose log' checkbox on the Command tab → -loglevel verbose
+on every pass (set on the EditPlan before the argv is built, visible in
+the displayed command); verbose runs log to {output}/log/{run_id}.log
+(non-verbose stay in the runs dir; Run records carry log_path +
+verbose); GET /v1/mediainfo?target=input|output&file=<bare name>
+(ffprobe JSON, -i prefix accepted, 400/404/502 documented); GET /v1/logs
+(runs dir + {output}/log, newest first) + GET /v1/logs/{name} (basename
+only, traversal-guarded; >10000 lines served as last 1000 + banner
+'[truncated: showing last 1000 of N lines]'); NEW Info / Log tab holds
+ALL media-info + log controls (radio Media info | Run log; no
+mediainfo controls on the Command tab — the user's tab-consolidation
+correction wins). 25 tests (tests/test_webinfo.py). **Merged main
+suite: 1015 passed / 1 skipped** (990 + 25). dispatch_integrate is
+impossible for failed jobs — the merge commit c27a0d8 records the
+integration; the job's worktree is retained for review.
+
+**Next:** finish M11.2 commits 6–9 (UI, deployment, safety gates,
+ablation harness) — advisory evidence only; registry/builder/argv gate
+stays sovereign; treat evidence_status 'supported' with skepticism per
+the M11.1 calibration note. Then M11.3 authoring, M11.4 ablation kill
+criterion; and a later parser release for comma-grouped headings (split
+→ component_name, re-ingest manuals — the parser 1.3 slot was taken by
+build-help provenance).
+
+## Previous state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; M11.0 done; RAG M11.1 in flight at the time)
 **M10.6 — per-category E2E verification battery + docs.** The battery
 (`scripts/m10_battery.sh local|docker` → `scripts/m10_battery.py`) has
 21 cases across every M10 category (resize/crop/rotate/speed/trim/

@@ -13,12 +13,15 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from fass.builder import build_argv, build_argv_all, render_posix
-from fass.config import load_config
+from fass.config import load_config, resolved_rag
 from fass.execute import resolve_input_name
 from fass.explain import summarize
 from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
 from fass.planner import PlanError, plan_execution
+from fass.rag.citations import chunk_citation, derive_citations
+from fass.rag.client import retrieve as rag_retrieve
+from fass.rag.evidence import format_evidence_block
 from fass.probe.ffprobe import (
     Check,
     MediaInfo,
@@ -61,6 +64,9 @@ class GenerationResponse:
     unsupported: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     adapter: str = ""
+    # M11.2: documentation evidence (PRD §6.4) — citations derived from
+    # the plan's used components; None when there is nothing to cite.
+    evidence: dict | None = None
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -101,6 +107,66 @@ def _used_filters(ep) -> list[str]:
             if name in allowed and name not in used:
                 used.append(name)
     return used
+
+
+def build_evidence(edit, ep, rag_result) -> dict | None:
+    """The response's evidence block (PRD §6.4) or None when there is
+    nothing to cite. Citations are derived from the plan's used
+    components — never model-generated."""
+    citations = derive_citations(edit, _used_filters(ep), rag_result)
+    if rag_result is not None:
+        # RAG was consulted: report its outcome even when degraded —
+        # a failed search is status "unavailable" (PRD §4.4), with the
+        # static registry_doc_ref citations the plan can still show.
+        return {
+            "status": ("unavailable" if not rag_result.ok
+                       else rag_result.evidence_status or "insufficient"),
+            "corpus_id": rag_result.corpus_id,
+            "corpus_match": rag_result.corpus_match,
+            "retrieval_ms": rag_result.retrieval_ms,
+            "citations": citations,
+            "warnings": list(rag_result.warnings),
+        }
+    if citations:
+        # RAG off: static doc_ref citations only (PRD §6.5) — they work
+        # with RAG disabled and cost nothing at request time.
+        return {"status": "static", "corpus_id": None, "corpus_match": None,
+                "retrieval_ms": None, "citations": citations,
+                "warnings": []}
+    return None
+
+
+def _closest_supported(instruction, media, rag_result) -> dict | None:
+    """PRD §6.5 — fail-open "closest supported" note for an unsupported
+    request: what FFmpeg documents, and what fass does not support yet.
+    Never produces a command and never changes ``status``.
+
+    ``rag_result`` is the LLM path's already-fetched result (reused,
+    no second call); rules-path callers pass None and the note is
+    fetched fail-open — RAG disabled means no note."""
+    if rag_result is None:
+        cfg = resolved_rag()
+        if not cfg.enabled:
+            return None
+        info = probe_ffmpeg()
+        rag_result = rag_retrieve(
+            cfg, instruction, media=media,
+            probed_version=info.version if info else None)
+    if rag_result is None or not rag_result.ok or not rag_result.chunks:
+        return None
+    top = rag_result.chunks[0]
+    ctype = top.get("component_type") or "component"
+    cname = top.get("component_name") or top.get("title") or "this"
+    return {
+        "status": "unsupported",
+        "corpus_id": rag_result.corpus_id,
+        "corpus_match": rag_result.corpus_match,
+        "retrieval_ms": rag_result.retrieval_ms,
+        "citations": [chunk_citation(top, f"{ctype}:{cname}")],
+        "warnings": list(rag_result.warnings),
+        "note": (f"FFmpeg documents this as `{ctype}:{cname}`; "
+                 f"fass does not support it yet."),
+    }
 
 
 def _output_muxer(ep) -> str | None:
@@ -238,8 +304,34 @@ def generate(
         return resp
     resp.adapter = adapter.name
 
+    # RAG retrieval (M11.2 §6.3): LLM path only — the rules adapter never
+    # calls the service (PRD §6.5), and RAG is opt-in. Fail-open:
+    # retrieve() degrades to a RAG-less generation, it never raises.
+    rag_cfg = None
+    rag_result = None
+    if adapter.name == "llm":
+        rag_cfg = resolved_rag()
+        if rag_cfg.enabled:
+            info = probe_ffmpeg()
+            rag_result = rag_retrieve(
+                rag_cfg, instruction, media=media,
+                probed_version=info.version if info else None)
+
+    # The formatted evidence block goes into the LLM's USER TURN (the
+    # system prompt stays stable across requests — PRD §6.3).
+    evidence_block = None
+    if rag_result is not None and rag_result.ok:
+        evidence_block = format_evidence_block(
+            rag_result, budget=rag_cfg.max_evidence_chars)
+
     try:
-        result: ParseResult = adapter.parse(instruction, assets, previous_plan, media)
+        if evidence_block:
+            result: ParseResult = adapter.parse(
+                instruction, assets, previous_plan, media,
+                evidence=evidence_block)
+        else:
+            result: ParseResult = adapter.parse(
+                instruction, assets, previous_plan, media)
     except Exception as e:  # provider/transport/schema failures
         resp.status = "error"
         resp.errors = [f"parser error: {e}"]
@@ -251,6 +343,11 @@ def generate(
 
     if result.status is not ParseStatus.READY or result.plan is None:
         resp.status = result.status.value
+        if result.status is ParseStatus.UNSUPPORTED:
+            # PRD §6.5: an optional fail-open note naming the component
+            # FFmpeg documents; the status above is never changed.
+            resp.evidence = _closest_supported(
+                instruction, media, rag_result)
         return resp
     edit = result.plan
 
@@ -302,6 +399,9 @@ def generate(
     resp.summary = summarize(edit, ep, media)
     resp.defaults.extend(ep.defaults)
     resp.warnings.extend(ep.warnings)
+    # PRD §6.4: citations from the plan's used components (retrieved
+    # chunks when RAG ran, registry doc_refs otherwise).
+    resp.evidence = build_evidence(edit, ep, rag_result)
 
     main_path = assets[edit.input_id].path
     # A stream URL or a source spec (lavfi:/dev/video0) never "exists" as a
