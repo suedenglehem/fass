@@ -515,3 +515,84 @@ def test_rag_status_enabled_service_up(monkeypatch):
     assert d["service"]["ok"] is True
     assert d["service"]["loaded_corpus_id"] == "ffmpeg-6.1.1"
     assert d["service"]["corpora"][0]["corpus_id"] == "ffmpeg-6.1.1"
+
+
+# ------------------------------------------------ POST /v1/rag/query (M11.2)
+
+
+def test_rag_query_disabled_by_default_is_200_ok_false(monkeypatch):
+    # RAG is the advisory fail-open layer: disabled RAG answers 200 with a
+    # readable error, never a 4xx/5xx (the RAG tab renders it as a line)
+    monkeypatch.delenv("FASS_RAG_ENABLED", raising=False)
+    monkeypatch.delenv("FASS_RAG_URL", raising=False)
+    r = client.post("/v1/rag/query", json={"query": "overlay a logo"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is False
+    assert "disabled" in d["error"]
+    assert d["chunks"] == []
+
+
+def test_rag_query_enabled_passes_corpus_fields_and_chunks_through(monkeypatch):
+    import fass.api as api
+    from fass.config import RagConfig
+    from fass.rag.client import RagSearchResult
+
+    chunks = [
+        {"chunk_id": "ffmpeg-6.1.1:filter:overlay:0", "title": "overlay",
+         "url": "https://ffmpeg.org/ffmpeg-filters.html", "anchor": "overlay",
+         "component_type": "filter", "component_name": "overlay",
+         "option_names": ["x", "y", "format"],
+         "text": "Overlay a video on top of another.", "score": 0.4231},
+        {"chunk_id": "ffmpeg-6.1.1:filter:scale:0", "title": "scale",
+         "url": "https://ffmpeg.org/ffmpeg-filters.html", "anchor": "scale",
+         "component_type": "filter", "component_name": "scale",
+         "option_names": ["w", "h"],
+         "text": "Scale the input video size.", "score": 0.3117},
+    ]
+    res = RagSearchResult(ok=True, corpus_id="ffmpeg-6.1.1",
+                          corpus_match="exact", evidence_status="supported",
+                          chunks=chunks, retrieval_ms=12, warnings=[])
+    monkeypatch.setattr(api, "resolved_rag",
+                        lambda: RagConfig(enabled=True))
+    monkeypatch.setattr(api, "rag_search", lambda cfg, q, **kw: res)
+    r = client.post("/v1/rag/query",
+                    json={"query": "overlay a logo bottom right"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True
+    assert d["corpus_id"] == "ffmpeg-6.1.1"
+    assert d["corpus_match"] == "exact"
+    assert d["evidence_status"] == "supported"
+    assert d["retrieval_ms"] == 12
+    assert d["warnings"] == []
+    assert d["chunks"] == chunks  # raw dicts, pass-through
+
+
+def test_rag_query_blank_is_422():
+    # min_length 1 + the not-blank validator: an empty/whitespace query is a
+    # request error, the endpoint never fires a search that can only be noise
+    for q in ("", "   "):
+        r = client.post("/v1/rag/query", json={"query": q})
+        assert r.status_code == 422, q
+
+
+def test_rag_query_top_k_override_reaches_the_client_config(monkeypatch):
+    import fass.api as api
+    from fass.config import RagConfig
+    from fass.rag.client import RagSearchResult
+
+    captured = {}
+
+    def fake_search(cfg, q, **kw):
+        captured["cfg"] = cfg
+        return RagSearchResult(ok=True, corpus_id="ffmpeg-6.1.1",
+                               chunks=[], warnings=[])
+
+    monkeypatch.setattr(api, "resolved_rag",
+                        lambda: RagConfig(enabled=True, top_k=6))
+    monkeypatch.setattr(api, "rag_search", fake_search)
+    r = client.post("/v1/rag/query", json={"query": "scale", "top_k": 3})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert captured["cfg"].top_k == 3
