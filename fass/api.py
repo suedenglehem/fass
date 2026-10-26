@@ -48,6 +48,7 @@ from fass.probe.ffprobe import (
     parse_ffprobe_json,
     probe_ffmpeg,
 )
+from fass.rag.client import search as rag_search
 from fass.registry import (
     REGISTRY,
     all_filter_names,
@@ -168,6 +169,25 @@ class LLMTestRequest(BaseModel):
 
     use_unsaved: bool = False
     llm: LLMConfig | None = None
+
+
+class RagQueryRequest(BaseModel):
+    """POST /v1/rag/query body (M11.2, PRD §9): a direct evidence lookup
+    for the RAG tab. A blank (or whitespace-only) query is a 422 — the
+    tab must not fire a search that can only return noise."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=2000)
+    top_k: int | None = Field(default=None, ge=1,
+                              description="chunks requested for this query "
+                                          "(the service caps at 8, PRD §5.4)")
+
+    @model_validator(mode="after")
+    def _query_not_blank(self) -> "RagQueryRequest":
+        if not self.query.strip():
+            raise ValueError("query must not be whitespace-only")
+        return self
 
 
 def _llm_status() -> dict:
@@ -359,6 +379,41 @@ def create_app() -> FastAPI:
                            "error": str(reason or e) or type(e).__name__}
         return {"enabled": cfg.enabled, "config": cfg.model_dump(),
                 "service": service}
+
+    @app.post("/v1/rag/query")
+    def rag_query(body: RagQueryRequest):
+        """M11.2: direct evidence lookup for the RAG tab — one search
+        against the fass-rag service, the raw chunks passed through.
+
+        Fail-open like the whole RAG layer (PRD §4.4/§9): disabled RAG,
+        a dead service and any client error all answer 200 with
+        ``ok=false`` and a human-readable ``error`` — this endpoint
+        never 5xx's, and the tab renders the degraded state as a line."""
+        cfg = resolved_rag()
+        if not cfg.enabled:
+            return {"ok": False,
+                    "error": "RAG disabled — enable with FASS_RAG_ENABLED=1 "
+                             "+ FASS_RAG_URL",
+                    "chunks": []}
+        if body.top_k is not None:
+            cfg = cfg.model_copy(update={"top_k": body.top_k})
+        try:
+            res = rag_search(cfg, body.query)
+        except Exception as e:  # noqa: BLE001 — belt-and-braces: the client
+            # is fail-open itself, this only guards against a broken import
+            return {"ok": False, "error": str(e) or type(e).__name__,
+                    "chunks": []}
+        if not res.ok:
+            return {"ok": False,
+                    "error": "; ".join(res.warnings) or "RAG search failed",
+                    "chunks": []}
+        return {"ok": True,
+                "corpus_id": res.corpus_id,
+                "corpus_match": res.corpus_match,
+                "evidence_status": res.evidence_status,
+                "retrieval_ms": res.retrieval_ms,
+                "warnings": res.warnings,
+                "chunks": res.chunks}
 
     @app.get("/v1/env")
     def env():

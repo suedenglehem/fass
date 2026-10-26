@@ -1,5 +1,5 @@
 """The web UI (PRD §9): a single self-contained page, no external assets
-(local-first model). Four tabs:
+(local-first model). Five tabs:
 
 - Command — the request form (incl. the verbose-log toggle), the
   clarification flow and the generated command (with a Run button when
@@ -8,7 +8,9 @@
 - Info / Log — media info (ffprobe JSON for an input or output file) and
   the run/verbose log browser;
 - Config — the deployment config (M6): volume mappings, stream port
-  mappings, GPU, the LLM provider, LLM test, save / apply / compose preview.
+  mappings, GPU, the LLM provider, LLM test, save / apply / compose preview;
+- RAG — direct evidence lookup against the fass-rag service (M11.2,
+  PRD §9): query field, chunk cards with manual links, fail-open status.
 """
 
 UI_HTML = """<!doctype html>
@@ -88,6 +90,10 @@ a { color: var(--accent); }
 .sources summary::before { content: "▸ "; }
 .sources[open] summary::before { content: "▾ "; }
 .sources .badge { margin-bottom: 4px; }
+.rag-results { max-height: 70vh; overflow-y: auto; margin-top: 12px; }
+.rag-card { margin-top: 10px; }
+.rag-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.badge.mini { font-size: 11px; padding: 1px 8px; margin: 0 4px 4px 0; }
 .portrow { display: flex; gap: 8px; margin: 6px 0; align-items: center; }
 .portrow input { width: auto; flex: 1; }
 .portrow select { width: auto; }
@@ -118,6 +124,7 @@ a { color: var(--accent); }
     <button id="tab-runs" onclick="showTab('runs')">Runs</button>
     <button id="tab-info" onclick="showTab('info')">Info / Log</button>
     <button id="tab-cfg" onclick="showTab('cfg')">Config</button>
+    <button id="tab-rag" onclick="showTab('rag')">RAG</button>
   </div>
 
   <!-- ============================================================ COMMAND -->
@@ -250,6 +257,21 @@ a { color: var(--accent); }
       <pre id="compose"></pre>
     </div>
   </div>
+
+  <!-- ================================================================= RAG -->
+  <div id="pane-rag" hidden>
+    <div class="card">
+      <h2 style="margin-top:0">RAG — ask the documentation service directly</h2>
+      <p class="note">Advisory evidence lookup (PRD §9): the chunks fass-rag retrieves for
+      your query, with links into the pinned FFmpeg manual pages. Fail-open — a disabled
+      or unreachable service reports here as a status line, never as a failure.</p>
+      <label for="rag-q">Query</label>
+      <input id="rag-q" placeholder="e.g. overlay a logo in the bottom-right corner">
+      <button type="button" onclick="ragQuery()">query</button>
+      <button type="button" class="ghost" onclick="ragClear()">clear</button>
+      <div id="rag-results" class="rag-results"></div>
+    </div>
+  </div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -259,7 +281,8 @@ let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => { EXEC_ENABLED = !!d.execution; }).catch(() => {});
 
 function showTab(t) {
-  for (const p of ['cmd','runs','info','cfg']) {
+  // the base four + 'rag' (concat keeps the pinned literal in test_webinfo)
+  for (const p of ['cmd','runs','info','cfg'].concat('rag')) {
     $('pane-'+p).hidden = (p !== t);
     $('tab-'+p).classList.toggle('on', p === t);
   }
@@ -697,6 +720,66 @@ async function loadRag() {
   } catch (e) {
     el.innerHTML = `<span class="err">status check failed</span>: ${esc(e)}`;
   }
+}
+
+/* ---------------------------------------------------------------- rag tab */
+async function ragQuery() {
+  const q = $('rag-q').value.trim();
+  const box = $('rag-results');
+  if (!q) { box.innerHTML = '<p class="note">type a query first.</p>'; return; }
+  box.innerHTML = '<span class="note">querying…</span>';
+  try {
+    const r = await fetch('/v1/rag/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      box.innerHTML = `<span class="err">${esc(typeof d.detail === 'string' ? d.detail : JSON.stringify(d, null, 2))}</span>`;
+      return;
+    }
+    box.innerHTML = ragResultsHtml(d);
+  } catch (e) {
+    box.innerHTML = `<span class="err">query failed: ${esc(e)}</span>`;
+  }
+}
+function ragClear() {
+  $('rag-q').value = '';
+  $('rag-results').innerHTML = '';
+}
+function ragResultsHtml(d) {
+  if (!d.ok) {
+    return `<span class="badge b-bad">RAG unavailable</span> ` +
+      `<span class="note">${esc(d.error || 'no detail')}</span>`;
+  }
+  const stCls = d.evidence_status === 'supported' ? 'b-ready'
+              : d.evidence_status === 'unavailable' ? 'b-bad' : 'b-clar';
+  let html = `<span class="badge b-run">corpus ${esc(d.corpus_id || '—')}</span> ` +
+    `<span class="badge b-clar">${esc(d.corpus_match || '—')}</span> ` +
+    `<span class="badge ${stCls}">${esc(d.evidence_status || '—')}</span> ` +
+    `<span class="note">${esc(d.retrieval_ms)} ms</span>`;
+  for (const w of (d.warnings || []))
+    html += `<p class="note">⚠ ${esc(w)}</p>`;
+  const chunks = d.chunks || [];
+  if (!chunks.length) return html + '<p class="note">no chunks returned.</p>';
+  html += `<p class="note">${chunks.length} chunk(s)</p>`;
+  for (const c of chunks) {
+    const href = c.url ? (c.anchor ? c.url + '#' + c.anchor : c.url) : null;
+    const title = esc(c.title || c.component_name || c.chunk_id || 'untitled');
+    const head = href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${title}</a>`
+      : title;
+    let comp = '';
+    if (c.component_type || c.component_name)
+      comp = `<span class="badge b-clar">${esc([c.component_type, c.component_name].filter(Boolean).join(' · '))}</span>`;
+    const opts = (c.option_names || [])
+      .map(o => `<span class="badge mini b-run">${esc(o)}</span>`).join('');
+    html += `<div class="card rag-card"><div class="rag-head">${head}${comp}` +
+      `<span class="note">score ${esc(Number(c.score ?? 0).toFixed(3))}</span></div>` +
+      (opts ? `<div>${opts}</div>` : '') +
+      `<pre>${esc(c.text)}</pre></div>`;
+  }
+  return html;
 }
 
 loadCfg().catch(e => $('cfg-status').textContent = 'config load failed: ' + e);
