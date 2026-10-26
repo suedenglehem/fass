@@ -217,6 +217,23 @@ def test_libvmaf_model_dir_fills_the_default_model_name(monkeypatch):
         "[0:v][1:v]libvmaf=model=path=/opt/vmaf/vmaf_v0.6.1.pkl[cmp]")
 
 
+def test_libvmaf_model_dir_resolves_the_shipped_format(monkeypatch, tmp_path):
+    # the official Netflix/vmaf distribution ships v0.6.1 as JSON only;
+    # a legacy .pkl wins when both are present
+    (tmp_path / "vmaf_v0.6.1.json").write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("FASS_VMAF_MODEL", raising=False)
+    monkeypatch.setenv("FASS_VMAF_MODEL_DIR", str(tmp_path))
+    ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
+               monkeypatch, _probes())
+    assert ep.filter_complex == (
+        f"[0:v][1:v]libvmaf=model=path={tmp_path}/vmaf_v0.6.1.json[cmp]")
+    (tmp_path / "vmaf_v0.6.1.pkl").write_text("{}", encoding="utf-8")
+    ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
+               monkeypatch, _probes())
+    assert ep.filter_complex == (
+        f"[0:v][1:v]libvmaf=model=path={tmp_path}/vmaf_v0.6.1.pkl[cmp]")
+
+
 def test_libvmaf_without_model_env_keeps_the_filter_default(monkeypatch):
     monkeypatch.delenv("FASS_VMAF_MODEL", raising=False)
     monkeypatch.delenv("FASS_VMAF_MODEL_DIR", raising=False)

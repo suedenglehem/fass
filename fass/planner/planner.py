@@ -1787,13 +1787,19 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
 
 def vmaf_model_path() -> str | None:
     """libvmaf model location from the environment (M10.4): a full path in
-    FASS_VMAF_MODEL, else vmaf_v0.6.1.pkl under FASS_VMAF_MODEL_DIR, else
-    None (the filter's built-in model/version applies)."""
+    FASS_VMAF_MODEL, else a model under FASS_VMAF_MODEL_DIR — vmaf_v0.6.1.pkl
+    (legacy) or vmaf_v0.6.1.json (the official Netflix/vmaf distribution is
+    JSON-only for v0.6.1) — else None (the filter's built-in model/version
+    applies)."""
     model = os.environ.get("FASS_VMAF_MODEL")
     if model:
         return model
     model_dir = os.environ.get("FASS_VMAF_MODEL_DIR")
     if model_dir:
+        for name in ("vmaf_v0.6.1.pkl", "vmaf_v0.6.1.json"):
+            candidate = os.path.join(model_dir, name)
+            if os.path.exists(candidate):
+                return candidate
         return os.path.join(model_dir, "vmaf_v0.6.1.pkl")
     return None
 
