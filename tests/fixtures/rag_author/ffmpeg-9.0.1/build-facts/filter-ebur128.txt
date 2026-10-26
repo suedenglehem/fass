@@ -1,0 +1,50 @@
+ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 13 (Ubuntu 13.2.0-23ubuntu4)
+  configuration: --disable-debug --disable-doc --disable-ffplay --enable-cuda --enable-cuda-nvcc --enable-cuvid --enable-fontconfig --enable-gpl --enable-libaom --enable-libaribb24 --enable-libass --enable-libbluray --enable-libdav1d --enable-libfdk-aac --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-libkvazaar --enable-libmp3lame --enable-libnpp --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenjpeg --enable-libopus --enable-libsrt --enable-libsvtav1 --enable-libtheora --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nonfree --enable-nvenc --enable-openssl --enable-shared --enable-small --enable-version3 --enable-whisper --extra-cflags='-I/opt/ffmpeg/include -I/opt/ffmpeg/include/ffnvcodec -I/usr/local/cuda/include/ -I/usr/include/x86_64-linux-gnu -I/usr/include/aarch64-linux-gnu' --extra-ldflags='-L/opt/ffmpeg/lib -L/usr/local/cuda/lib64 -L/usr/local/cuda/lib32/ -L/usr/lib/x86_64-linux-gnu -L/usr/lib/aarch64-linux-gnu -L/usr/lib' --extra-ldflags=-L/opt/ffmpeg/lib/aarch64-linux-gnu --extra-ldflags=-L/opt/ffmpeg/lib/x86_64-linux-gnu --extra-libs=-ldl --extra-libs=-lm --extra-libs=-lpthread --ld=g++ --prefix=/opt/ffmpeg
+  libavutil      61.  1.101 / 61.  1.101
+  libavcodec     63.  1.101 / 63.  1.101
+  libavformat    63.  1.101 / 63.  1.101
+  libavdevice    63.  1.101 / 63.  1.101
+  libavfilter    12.  1.101 / 12.  1.101
+  libswscale     10.  1.101 / 10.  1.101
+  libswresample   7.  1.101 /  7.  1.101
+Filter ebur128
+    Inputs:
+       #0: default (audio)
+    Outputs:
+        dynamic (depending on the options)
+ebur128 AVOptions:
+   video             <boolean>    ..FV....... set video output (default false)
+   size              <image_size> ..FV....... set video size (default "640x480")
+   meter             <int>        ..FV....... set scale meter (+9 to +18) (from 9 to 18) (default 9)
+   framelog          <int>        ..FVA...... force frame logging level (from INT_MIN to INT_MAX) (default -1)
+     quiet           -8           ..FVA...... logging disabled
+     info            32           ..FVA...... information logging level
+     verbose         40           ..FVA...... verbose logging level
+   metadata          <boolean>    ..FVA...... inject metadata in the filtergraph (default false)
+   peak              <flags>      ..F.A...... set peak mode (default 0)
+     none                         ..F.A...... disable any peak mode
+     sample                       ..F.A...... enable peak-sample mode
+     true                         ..F.A...... enable true-peak mode
+   dualmono          <boolean>    ..F.A...... treat mono input files as dual-mono (default false)
+   panlaw            <double>     ..F.A...... set a specific pan law for dual-mono files (from -10 to 0) (default -3.0103)
+   target            <int>        ..FV....... set a specific target level in LUFS (-23 to 0) (from -23 to 0) (default -23)
+   gauge             <int>        ..FV....... set gauge display type (from 0 to 1) (default momentary)
+     momentary       0            ..FV....... display momentary value
+     m               0            ..FV....... display momentary value
+     shortterm       1            ..FV....... display short-term value
+     s               1            ..FV....... display short-term value
+   scale             <int>        ..FV....... sets display method for the stats (from 0 to 1) (default absolute)
+     absolute        0            ..FV....... display absolute values (LUFS)
+     LUFS            0            ..FV....... display absolute values (LUFS)
+     relative        1            ..FV....... display values relative to target (LU)
+     LU              1            ..FV....... display values relative to target (LU)
+   integrated        <double>     ..F.A.XR... integrated loudness (LUFS) (from -DBL_MAX to DBL_MAX) (default 0)
+   range             <double>     ..F.A.XR... loudness range (LU) (from -DBL_MAX to DBL_MAX) (default 0)
+   lra_low           <double>     ..F.A.XR... LRA low (LUFS) (from -DBL_MAX to DBL_MAX) (default 0)
+   lra_high          <double>     ..F.A.XR... LRA high (LUFS) (from -DBL_MAX to DBL_MAX) (default 0)
+   sample_peak       <double>     ..F.A.XR... sample peak (dBFS) (from -DBL_MAX to DBL_MAX) (default 0)
+   true_peak         <double>     ..F.A.XR... true peak (dBFS) (from -DBL_MAX to DBL_MAX) (default 0)
+
+
+Exiting with exit code 0

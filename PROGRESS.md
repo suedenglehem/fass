@@ -39,25 +39,35 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   5308bd7 (tests/benchmark/ablation_heldout.json: 79 paraphrase + 20
   ambiguity + 20 unsupported + 10 adversarial; 13 shape tests derived
   from fass/schema/plan.py + held-out property vs fass/nlu/rules.py);
-  Files tab (j_2d6b4287ee) — RUNNING on tr4-secondary, base 15a0baa
-  (2 columns /input + /output, right-click ffprobe/mediainfo/1st
-  frame → popup; mediainfo 503 — not installed on tr4; monitor
-  bk9j29x5c). **M11.4 §9.2 ablation harness** built on main
-  (scripts/m11_ablation.py + tests/test_m11_ablation.py, uncommitted —
-  commit 9): 4 arms × 91 benchmark requests vs tr4 vllm
-  vllm-qwen38-27b-dual-max :8091; run 1 in background (~1.5 LLM
-  calls/min — shared with my own session; out /tmp/ablation-run1).
-  **§9.4 budgets (offline ones DONE):** warm retrieval p95 29 ms
-  (≤300), evidence body max 4000 ch + 263 ch wrapper (≤4000), RAG RSS
-  71 MB (≤4096) — scripts/m11_rag_budgets.py, /tmp/rag-budgets/warm.json;
-  determinism: rules plans byte-identical with RAG on vs off, 91/91
-  (rules path never calls RAG — pipeline.py llm-adapter-only hook).
-  **Next: ablation run 1 report → commit 9 (harness + budgets script +
-  HANDOFF/PROGRESS, suite ~1177/1 expected) → Files-tab merge + ladd
-  integrate → rag service restart → cold retrieval (≤1 s) → run 2
-  (4 arms × held-out 129) = §9.2 go/no-go (+5 pp arm 4 > arm 3 on
-  paraphrase set, no regression, else ship arm 3 + static doc_ref) →
-  M11.4 + §9.4 close-out + /savework.**
+  Files tab (j_2d6b4287ee, tr4-secondary) — INTEGRATED as 38ce046
+  (GET /v1/files, GET /v1/files/inspect ffprobe|mediainfo (503 when
+  absent), POST /v1/files/frame 360-px JPEG fail-open, Files tab +
+  right-click menu + popup; 10 new tests; worktree suite 1158/3 + the
+  known env corpus failure; main suite after merge 1187/1).
+  **M11.4 §9.2 ablation harness — COMMITTED as 1d543a6 (commit 9):**
+  scripts/m11_ablation.py + tests/test_m11_ablation.py +
+  scripts/m11_rag_budgets.py + HANDOFF/PROGRESS; suite 1177/1 at
+  commit. 4 arms × 91 benchmark requests vs tr4 vllm
+  vllm-qwen38-27b-dual-max :8091; run 1 in background (pid 1186350,
+  out /tmp/ablation-run1, live progress = results.jsonl line count;
+  waiter task b7icgf4vl). **§9.4 budgets (offline ones DONE):** warm
+  retrieval p95 29 ms (≤300), evidence body max 4000 ch + 263 ch
+  wrapper (≤4000), RAG RSS 71 MB (≤4096) — scripts/m11_rag_budgets.py,
+  /tmp/rag-budgets/warm.json; determinism: rules plans byte-identical
+  with RAG on vs off, 91/91 (rules path never calls RAG —
+  pipeline.py llm-adapter-only hook). **M11.3 STARTED (2026-10-26):**
+  ebur128 fixture committed (tests/fixtures/rag_author/, trimmed real
+  corpus sections + build-facts, both corpora); rag/author + rag/gaps
+  implementation delegated to i7 (worker has no corpus — fixture-based
+  tests only; I run the real-corpus drafts + registry merge myself).
+  **Next: run 1 report (4-arm table + RAG-overhead/overall latencies)
+  → run 2 (4 arms × held-out 129, auto-picks
+  tests/benchmark/ablation_heldout.json) = §9.2 go/no-go (+5 pp arm 4 >
+  arm 3 on paraphrase set, no regression, else ship arm 3 + static
+  doc_ref) → integrate M11.3 job → real-corpus drafts for
+  ebur128/signalstats/blackframe → review + manual registry merge
+  (bump registry_version) → rag service restart → cold retrieval
+  (≤1 s) → M11.4 + §9.4 close-out + /savework.**
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):

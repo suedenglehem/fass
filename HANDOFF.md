@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) merged; M11.4 IN FLIGHT — held-out dataset merged (5308bd7), ablation harness built + run 1 (4 arms × 91) running in background; Files-tab job running on tr4-secondary; §9.4 warm budgets + determinism PASS)
+## Current state (2026-10-26, M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) + **Files tab (38ce046, from j_2d6b4287ee: /v1/files, /v1/files/inspect ffprobe|mediainfo, /v1/files/frame 360px JPEG, right-click menu + popup)** merged; main suite 1187/1. M11.4 IN FLIGHT — ablation run 1 (4 arms × 91, pid 1186350) running in background, then run 2 (held-out 129) for the §9.2 go/no-go. M11.3 STARTED — rag/author + rag/gaps implementation delegated to i7 (fixtures committed; I run the real-corpus drafts + registry merge myself). §9.4 warm budgets + determinism PASS; cold first-query budget still owed after both runs (rag restart then).)
 **M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
 FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
 aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
