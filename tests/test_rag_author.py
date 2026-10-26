@@ -287,6 +287,43 @@ Exiting with exit code 0
     assert kinds == {(c, "meter", "undocumented_option") for c in CORPORA}
 
 
+def test_comma_group_heading(tmp_path):
+    # alias-group heading 'myfilter, xmyfilter' documents both filters:
+    # authoring the secondary alias finds the shared section
+    html = FORM_A_HTML.replace("5.1 myfilter<a", "5.1 myfilter, xmyfilter<a")
+    build = FORM_A_BUILD.replace("myfilter", "xmyfilter")
+    root = tmp_path / "corpus-root"
+    for c in CORPORA:
+        make_corpus(root, c, html, build, name="xmyfilter")
+    out = tmp_path / "draft.json"
+    r = run_author("filter:xmyfilter", CORPORA, root, out)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(out.read_text())
+    assert d["classification"] == "verified_both"
+    for c in CORPORA:
+        assert set(d["docs"][c]["options"]) == {"alpha", "beta"}, c
+    assert d["option_diffs"] == []
+
+
+def test_build_facts_multi_block():
+    # the filter's own block (header may carry an alias) plus shared
+    # component blocks (framesync) are all part of the option surface
+    from rag.author import parse_build_facts
+    text = """Filter psnr
+psnr AVOptions:
+   stats_file        <string>     ..FV....... stats
+   f                 <string>     ..FV....... stats alias
+framesync AVOptions:
+   eof_action        <int>        ..FV....... eof (default repeat)
+   shortest          <boolean>    ..FV....... stop (default false)
+
+Exiting with exit code 0
+"""
+    opts = parse_build_facts(text, "psnr")
+    assert set(opts) == {"stats_file", "f", "eof_action", "shortest"}
+    assert opts["eof_action"]["default"] == "repeat"
+
+
 # --------------------------------------------------------------------------
 # invariants
 # --------------------------------------------------------------------------

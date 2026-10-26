@@ -43,8 +43,16 @@ def clean_text(html_fragment: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _heading_name_pattern(name: str) -> str:
-    return r"(?:[\d.]+\s+)?" + re.escape(name) + r"(?:\s*[¶#])?(?:\s*TOC)?\s*"
+_HEADING_FULL = re.compile(r"(?:[\d.]+\s+)?(.+?)(?:\s*[¶#])?(?:\s*TOC)?\s*")
+
+
+def heading_names(heading_html: str) -> list[str]:
+    """Comma-split filter names of a section heading ('setpts, asetpts'
+    -> ['setpts', 'asetpts']); [] if the heading text doesn't parse."""
+    m = _HEADING_FULL.fullmatch(clean_text(heading_html))
+    if not m:
+        return []
+    return [p.strip() for p in m.group(1).split(",") if p.strip()]
 
 
 def iter_sections(html: str):
@@ -64,10 +72,10 @@ def iter_sections(html: str):
 
 
 def find_section(html: str, name: str):
-    """The section whose heading text fullmatches the filter name."""
-    pat = re.compile(_heading_name_pattern(name))
+    """The section whose comma-split heading names include `name` (alias
+    groups like 'setpts, asetpts' document every listed filter)."""
     for heading_html, body in iter_sections(html):
-        if pat.fullmatch(clean_text(heading_html)):
+        if name in heading_names(heading_html):
             return heading_html, body
     return None
 
@@ -191,12 +199,18 @@ def parse_doc_options(body: str) -> tuple[dict, str | None]:
 # --------------------------------------------------------------------------
 
 def parse_build_facts(text: str, name: str) -> dict:
-    """Options under the '<name> AVOptions:' line. Top-level option lines
-    are indented 3 spaces; 5-space sub-lines are enum values (skipped)."""
+    """Options of EVERY '<...> AVOptions:' block in a `ffmpeg -h
+    filter=<name>` capture, unioned. The filter's own block header may
+    carry an alias ('acompressor/sidechaincompress AVOptions:') or a
+    shared-class form ('(h|v)stack AVOptions:'), and shared-component
+    blocks (e.g. 'framesync AVOptions:' under psnr/ssim) are part of the
+    filter's option surface too. Top-level option lines are indented 3
+    spaces; 5-space sub-lines are enum values (skipped). `name` is kept
+    for call-site stability; headers are matched generically."""
     options: dict = {}
     in_block = False
     for line in text.splitlines():
-        if line.strip() == f"{name} AVOptions:":
+        if line.rstrip().endswith("AVOptions:"):
             in_block = True
             continue
         if not in_block:

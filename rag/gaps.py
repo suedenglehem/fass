@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from .author import (DOC_FILENAME, clean_text, corpus_version_key,
-                     iter_sections, parse_build_facts)
+                     heading_names, iter_sections, parse_build_facts)
 
 
 def registry_filter_names(registry: dict) -> list[str]:
@@ -47,18 +47,19 @@ def registry_entries(registry: dict) -> dict:
 
 
 def corpus_sections(corpus_root: Path, corpus: str) -> dict:
-    """{filter_name: heading_text} for every <h3 class="section"> heading."""
+    """{filter_name: heading_text} for every <h3 class="section"> heading;
+    comma-group headings ('setpts, asetpts') register every listed name."""
     html_path = corpus_root / corpus / "docs" / DOC_FILENAME
     if not html_path.is_file():
         return {}
     sections = {}
     for heading_html, _body in iter_sections(
             html_path.read_text(encoding="utf-8", errors="replace")):
-        text = clean_text(heading_html)
-        m = re.fullmatch(r"(?:[\d.]+\s+)?(.+?)(?:\s*[¶#])?(?:\s*TOC)?\s*",
-                         text)
-        if m and m.group(1):
-            sections[m.group(1)] = text
+        names = heading_names(heading_html)
+        if names:
+            text = clean_text(heading_html)
+            for n in names:
+                sections[n] = text
     return sections
 
 
@@ -70,7 +71,7 @@ def registry_default(option: dict):
 
 _TYPE_COMPAT = {
     "int": {"int", "int64"},
-    "number": {"int", "int64", "float", "double", "rational"},
+    "number": {"int", "int64", "float", "double", "rational", "duration"},
     "bool": {"boolean", "int", "flags"},
     "choice": {"int", "flags", "string"},
     "string": {"string", "color", "image_size", "duration", "video_rate",
@@ -82,7 +83,8 @@ _TYPE_COMPAT = {
 def type_compatible(reg_kind: str, build_type: str) -> bool:
     """Registry 'kind' vs build-help '<type>'. Enum options are <int>/<flags>
     in build help; numeric options may surface as <float>/<double>/<rational>
-    (or <int>/<int64>); textual options as <color>/<image_size>/<duration>/..."""
+    (or <int>/<int64>, or <duration> for time values); textual options as
+    <color>/<image_size>/<duration>/..."""
     if reg_kind == build_type:
         return True
     return build_type in _TYPE_COMPAT.get(reg_kind, ())

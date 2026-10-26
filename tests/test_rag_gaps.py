@@ -156,12 +156,35 @@ def test_no_demand_flag(tmp_path):
                                 "auto_added": []}
 
 
+def test_comma_group_heading(tmp_path):
+    # 'foo, bfoo' heading registers both names: 'foo' resolves coverage,
+    # 'bfoo' lands in the backlog (all corpora -> first tier)
+    root = tmp_path / "corpus-root"
+    for corpus in CORPORA:
+        docs = root / corpus / "docs"
+        docs.mkdir(parents=True)
+        (docs / "ffmpeg-filters.html").write_text(
+            section("alpha", "1.1") + section("foo, bfoo", "1.2"),
+            encoding="utf-8")
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps(REGISTRY), encoding="utf-8")
+    out = tmp_path / "gaps.json"
+    r = run_gaps(root, reg, out)
+    assert r.returncode == 0, r.stderr
+    report = json.loads(out.read_text())
+    for c in CORPORA:
+        assert report["coverage"]["per_corpus"][c]["resolved"] == ["alpha"], c
+        assert report["coverage"]["per_corpus"][c]["unresolved"] == ["beta"], c
+    assert report["backlog"] == ["bfoo", "foo"]
+
+
 def test_type_compatible_mapping():
     from rag.gaps import type_compatible
     assert type_compatible("int", "int")          # exact
     assert type_compatible("number", "float")
     assert type_compatible("number", "double")
     assert type_compatible("number", "rational")
+    assert type_compatible("number", "duration")
     assert type_compatible("int", "int64")
     assert type_compatible("bool", "boolean")
     assert type_compatible("bool", "int")
