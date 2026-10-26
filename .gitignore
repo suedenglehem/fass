@@ -5,3 +5,10 @@ __pycache__/
 .pytest_cache/
 battery-out/
 docker-data/
+
+# RAG corpus data — rebuilt by rag/tools/build_corpus.sh
+# (recipe recorded in rag/corpus/BUILD-RECIPE.md)
+rag/corpus/*/docs/
+rag/corpus/*/_build/
+rag/corpus/*/build-facts/*
+!rag/corpus/*/build-facts/manifest.json
