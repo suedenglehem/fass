@@ -104,6 +104,57 @@ class VolumesConfig(BaseModel):
     log: str = Field(default="", max_length=1024)
 
 
+class RagConfig(BaseModel):
+    """M11.2 §6.6 — retrieval-augmented generation for the LLM path.
+
+    Off by default (rules stay the default adapter). The env equivalents
+    (FASS_RAG_*) override the file values at request time — see
+    resolved_rag() — so deployments can enable RAG without editing
+    config.json. The model itself is pure data for the config tab."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="opt-in: send a /v1/search to the fass-rag service and "
+                    "augment the LLM prompt with retrieved documentation "
+                    "evidence (and derive citations in the response)",
+    )
+    url: str = Field(
+        default="http://fass-rag:8100", max_length=2048,
+        description="base URL of the fass-rag service (compose service name "
+                    "in the deployment; 127.0.0.1 for host-side testing)",
+    )
+    timeout_ms: int = Field(
+        default=800, ge=1, le=30000,
+        description="per-request budget for the search; RAG is fail-open — "
+                    "a timeout degrades to a RAG-less generation",
+    )
+    top_k: int = Field(
+        default=6, ge=1, le=8,
+        description="chunks requested (server cap: 8, PRD 5.4)",
+    )
+    max_evidence_chars: int = Field(
+        default=4000, ge=1,
+        description="evidence budget appended to the prompt (PRD 6.3: "
+                    "4000 chars)",
+    )
+    corpus: str = Field(
+        default="auto", max_length=64,
+        description="'auto' = corpus selected from the probed input version "
+                    "(exact -> nearest lower -> nightly, PRD 6.2)",
+    )
+    auth_token: str | None = Field(
+        default=None, max_length=1024,
+        description="optional bearer token for the fass-rag service",
+    )
+    send_instruction: bool = Field(
+        default=True,
+        description="include the raw user instruction in the search request "
+                    "(the query builder always adds component names on top)",
+    )
+
+
 class FassConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,6 +162,7 @@ class FassConfig(BaseModel):
     gpu: GPUConfig = Field(default_factory=GPUConfig)
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     volumes: VolumesConfig = Field(default_factory=VolumesConfig)
+    rag: RagConfig = Field(default_factory=RagConfig)
 
 
 def config_path() -> Path:
@@ -121,6 +173,65 @@ def config_path() -> Path:
     if Path("/config").is_dir():
         return Path("/config/config.json")
     return Path.cwd() / ".fass-config.json"
+
+
+# FASS_RAG_* env equivalents of the rag block (PRD 6.6). An env var that is
+# set (and, for numbers, parseable) overrides the config.json value; the
+# override is resolved per request and never written back to the file.
+_RAG_BOOL_TRUE = {"1", "true", "yes", "on"}
+_RAG_BOOL_FALSE = {"0", "false", "no", "off"}
+
+
+def _env_bool(name: str) -> bool | None:
+    v = os.environ.get(name, "").strip().lower()
+    if v in _RAG_BOOL_TRUE:
+        return True
+    if v in _RAG_BOOL_FALSE:
+        return False
+    return None  # unset or unparseable -> no override
+
+
+def _env_int(name: str) -> int | None:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        return None  # unparseable -> no override (config value wins)
+
+
+def _env_str(name: str) -> str | None:
+    v = os.environ.get(name, "").strip()
+    return v or None
+
+
+def resolved_rag(cfg: FassConfig | None = None) -> RagConfig:
+    """The rag block with FASS_RAG_* env overrides applied (PRD 6.6).
+
+    The config model stays pure data (the UI's config tab reads/writes it);
+    this is the only place the env equivalents are consulted. Unparseable
+    numeric overrides are ignored rather than raising — a bad env var must
+    not break generation (RAG is fail-open, PRD 4.4)."""
+    base = (cfg if cfg is not None else load_config()).rag
+    out = base.model_copy()
+    if (v := _env_bool("FASS_RAG_ENABLED")) is not None:
+        out.enabled = v
+    if (v := _env_str("FASS_RAG_URL")) is not None:
+        out.url = v
+    if (v := _env_int("FASS_RAG_TIMEOUT_MS")) is not None:
+        out.timeout_ms = v
+    if (v := _env_int("FASS_RAG_TOP_K")) is not None:
+        out.top_k = v
+    if (v := _env_int("FASS_RAG_MAX_EVIDENCE_CHARS")) is not None:
+        out.max_evidence_chars = v
+    if (v := _env_str("FASS_RAG_CORPUS")) is not None:
+        out.corpus = v
+    if (v := _env_str("FASS_RAG_AUTH_TOKEN")) is not None:
+        out.auth_token = v
+    if (v := _env_bool("FASS_RAG_SEND_INSTRUCTION")) is not None:
+        out.send_instruction = v
+    return out
 
 
 def load_config() -> FassConfig:

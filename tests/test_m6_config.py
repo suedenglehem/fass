@@ -12,13 +12,24 @@ from fass.config import (
     FassConfig,
     LLMConfig,
     GPUConfig,
+    RagConfig,
     StreamingConfig,
     VolumesConfig,
     config_path,
     load_config,
+    resolved_rag,
     save_config,
 )
 from fass import dockerctl
+
+RAG_ENV = ("FASS_RAG_ENABLED", "FASS_RAG_URL", "FASS_RAG_TIMEOUT_MS",
+           "FASS_RAG_TOP_K", "FASS_RAG_MAX_EVIDENCE_CHARS", "FASS_RAG_CORPUS",
+           "FASS_RAG_AUTH_TOKEN", "FASS_RAG_SEND_INSTRUCTION")
+
+
+def _clear_rag_env(monkeypatch):
+    for name in RAG_ENV:
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_defaults():
@@ -128,3 +139,104 @@ def test_config_binds_parses_mode_suffix():
     # no mode suffix also works
     cur2 = {"HostConfig": {"Binds": ["/d/cfg:/config"]}}
     assert dockerctl._config_binds(cur2) == "/d/cfg"
+
+
+# ------------------------------------------------------------ M11.2 rag
+
+def test_rag_defaults():
+    rag = FassConfig().rag
+    assert rag.enabled is False          # opt-in: rules stay the default
+    assert rag.url == "http://fass-rag:8100"
+    assert rag.timeout_ms == 800
+    assert rag.top_k == 6
+    assert rag.max_evidence_chars == 4000
+    assert rag.corpus == "auto"
+    assert rag.auth_token is None
+    assert rag.send_instruction is True
+
+
+def test_rag_validation():
+    with pytest.raises(ValueError):
+        RagConfig(top_k=0)
+    with pytest.raises(ValueError):
+        RagConfig(top_k=9)                # server cap: 8 (PRD 5.4)
+    with pytest.raises(ValueError):
+        RagConfig(timeout_ms=0)
+    with pytest.raises(ValueError):
+        RagConfig(extra=1)                # extra=forbid like the siblings
+
+
+def test_rag_roundtrip(tmp_path, monkeypatch):
+    p = tmp_path / "config.json"
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    _clear_rag_env(monkeypatch)
+    cfg = FassConfig(rag=RagConfig(enabled=True, url="http://172.17.0.1:8100",
+                                   auth_token="tok"))
+    save_config(cfg)
+    assert load_config() == cfg
+    assert json.loads(p.read_text())["rag"]["enabled"] is True
+
+
+def test_resolved_rag_env_overrides(monkeypatch):
+    _clear_rag_env(monkeypatch)
+    base = FassConfig(rag=RagConfig(enabled=False, url="http://cfg:8100",
+                                    timeout_ms=800, top_k=6,
+                                    max_evidence_chars=4000, corpus="auto",
+                                    send_instruction=True))
+    # no env -> the config values
+    assert resolved_rag(base) == base.rag
+    # each env equivalent overrides its field
+    monkeypatch.setenv("FASS_RAG_ENABLED", "1")
+    monkeypatch.setenv("FASS_RAG_URL", "http://127.0.0.1:8100")
+    monkeypatch.setenv("FASS_RAG_TIMEOUT_MS", "500")
+    monkeypatch.setenv("FASS_RAG_TOP_K", "4")
+    monkeypatch.setenv("FASS_RAG_MAX_EVIDENCE_CHARS", "2000")
+    monkeypatch.setenv("FASS_RAG_CORPUS", "ffmpeg-9.0.1")
+    monkeypatch.setenv("FASS_RAG_AUTH_TOKEN", "s3cret")
+    monkeypatch.setenv("FASS_RAG_SEND_INSTRUCTION", "false")
+    got = resolved_rag(base)
+    assert got.enabled is True
+    assert got.url == "http://127.0.0.1:8100"
+    assert got.timeout_ms == 500
+    assert got.top_k == 4
+    assert got.max_evidence_chars == 2000
+    assert got.corpus == "ffmpeg-9.0.1"
+    assert got.auth_token == "s3cret"
+    assert got.send_instruction is False
+    # the config model itself is untouched (env never writes back)
+    assert base.rag.enabled is False
+    assert resolved_rag(base).model_dump() != base.rag.model_dump()
+
+
+def test_resolved_rag_env_variants(monkeypatch):
+    _clear_rag_env(monkeypatch)
+    base = FassConfig()
+    for v in ("0", "false", "no", "off"):
+        monkeypatch.setenv("FASS_RAG_ENABLED", v)
+        assert resolved_rag(base).enabled is False, v
+    for v in ("1", "TRUE", "yes", "on"):
+        monkeypatch.setenv("FASS_RAG_ENABLED", v)
+        assert resolved_rag(base).enabled is True, v
+    monkeypatch.delenv("FASS_RAG_ENABLED")
+    assert resolved_rag(base).enabled is False
+
+
+def test_resolved_rag_bad_env_ignored(monkeypatch):
+    # an unparseable numeric override must not raise (fail-open, PRD 4.4)
+    _clear_rag_env(monkeypatch)
+    monkeypatch.setenv("FASS_RAG_TOP_K", "lots")
+    monkeypatch.setenv("FASS_RAG_TIMEOUT_MS", "800ms")
+    got = resolved_rag(FassConfig())
+    assert got.top_k == 6
+    assert got.timeout_ms == 800
+
+
+def test_resolved_rag_reads_file_when_no_cfg(tmp_path, monkeypatch):
+    p = tmp_path / "config.json"
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    _clear_rag_env(monkeypatch)
+    p.write_text(json.dumps({"rag": {"enabled": True, "top_k": 3}}))
+    got = resolved_rag()
+    assert got.enabled is True
+    assert got.top_k == 3
+    assert got.url == "http://fass-rag:8100"  # untouched defaults stay
