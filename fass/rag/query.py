@@ -106,26 +106,37 @@ class RagQuery:
         return req
 
 
-def _component_name_map(reg: dict) -> dict[str, str]:
-    """Lowercased name -> component type for every component the registry
-    knows: filter names + their reviewed aliases (registry 2.5.0), every
-    encoder form, every bitstream-filter spec name."""
-    m: dict[str, str] = {}
+def _component_name_map(reg: dict) -> dict[str, tuple[str, str]]:
+    """Lowercased name or alias -> (component type, canonical registry
+    name) for every component the registry knows: filter names + their
+    reviewed aliases (registry 2.5.0), every encoder form, every
+    bitstream-filter spec name. Aliases resolve to the filter's
+    canonical name — the request may only carry registry keys."""
+    m: dict[str, tuple[str, str]] = {}
+    # canonical names first, so an alias can never shadow the name of
+    # another component
+    for kind in ("video", "audio"):
+        for name in reg["filters"][kind]:
+            m[name.lower()] = ("filter", name.lower())
     for kind in ("video", "audio"):
         for name, entry in reg["filters"][kind].items():
-            m[name.lower()] = "filter"
             for alias in entry.get("aliases", []) or []:
-                if alias and alias.lower() not in m:
-                    m[alias.lower()] = "filter"
+                a = alias.lower()
+                if a and a not in m:
+                    m[a] = ("filter", name.lower())
     for entry in reg["video_codecs"].values():
-        m[entry["encoder"].lower()] = "encoder"
+        enc = entry["encoder"].lower()
+        m[enc] = ("encoder", enc)
     for entry in reg["audio_codecs"].values():
-        m[entry["encoder"].lower()] = "encoder"
+        enc = entry["encoder"].lower()
+        m[enc] = ("encoder", enc)
     for form in ("gpu", "qsv"):
         for coder in reg[form]["coders"].values():
-            m[coder["encoder"].lower()] = "encoder"
+            enc = coder["encoder"].lower()
+            m[enc] = ("encoder", enc)
     for name in reg["bitstream_filters"]["specs"]:
-        m[name.lower()] = "bitstream_filter"
+        s = name.lower()
+        m[s] = ("bitstream_filter", s)
     return m
 
 
@@ -146,12 +157,12 @@ def mentioned_components(
         re.IGNORECASE,
     )
     found: list[tuple[str, str]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for m in pattern.finditer(instruction):
-        key = m.group(1).lower()
-        if key not in seen:
-            seen.add(key)
-            found.append((names[key], key))
+        ctype, canon = names[m.group(1).lower()]
+        if (ctype, canon) not in seen:
+            seen.add((ctype, canon))
+            found.append((ctype, canon))
     return found
 
 
