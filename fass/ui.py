@@ -1,5 +1,5 @@
 """The web UI (PRD §9): a single self-contained page, no external assets
-(local-first model). Five tabs:
+(local-first model). Six tabs:
 
 - Command — the request form (incl. the verbose-log toggle), the
   clarification flow and the generated command (with a Run button when
@@ -10,7 +10,10 @@
 - Config — the deployment config (M6): volume mappings, stream port
   mappings, GPU, the LLM provider, LLM test, save / apply / compose preview;
 - RAG — direct evidence lookup against the fass-rag service (M11.2,
-  PRD §9): query field, chunk cards with manual links, fail-open status.
+  PRD §9): query field, chunk cards with manual links, fail-open status;
+- Files — the input and output folders side by side (name / size / date),
+  with a right-click menu per file: ffprobe JSON, mediainfo JSON and the
+  first frame as a JPEG, each shown in a closable popup.
 """
 
 UI_HTML = """<!doctype html>
@@ -98,6 +101,32 @@ a { color: var(--accent); }
 .portrow input { width: auto; flex: 1; }
 .portrow select { width: auto; }
 .portrow .name { flex: 2; }
+.filecols { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; }
+.filecol { flex: 1 1 300px; min-width: 0; }
+.filehead { display: flex; gap: 8px; align-items: baseline; font-size: 13px;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .03em;
+  border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.filerow { display: flex; gap: 8px; align-items: baseline; padding: 4px 2px;
+  border-bottom: 1px solid var(--border); font-size: 13px; cursor: context-menu; }
+.filerow:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.filerow .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.filerow .fsize, .filerow .fdate { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.fmenu { position: fixed; z-index: 40; min-width: 150px; display: none;
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.25); padding: 4px; }
+.fmenu button { display: block; width: 100%; margin: 0; padding: 6px 10px;
+  font: inherit; font-size: 13px; font-weight: 500; text-align: left;
+  color: var(--text); background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.fmenu button:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45);
+  display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; }
+.modal { width: 100%; max-width: 760px; background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.overlay[hidden] { display: none; }  /* .overlay's display:flex would win over [hidden] */
+.modal pre { max-height: 70vh; overflow: auto; }
+.modal img { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 .tip { display: inline-block; width: 14px; height: 14px; line-height: 12px;
   text-align: center; font-size: 11px; font-weight: 700; color: var(--accent);
   border: 1px solid var(--accent); border-radius: 999px; cursor: help;
@@ -125,6 +154,7 @@ a { color: var(--accent); }
     <button id="tab-info" onclick="showTab('info')">Info / Log</button>
     <button id="tab-cfg" onclick="showTab('cfg')">Config</button>
     <button id="tab-rag" onclick="showTab('rag')">RAG</button>
+    <button id="tab-files" onclick="showTab('files')">Files</button>
   </div>
 
   <!-- ============================================================ COMMAND -->
@@ -272,6 +302,43 @@ a { color: var(--accent); }
       <div id="rag-results" class="rag-results"></div>
     </div>
   </div>
+
+  <!-- ============================================================= FILES -->
+  <div id="pane-files" hidden>
+    <div class="card">
+      <h2 style="margin-top:0">Files — the input and output folders</h2>
+      <p class="note">The two deployment volumes, newest first. Right-click a
+      file for its <span class="mono">ffprobe</span> /
+      <span class="mono">mediainfo</span> report or its first frame.</p>
+      <button class="small ghost" style="margin-top:0" onclick="loadFiles()">↻ refresh</button>
+      <div class="filecols">
+        <div class="filecol">
+          <div class="filehead">input <span class="note" id="files-count-input"></span></div>
+          <div id="files-input" class="filelist"></div>
+        </div>
+        <div class="filecol">
+          <div class="filehead">output <span class="note" id="files-count-output"></span></div>
+          <div id="files-output" class="filelist"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="filemenu" class="fmenu">
+    <button type="button" onclick="fileAction('ffprobe')">ffprobe</button>
+    <button type="button" onclick="fileAction('mediainfo')">mediainfo</button>
+    <button type="button" onclick="fileAction('frame')">1st frame</button>
+  </div>
+
+  <div id="filemodal" class="overlay" hidden onclick="if (event.target === this) closeModal()">
+    <div class="modal">
+      <div style="display:flex;gap:10px;align-items:center;justify-content:space-between">
+        <h3 id="modal-title" style="margin:0"></h3>
+        <button type="button" class="copy" style="margin-top:0" onclick="closeModal()">close</button>
+      </div>
+      <div id="modal-body" style="margin-top:10px"></div>
+    </div>
+  </div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -281,14 +348,15 @@ let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => { EXEC_ENABLED = !!d.execution; }).catch(() => {});
 
 function showTab(t) {
-  // the base four + 'rag' (concat keeps the pinned literal in test_webinfo)
-  for (const p of ['cmd','runs','info','cfg'].concat('rag')) {
+  // the base four + 'rag' + 'files' (concat keeps the pinned literal in test_webinfo)
+  for (const p of ['cmd','runs','info','cfg'].concat('rag','files')) {
     $('pane-'+p).hidden = (p !== t);
     $('tab-'+p).classList.toggle('on', p === t);
   }
   if (t === 'runs') loadRuns();
   if (t === 'info') { loadLogs(); showInfo($('sel-log').checked ? 'log' : 'mi'); }
   if (t === 'cfg') loadRag();
+  if (t === 'files') loadFiles();
 }
 
 /* ------------------------------------------------------------ command tab */
@@ -780,6 +848,111 @@ function ragResultsHtml(d) {
       `<pre>${esc(c.text)}</pre></div>`;
   }
   return html;
+}
+
+/* ------------------------------------------------------------ files tab */
+function fmtSize(n) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = Number(n) || 0, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return (i === 0 ? v : v.toFixed(1)) + ' ' + units[i];
+}
+function fmtDate(sec) {
+  const d = new Date(Number(sec) * 1000);
+  const p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+    + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+async function loadFiles() {
+  for (const key of ['input', 'output']) {
+    const box = $('files-' + key);
+    try {
+      const d = await (await fetch('/v1/files?dir=' + key)).json();
+      const files = d.files || [];
+      $('files-count-' + key).textContent = d.exists
+        ? files.length + ' file(s)' : 'folder not available on this deployment';
+      box.innerHTML = '';
+      for (const f of files) {
+        const row = document.createElement('div');
+        row.className = 'filerow';
+        row.dataset.dir = key;
+        row.dataset.name = f.name;
+        row.title = f.name + ' — right-click for ffprobe / mediainfo / 1st frame';
+        row.innerHTML = `<span class="fname mono">${esc(f.name)}</span>`
+          + `<span class="fsize">${esc(fmtSize(f.size))}</span>`
+          + `<span class="fdate">${esc(fmtDate(f.mtime))}</span>`;
+        box.appendChild(row);
+      }
+      if (!files.length)
+        box.innerHTML = '<p class="note" style="padding:6px 2px">empty</p>';
+    } catch (e) {
+      box.innerHTML = `<p class="err">list failed: ${esc(String(e))}</p>`;
+    }
+  }
+}
+function fileMenuAt(ev) {
+  const row = ev.target.closest ? ev.target.closest('.filerow') : null;
+  if (!row) return;
+  ev.preventDefault();
+  const menu = $('filemenu');
+  menu.dataset.dir = row.dataset.dir;
+  menu.dataset.name = row.dataset.name;
+  menu.style.display = 'block';
+  menu.style.left = '0px'; menu.style.top = '0px';
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.max(4, Math.min(ev.clientX, window.innerWidth - w - 8)) + 'px';
+  menu.style.top = Math.max(4, Math.min(ev.clientY, window.innerHeight - h - 8)) + 'px';
+}
+function closeFileMenu() { $('filemenu').style.display = 'none'; }
+document.addEventListener('contextmenu', fileMenuAt);
+document.addEventListener('click', e => {
+  if (e.target.closest && e.target.closest('#filemenu')) return;
+  closeFileMenu();
+});
+function openModal(title, bodyHtml) {
+  $('modal-title').textContent = title;
+  $('modal-body').innerHTML = bodyHtml;
+  $('filemodal').hidden = false;
+}
+function closeModal() {
+  $('filemodal').hidden = true;
+  $('modal-body').innerHTML = '';
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeModal(); closeFileMenu(); }
+});
+function detailMsg(d) {
+  return typeof d.detail === 'string' ? d.detail : JSON.stringify(d, null, 2);
+}
+async function fileAction(tool) {
+  closeFileMenu();
+  const menu = $('filemenu');
+  const dir = menu.dataset.dir, name = menu.dataset.name;
+  if (!dir || !name) return;
+  openModal(name + ' — ' + (tool === 'frame' ? '1st frame' : tool),
+    '<span class="note">reading…</span>');
+  const body = $('modal-body');
+  try {
+    if (tool === 'frame') {
+      const r = await fetch('/v1/files/frame', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dir, file: name }),
+      });
+      const d = await r.json();
+      if (!r.ok) { body.innerHTML = `<p class="err">${esc(detailMsg(d))}</p>`; return; }
+      if (!d.ok) { body.innerHTML = `<p class="err">${esc(d.error || 'no frame')}</p>`; return; }
+      body.innerHTML = `<img alt="${esc(name)}" src="data:image/jpeg;base64,${esc(d.jpeg_b64)}">`
+        + `<p class="note">${esc(String(d.width))} × ${esc(String(d.height))}</p>`;
+      return;
+    }
+    const r = await fetch('/v1/files/inspect?dir=' + encodeURIComponent(dir)
+      + '&file=' + encodeURIComponent(name) + '&tool=' + encodeURIComponent(tool));
+    const d = await r.json();
+    if (!r.ok) { body.innerHTML = `<p class="err">${esc(detailMsg(d))}</p>`; return; }
+    body.innerHTML = `<pre>${esc(JSON.stringify(d.json, null, 2))}</pre>`;
+  } catch (e) {
+    body.innerHTML = `<p class="err">${esc(String(e))}</p>`;
+  }
 }
 
 loadCfg().catch(e => $('cfg-status').textContent = 'config load failed: ' + e);
