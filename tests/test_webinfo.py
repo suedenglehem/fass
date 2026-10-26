@@ -1,0 +1,324 @@
+"""M10.7 web-layer tests: the verbose-log toggle (argv + log placement),
+the media-info / log endpoints, the 10000-line log cap, and the Info / Log
+tab in the served UI.
+
+Run under pytest from the repo root (fastapi TestClient, no server).
+"""
+
+from __future__ import annotations
+
+import shutil
+import time
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from fass import execute
+from fass.api import app
+from fass.probe.ffprobe import ffprobe_available
+
+REPO = Path(__file__).resolve().parents[1]
+TITAN = REPO / "media" / "titan.mp4"
+FFMPEG = shutil.which("ffmpeg") is not None
+
+client = TestClient(app)
+
+
+def _dirs(tmp_path, monkeypatch):
+    """Isolated input / output / run dirs (the docker deployment's layout)."""
+    in_dir, out_dir, run_dir = (tmp_path / "in", tmp_path / "out", tmp_path / "runs")
+    for d in (in_dir, out_dir, run_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv(execute.INPUT_DIR_ENV, str(in_dir))
+    monkeypatch.setenv(execute.OUTPUT_DIR_ENV, str(out_dir))
+    monkeypatch.setenv(execute.RUN_DIR_ENV, str(run_dir))
+    monkeypatch.delenv(execute.ALLOW_EXECUTE_ENV, raising=False)
+    return in_dir, out_dir, run_dir
+
+
+def _post(instruction: str, assets: dict, **kw):
+    body = {"instruction": instruction, "assets": assets, "adapter": "rules"}
+    body.update(kw)
+    return client.post("/v1/commands", json=body)
+
+
+def _lavfi_argv(out_name: str) -> list[str]:
+    return ["ffmpeg", "-hide_banner", "-loglevel", "verbose",
+            "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
+            "-c:v", "libx264", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-f", "mp4", out_name]
+
+
+def _wait(run_id: str, timeout: float = 40.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = execute.get_run(run_id)
+        if st and st["status"] != "running":
+            return st
+        time.sleep(0.2)
+    raise AssertionError(f"run {run_id} still running after {timeout}s")
+
+
+# ------------------------------------------------------------- verbose mode
+
+def test_verbose_true_renders_verbose_loglevel():
+    d = _post("resize to 720p", {"main": "clip.mp4"}, verbose=True).json()
+    assert d["status"] == "ready"
+    # argv index 3 is the -loglevel value (ffmpeg -hide_banner -loglevel X)
+    assert d["arguments"][:4] == ["ffmpeg", "-hide_banner", "-loglevel", "verbose"]
+    assert "error" not in d["arguments"]
+    assert "-loglevel verbose" in d["command"]
+
+
+def test_verbose_true_applies_to_every_pass_of_a_multipass_plan():
+    d = _post("stabilize the video", {"main": "clip.mp4"}, verbose=True).json()
+    assert d["status"] == "ready"
+    steps = d["steps"]
+    assert len(steps) >= 2, "stabilize is a two-pass plan"
+    for s in steps:
+        assert s["arguments"][:4] == ["ffmpeg", "-hide_banner", "-loglevel", "verbose"], s
+    assert all("error" not in s["arguments"] for s in steps)
+
+
+def test_verbose_default_keeps_the_error_loglevel():
+    d = _post("resize to 720p", {"main": "clip.mp4"}).json()
+    assert d["status"] == "ready"
+    assert d["arguments"][:4] == ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+
+
+def test_run_request_accepts_the_verbose_field():
+    # execution is disabled in the test env → 403 (the field is accepted,
+    # not a 422 from the extra='forbid' model)
+    r = client.post("/v1/runs", json={
+        "arguments": _lavfi_argv("x.mp4"), "verbose": True})
+    assert r.status_code == 403
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_verbose_run_log_lands_in_output_log_dir(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    run = execute.start_run(_lavfi_argv("demo.mp4"), verbose=True)
+    st = _wait(run.id)
+    assert st["status"] == "success", st
+    log = out_dir / "log" / f"{run.id}.log"
+    assert log.is_file(), f"verbose log must live at {log}"
+    assert not (run_dir / f"{run.id}.log").exists()
+    assert st["log_path"] == str(log)
+    assert st["verbose"] is True
+    # listed as a verbose log, fetchable by name, and via the run endpoint
+    names = {x["name"]: x["kind"] for x in execute.list_logs()}
+    assert names.get(f"{run.id}.log") == "verbose"
+    r = client.get(f"/v1/logs/{run.id}.log")
+    assert r.status_code == 200 and "Output" in r.text
+    r = client.get(f"/v1/runs/{run.id}/log")
+    assert r.status_code == 200 and "Output" in r.text
+    assert (out_dir / "demo.mp4").is_file()
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_non_verbose_run_log_stays_in_run_dir(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    run = execute.start_run(_lavfi_argv("demo.mp4"))
+    st = _wait(run.id)
+    assert st["status"] == "success", st
+    assert (run_dir / f"{run.id}.log").is_file()
+    assert not (out_dir / "log" / f"{run.id}.log").exists()
+    assert st["verbose"] is False
+    names = {x["name"]: x["kind"] for x in execute.list_logs()}
+    assert names.get(f"{run.id}.log") == "run"
+
+
+def test_verbose_run_log_falls_back_to_run_dir_without_output_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv(execute.RUN_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.setattr(execute, "_output_dir", lambda: "")
+    assert execute._log_file("r9", verbose=True) == tmp_path / "runs" / "r9.log"
+
+
+# ---------------------------------------------------------------- log list
+
+def test_logs_lists_and_fetches_a_seeded_log(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    (run_dir / "20260101-000000-abc123.log").write_text("hello log\nsecond line\n")
+    logs = client.get("/v1/logs").json()["logs"]
+    entry = next(x for x in logs if x["name"] == "20260101-000000-abc123.log")
+    assert entry["kind"] == "run"
+    assert entry["run_id"] == "20260101-000000-abc123"
+    assert entry["size"] > 0 and entry["mtime"]
+    r = client.get("/v1/logs/20260101-000000-abc123.log")
+    assert r.status_code == 200
+    assert r.text == "hello log\nsecond line\n"
+    assert "text/plain" in r.headers["content-type"]
+
+
+def test_logs_reports_verbose_kind_and_sorts_newest_first(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    (out_dir / "log").mkdir(parents=True, exist_ok=True)
+    (out_dir / "log" / "old.log").write_text("old\n")
+    time.sleep(0.01)
+    (out_dir / "log" / "new.log").write_text("new\n")
+    (run_dir / "runside.log").write_text("run\n")
+    logs = client.get("/v1/logs").json()["logs"]
+    kinds = {x["name"]: x["kind"] for x in logs}
+    assert kinds["old.log"] == "verbose"
+    assert kinds["new.log"] == "verbose"
+    assert kinds["runside.log"] == "run"
+    mtimes = [x["mtime"] for x in logs]
+    assert mtimes == sorted(mtimes, reverse=True)
+
+
+def test_log_fetch_rejects_unknown_and_traversing_names(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    (run_dir / "ok.log").write_text("ok\n")
+    assert client.get("/v1/logs/nope.log").status_code == 404
+    assert client.get("/v1/logs/.hidden.log").status_code == 404
+    assert client.get("/v1/logs/notalog.txt").status_code == 404
+    # a path is not a basename: the route cannot match it
+    assert client.get("/v1/logs/../../etc/passwd").status_code == 404
+    assert client.get("/v1/logs/sub/ok.log").status_code == 404
+
+
+# ------------------------------------------------------------------ log cap
+
+def _seed_big_log(path: Path, lines: int) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for i in range(1, lines + 1):
+            f.write(f"line {i}\n")
+
+
+def test_log_over_10000_lines_is_served_as_last_1000_with_banner(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    _seed_big_log(run_dir / "big.log", 10001)
+    r = client.get("/v1/logs/big.log")
+    assert r.status_code == 200
+    body = r.text.splitlines()
+    assert body[0] == "[truncated: showing last 1000 of 10001 lines]"
+    assert len(body) == 1001
+    assert body[1] == "line 9002"
+    assert body[-1] == "line 10001"
+
+
+def test_log_at_exactly_10000_lines_is_served_whole(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    _seed_big_log(run_dir / "edge.log", 10000)
+    body = client.get("/v1/logs/edge.log").text.splitlines()
+    assert len(body) == 10000
+    assert body[0] == "line 1" and body[-1] == "line 10000"
+
+
+def test_run_log_endpoint_resolves_log_path_and_honors_the_cap(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    log = out_dir / "log" / "vrun.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    _seed_big_log(log, 25000)
+    run = execute.Run(
+        id="vrun", argv=["ffmpeg", "-i", "a", "o.mp4"], command="ffmpeg -i a o.mp4",
+        started="2026-01-01T00:00:00", status="success", exit_code=0,
+        log="vrun.log", log_path=str(log), verbose=True)
+    execute._save(run)
+    r = client.get("/v1/runs/vrun/log")
+    assert r.status_code == 200
+    body = r.text.splitlines()
+    assert body[0] == "[truncated: showing last 1000 of 25000 lines]"
+    assert len(body) == 1001
+    assert body[-1] == "line 25000"
+
+
+def test_run_log_endpoint_falls_back_to_run_dir_log(tmp_path, monkeypatch):
+    _in, out_dir, run_dir = _dirs(tmp_path, monkeypatch)
+    (run_dir / "plain.log").write_text("plain log text\n")
+    run = execute.Run(
+        id="plain", argv=["ffmpeg", "-i", "a", "o.mp4"], command="ffmpeg -i a o.mp4",
+        started="2026-01-01T00:00:00", status="success", exit_code=0,
+        log="plain.log")
+    execute._save(run)
+    r = client.get("/v1/runs/plain/log")
+    assert r.status_code == 200
+    assert r.text == "plain log text\n"
+
+
+def test_run_log_endpoint_unknown_run_is_404(tmp_path, monkeypatch):
+    _dirs(tmp_path, monkeypatch)
+    assert client.get("/v1/runs/no-such-run/log").status_code == 404
+
+
+# ------------------------------------------------------------- media info
+
+@pytest.mark.parametrize("bad", ["a/b", "sub/dir/x.mp4", "..hidden", "../up.mp4"])
+def test_mediainfo_rejects_non_basename_names(bad):
+    r = client.get("/v1/mediainfo", params={"target": "input", "file": bad})
+    assert r.status_code == 400
+
+
+def test_mediainfo_rejects_bad_target_and_empty_file(tmp_path, monkeypatch):
+    _dirs(tmp_path, monkeypatch)
+    assert client.get("/v1/mediainfo", params={"target": "bogus", "file": "x.mp4"}).status_code == 400
+    assert client.get("/v1/mediainfo", params={"target": "input", "file": ""}).status_code == 400
+
+
+def test_mediainfo_missing_file_is_404(tmp_path, monkeypatch):
+    _dirs(tmp_path, monkeypatch)
+    r = client.get("/v1/mediainfo", params={"target": "input", "file": "nope.mp4"})
+    assert r.status_code == 404
+
+
+def test_mediainfo_strips_the_i_prefix(tmp_path, monkeypatch):
+    # the web UI writes '-i clip.mp4'; the endpoint accepts the same convention
+    in_dir, _out, _runs = _dirs(tmp_path, monkeypatch)
+    (in_dir / "clip.mp4").write_bytes(b"not really media")
+    r = client.get("/v1/mediainfo", params={"target": "input", "file": "-i clip.mp4"})
+    # the file exists, so the request is not a 400/404 — ffprobe on a fake
+    # file fails, which is the documented 502 path
+    assert r.status_code in (200, 502)
+    if r.status_code == 502:
+        assert len(r.json()["detail"]) <= 520
+
+
+@pytest.mark.skipif(
+    not ffprobe_available() or not TITAN.is_file(),
+    reason="ffprobe or media/titan.mp4 not available — needs real media",
+)
+def test_mediainfo_real_media_returns_ffprobe_json(tmp_path, monkeypatch):
+    in_dir, out_dir, _runs = _dirs(tmp_path, monkeypatch)
+    shutil.copy(TITAN, in_dir / "titan.mp4")
+    shutil.copy(TITAN, out_dir / "done.mp4")
+    r = client.get("/v1/mediainfo", params={"target": "input", "file": "titan.mp4"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "format" in d and "streams" in d
+    assert d["format"]["filename"].endswith("titan.mp4")
+    codecs = {s.get("codec_type") for s in d["streams"]}
+    assert "video" in codecs
+    # the output volume is reachable through target=output
+    r = client.get("/v1/mediainfo", params={"target": "output", "file": "done.mp4"})
+    assert r.status_code == 200
+    assert r.json()["format"]["filename"].endswith("done.mp4")
+
+
+# ------------------------------------------------------------------- the UI
+
+def test_ui_has_the_verbose_toggle_and_the_info_tab():
+    html = client.get("/").text
+    assert 'id="verbose"' in html and "verbose log" in html
+    assert 'id="tab-info"' in html and "showTab('info')" in html
+    assert 'id="pane-info"' in html
+    assert "['cmd','runs','info','cfg']" in html
+    for needle in ("mi-target", "mi-file", "log-run", "Show media info", "Show log"):
+        assert needle in html
+    # the toggles are wired into both POSTs
+    assert "verbose: $('verbose').checked" in html
+    assert html.count("verbose: $('verbose').checked") == 2  # submit() + runCmd()
+
+
+def test_ui_keeps_all_mediainfo_controls_off_the_command_tab():
+    html = client.get("/").text
+    cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
+    assert "mediainfo" not in cmd_pane.lower()
+    assert "Show media info" not in cmd_pane
+    assert "log-run" not in cmd_pane
+    # exactly one media-info control, inside the info pane
+    assert html.count("Show media info") == 1
+    info_pane = html.split('<div id="pane-info"')[1].split('<div id="pane-cfg"')[0]
+    assert "Show media info" in info_pane and "log-run" in info_pane

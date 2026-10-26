@@ -24,6 +24,8 @@ Run:  fass serve [--host 0.0.0.0] [--port 8000]
 
 from __future__ import annotations
 
+import json
+import subprocess
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
@@ -33,7 +35,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from fass import dockerctl, execute
 from fass.config import FassConfig, LLMConfig, config_path, load_config, save_config
 from fass.pipeline import generate
-from fass.probe.ffprobe import ffmpeg_available, parse_ffprobe_json, probe_ffmpeg
+from fass.probe.ffprobe import (
+    ffmpeg_available,
+    ffprobe_available,
+    parse_ffprobe_json,
+    probe_ffmpeg,
+)
 from fass.registry import (
     REGISTRY,
     all_filter_names,
@@ -102,6 +109,12 @@ class CommandRequest(BaseModel):
     )
     adapter: Literal["auto", "rules", "llm"] = "auto"
     preflight: bool = False
+    verbose: bool = Field(
+        default=False,
+        description="verbose log mode: every pass runs with -loglevel verbose "
+                    "and the run log is written to the output folder's log/ "
+                    "directory (browsable at GET /v1/logs)",
+    )
 
 
 class RunRequest(BaseModel):
@@ -124,6 +137,11 @@ class RunRequest(BaseModel):
         description="optional wall-clock limit in seconds (file outputs "
                     "finish on their own; streams run until stopped; "
                     "with steps the limit applies per step)",
+    )
+    verbose: bool = Field(
+        default=False,
+        description="write this run's log to the output folder's log/ "
+                    "directory (the command was generated with verbose=true)",
     )
 
     @model_validator(mode="after")
@@ -200,6 +218,7 @@ def create_app() -> FastAPI:
             media=media,
             adapter_name=body.adapter,
             preflight_check=body.preflight,
+            verbose=body.verbose,
         )
         # Every domain outcome (ready / needs_clarification / unsupported /
         # error) is a structured 200; 4xx is reserved for malformed requests.
@@ -449,9 +468,10 @@ def create_app() -> FastAPI:
         try:
             if body.steps:
                 run = execute.start_run_sequence(
-                    body.steps, timeout=body.timeout)
+                    body.steps, timeout=body.timeout, verbose=body.verbose)
             else:
-                run = execute.start_run(body.arguments, timeout=body.timeout)
+                run = execute.start_run(
+                    body.arguments, timeout=body.timeout, verbose=body.verbose)
         except PermissionError as e:
             raise HTTPException(403, str(e))
         except ValueError as e:
@@ -471,7 +491,10 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/runs/{run_id}/log", response_class=PlainTextResponse)
     def get_run_log(run_id: str):
-        log = execute.log_tail(run_id)
+        # Resolved through the run record's log_path (a verbose run's log
+        # lives in {output}/log/), falling back to run_dir(); the >10000-line
+        # cap applies (last 1000 lines + banner).
+        log = execute.read_run_log(run_id)
         if log is None:
             raise HTTPException(404, "run not found")
         return log
@@ -479,6 +502,61 @@ def create_app() -> FastAPI:
     @app.post("/v1/runs/{run_id}/stop")
     def stop_run(run_id: str):
         return {"stopped": execute.stop_run(run_id)}
+
+    # --------------------------------------------- media info & logs (M10.7)
+
+    @app.get("/v1/mediainfo")
+    def mediainfo(target: str = "input", file: str = ""):
+        """Media info = ffprobe's own JSON report on a file in the input
+        volume (target=input) or the output volume (target=output). Named
+        'mediainfo' for UI stability: the mediainfo binary is not part of
+        the image, ffprobe is — and it is the same data the planner reads.
+        File parameters are basenames of the selected volume only."""
+        if target not in ("input", "output"):
+            raise HTTPException(400, "target must be 'input' or 'output'")
+        given = file.strip()
+        if not given:
+            raise HTTPException(400, "file: give a bare filename")
+        name = _strip_i_prefix(given)
+        if not name:
+            raise HTTPException(400, "file: give a bare filename")
+        if "/" in name or name.startswith(".."):
+            raise HTTPException(
+                400, "file must be a bare name in the input or output folder")
+        path = execute.volume_file(target, name)
+        if path is None:
+            raise HTTPException(404, f"{name} not found in the {target} folder")
+        if not ffprobe_available():
+            raise HTTPException(502, "ffprobe is not installed on this build")
+        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json",
+               "-show_format", "-show_streams", str(path)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=120, check=False)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise HTTPException(502, f"ffprobe failed: {e}")
+        if proc.returncode != 0:
+            raise HTTPException(502, f"ffprobe failed: {proc.stderr[-500:]}")
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                502, f"ffprobe output was not JSON: {proc.stdout[-500:]}")
+
+    @app.get("/v1/logs")
+    def list_logs():
+        """Every run log on this deployment: the runs dir (kind 'run') and
+        the verbose logs in {output}/log (kind 'verbose'), newest first."""
+        return {"logs": execute.list_logs()}
+
+    @app.get("/v1/logs/{name}", response_class=PlainTextResponse)
+    def get_log(name: str):
+        """One log file by basename (runs dir or {output}/log). A log longer
+        than 10000 lines is served as its last 1000 lines with a banner."""
+        path = execute.log_path_for(name)
+        if path is None:
+            raise HTTPException(404, "log not found")
+        return execute.serve_log(path)
 
     @app.get("/media/output/{filename}")
     def media_output(filename: str):

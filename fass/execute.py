@@ -463,6 +463,11 @@ class Run:
     # argv, in execution order (the final pass last); argv/command above
     # always describe the FINAL pass — the one that produces the artifact.
     steps: list[list[str]] | None = None
+    # M10.7: where the log ACTUALLY lives (a verbose run writes into
+    # {output}/log/, the normal run into run_dir()); verbose records that
+    # the run was started in verbose-log mode.
+    log_path: str | None = None
+    verbose: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -470,6 +475,7 @@ class Run:
             "started": self.started, "status": self.status,
             "exit_code": self.exit_code, "output": self.output,
             "notes": self.notes, "steps": self.steps,
+            "log_path": self.log_path, "verbose": self.verbose,
         }
 
 
@@ -489,7 +495,26 @@ def _sidecar(run_id: str) -> Path:
     return run_dir() / f"{run_id}.json"
 
 
-def _log_file(run_id: str) -> Path:
+def verbose_log_dir() -> Path | None:
+    """{output_dir}/log — where a VERBOSE run's log lands (the '/output/log'
+    directory the UI's log browser reads). None when no output dir is
+    configured, in which case the log falls back to run_dir()."""
+    out_dir = _output_dir()
+    if not out_dir:
+        return None
+    p = Path(out_dir) / "log"
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return p
+
+
+def _log_file(run_id: str, verbose: bool = False) -> Path:
+    if verbose:
+        d = verbose_log_dir()
+        if d is not None:
+            return d / f"{run_id}.log"
     return run_dir() / f"{run_id}.log"
 
 
@@ -518,9 +543,11 @@ def execution_enabled() -> bool:
     return os.environ.get(ALLOW_EXECUTE_ENV, "") not in ("", "0", "false", "no")
 
 
-def start_run(argv: list[str], timeout: float | None = None) -> Run:
+def start_run(argv: list[str], timeout: float | None = None,
+              verbose: bool = False) -> Run:
     """Validate and start a run; raises ValueError for invalid argv or a
-    disabled execution mode."""
+    disabled execution mode. verbose (M10.7): the log goes to
+    {output_dir}/log/{run_id}.log instead of run_dir()."""
     if not execution_enabled():
         raise PermissionError(
             "execution is disabled on this deployment "
@@ -535,12 +562,14 @@ def start_run(argv: list[str], timeout: float | None = None) -> Run:
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     out_name = argv[-1]
+    log_path = _log_file(run_id, verbose)
     run = Run(
         id=run_id, argv=argv, command=render_posix(argv),
         started=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         status="running",
         output=None if (stream_scheme(out_name) or out_name == "-") else out_name,
         notes=notes, log=f"{run_id}.log",
+        log_path=str(log_path), verbose=verbose,
     )
     out_dir = _output_dir()
     cwd = (
@@ -549,7 +578,7 @@ def start_run(argv: list[str], timeout: float | None = None) -> Run:
         else None
     )
     with _LOCK:
-        logf = open(_log_file(run_id), "wb")
+        logf = open(log_path, "wb")
         proc = subprocess.Popen(
             argv, stdout=logf, stderr=subprocess.STDOUT,
             shell=False, start_new_session=True, cwd=cwd,
@@ -563,7 +592,8 @@ def start_run(argv: list[str], timeout: float | None = None) -> Run:
 
 
 def start_run_sequence(argvs: list[list[str]],
-                       timeout: float | None = None) -> Run:
+                       timeout: float | None = None,
+                       verbose: bool = False) -> Run:
     """Validate and start a MULTI-PASS run (M10.5, two-pass vidstab).
 
     The steps run one at a time, in order, in the SAME working directory
@@ -598,12 +628,14 @@ def start_run_sequence(argvs: list[list[str]],
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     final_argv = resolved[-1]
     out_name = final_argv[-1]
+    log_path = _log_file(run_id, verbose)
     run = Run(
         id=run_id, argv=final_argv, command=render_posix(final_argv),
         started=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         status="running",
         output=None if (stream_scheme(out_name) or out_name == "-") else out_name,
         notes=notes, log=f"{run_id}.log", steps=resolved,
+        log_path=str(log_path), verbose=verbose,
     )
     out_dir = _output_dir()
     cwd = (
@@ -612,7 +644,7 @@ def start_run_sequence(argvs: list[list[str]],
         else None
     )
     with _LOCK:
-        logf = open(_log_file(run_id), "wb")
+        logf = open(log_path, "wb")
     _save(run)
     threading.Thread(
         target=_watch_sequence,
@@ -758,6 +790,133 @@ def log_tail(run_id: str, limit: int = 65536) -> str | None:
             return f.read().decode("utf-8", "replace")
     except OSError:
         return None
+
+
+# ------------------------------------------------------- log browsing (M10.7)
+
+LOG_CAP_LINES = 10000   # a log longer than this is served as its tail
+LOG_TAIL_LINES = 1000   # ... exactly this many last lines, with a banner
+
+
+def _count_lines(p: Path) -> int:
+    """Line count by streaming the file in chunks (never loaded whole)."""
+    n = 0
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            n += chunk.count(b"\n")
+    return n
+
+
+def _tail_lines(p: Path, n: int) -> str:
+    """The last n lines, read backwards from the end of the file."""
+    with open(p, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        data = b""
+        while pos > 0:
+            step = min(1 << 16, pos)
+            pos -= step
+            f.seek(pos)
+            data = f.read(step) + data
+            if data.count(b"\n") > n:
+                break
+    lines = data.rstrip(b"\n").split(b"\n")
+    return b"\n".join(lines[-n:]).decode("utf-8", "replace")
+
+
+def serve_log(p: Path) -> str:
+    """A log file's text for the browser. Files longer than LOG_CAP_LINES
+    lines are served as their LAST LOG_TAIL_LINES lines, headed by a
+    truncation banner (the whole file is never loaded)."""
+    try:
+        total = _count_lines(p)
+    except OSError:
+        return ""
+    if total <= LOG_CAP_LINES:
+        try:
+            return p.read_text("utf-8", "replace")
+        except OSError:
+            return ""
+    tail = _tail_lines(p, LOG_TAIL_LINES)
+    return (f"[truncated: showing last {LOG_TAIL_LINES} of {total} lines]\n"
+            + tail)
+
+
+def _run_log_path(run_id: str) -> Path | None:
+    """Where a run's log lives: the recorded log_path (a verbose run's log
+    sits in {output}/log/), falling back to run_dir()/{run_id}.log."""
+    if "/" in run_id or run_id.startswith("."):
+        return None
+    rec = get_run(run_id)
+    if rec is None:
+        return None
+    lp = rec.get("log_path")
+    if lp:
+        p = Path(lp)
+        if p.is_file():
+            return p
+    p = run_dir() / f"{run_id}.log"
+    return p if p.is_file() else None
+
+
+def read_run_log(run_id: str) -> str | None:
+    """A run's log text (capped — see serve_log); None when unknown."""
+    p = _run_log_path(run_id)
+    return serve_log(p) if p is not None else None
+
+
+def log_path_for(name: str) -> Path | None:
+    """A log file by BASENAME in the runs dir or the verbose log dir
+    (path-traversal guarded like output_file)."""
+    if not name or "/" in name or name.startswith(".") or not name.endswith(".log"):
+        return None
+    for d in (run_dir(), verbose_log_dir()):
+        if d is None:
+            continue
+        p = d / name
+        if p.is_file():
+            return p
+    return None
+
+
+def list_logs() -> list[dict]:
+    """Every *.log in the runs dir (kind 'run') and in {output}/log
+    (kind 'verbose'), newest first."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for d, kind in ((run_dir(), "run"), (verbose_log_dir(), "verbose")):
+        if d is None:
+            continue
+        for p in sorted(d.glob("*.log")):
+            if p.name in seen:
+                continue
+            seen.add(p.name)
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            out.append({
+                "name": p.name,
+                "kind": kind,
+                "size": st.st_size,
+                "mtime": time.strftime("%Y-%m-%dT%H:%M:%S",
+                                       time.localtime(st.st_mtime)),
+                "run_id": p.stem,
+            })
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return out
+
+
+def volume_file(target: str, name: str) -> Path | None:
+    """A file in the input volume (target 'input') or the output volume
+    (target 'output') by bare name — guarded like output_file."""
+    if not name or "/" in name or name.startswith(".."):
+        return None
+    vol = _input_dir() if target == "input" else _output_dir()
+    if not vol:
+        return None
+    p = Path(vol) / name
+    return p if p.is_file() else None
 
 
 def output_file(filename: str) -> Path | None:
