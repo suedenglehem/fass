@@ -4,13 +4,20 @@ FastAPI app exposing the five PRD 5.5 endpoints over the lexical Retriever
 (rag/retrieval.py). CPU-only, localhost-bound, no network calls, no docker
 socket. Configuration via environment (PRD 5.6 surface, lexical subset):
 
-    FASS_RAG_DATA_DIR          corpus root dir (default: rag/corpus)
+    FASS_RAG_DATA              corpus root dir (default: rag/corpus)
+    FASS_RAG_DATA_DIR          legacy alias for FASS_RAG_DATA; used only when
+                               FASS_RAG_DATA is unset (backward compatible)
     FASS_RAG_CORPUS            corpus to load (default: ffmpeg-9.0.1)
-    FASS_RAG_PORT              listen port (default: 8100)
+    FASS_RAG_BIND              listen address as "host:port" (default:
+                               127.0.0.1:8100); malformed specs raise ValueError
+    FASS_RAG_PORT              overrides ONLY the port part of FASS_RAG_BIND
+                               (default: 8100) — kept for backward compatibility
     FASS_RAG_MAX_EVIDENCE_CHARS default evidence budget (default: 4000)
     FASS_RAG_LOG_LEVEL          uvicorn log level (default: info)
 
-Run: ``python -m rag.server`` (binds 127.0.0.1).
+Run: ``python -m rag.server`` (binds 127.0.0.1:8100 unless FASS_RAG_BIND says
+otherwise; the compose service sets FASS_RAG_BIND=0.0.0.0:8100 for the
+container network — PRD 6.7).
 
 Corpus-mismatch decision (PRD 5.5 leaves it open): a request naming a
 corpus_id other than the loaded one returns HTTP 404 with a structured JSON
@@ -39,7 +46,12 @@ from rag.retrieval import (
     Retriever,
 )
 
-DATA_DIR = Path(os.environ.get("FASS_RAG_DATA_DIR", "rag/corpus"))
+DEFAULT_DATA_DIR = "rag/corpus"
+DEFAULT_BIND = "127.0.0.1:8100"
+
+DATA_DIR = Path(os.environ.get("FASS_RAG_DATA")
+                or os.environ.get("FASS_RAG_DATA_DIR")
+                or DEFAULT_DATA_DIR)
 CORPUS = os.environ.get("FASS_RAG_CORPUS", "ffmpeg-9.0.1")
 PORT = int(os.environ.get("FASS_RAG_PORT", "8100"))
 MAX_EVIDENCE_CHARS = int(os.environ.get("FASS_RAG_MAX_EVIDENCE_CHARS",
@@ -165,9 +177,32 @@ def component(component_type: str, component_name: str):
     }
 
 
+def parse_bind(spec: str) -> tuple[str, int]:
+    """Parse a "host:port" bind spec (FASS_RAG_BIND) into (host, port).
+
+    Pure and strict: split at the LAST colon (so bracketed IPv6 hosts
+    survive), non-empty host, numeric port in 0..65535. Anything else raises
+    ValueError — a silently mis-parsed bind spec would open a listener on an
+    unintended address.
+    """
+    host, sep, raw_port = spec.rpartition(":")
+    if not sep or not host:
+        raise ValueError(f"malformed bind spec {spec!r} (expected host:port)")
+    try:
+        port = int(raw_port)
+    except ValueError:
+        raise ValueError(f"malformed bind spec {spec!r} (port not a number)") from None
+    if not 0 <= port <= 65535:
+        raise ValueError(f"bind port out of range in {spec!r}")
+    return host, port
+
+
 def main() -> None:
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level=LOG_LEVEL)
+    host, port = parse_bind(os.environ.get("FASS_RAG_BIND", DEFAULT_BIND))
+    # FASS_RAG_PORT keeps overriding the port part only (backward compatible).
+    port = int(os.environ.get("FASS_RAG_PORT", str(port)))
+    uvicorn.run(app, host=host, port=port, log_level=LOG_LEVEL)
 
 
 if __name__ == "__main__":

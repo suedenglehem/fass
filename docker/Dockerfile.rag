@@ -1,0 +1,39 @@
+# fass-rag retrieval service (M11.2, joint PRD 5.6 + 6.7).
+#
+# CPU-only, non-root, no docker socket, no privileged mode: the service is a
+# lexical retriever over a pinned corpus volume — it never executes FFmpeg and
+# never touches the host's docker API.
+#
+#   docker build -f docker/Dockerfile.rag -t fass-rag:latest .
+#
+# Build context is the REPO ROOT (the compose overlay sets context: ..);
+# only rag/ and pyproject.toml are copied — the server needs the rag package
+# plus fastapi/uvicorn, not the fass product code.
+#
+# The corpus is a mounted volume at /data (FASS_RAG_DATA=/data) laid out as
+# /data/<corpus_id>/manifest.json; the healthcheck (rag/health.py) checks it.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /work
+
+COPY rag/ /work/rag/
+COPY pyproject.toml /work/
+
+RUN pip install --no-cache-dir "fastapi>=0.110" "uvicorn[standard]>=0.29" \
+    && mkdir -p /data \
+    && useradd -r -u 10001 rag \
+    && chown -R rag:rag /work /data
+
+USER rag
+
+ENV FASS_RAG_DATA=/data \
+    FASS_RAG_BIND=0.0.0.0:8100 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8100
+
+CMD ["python", "-m", "rag.server"]
