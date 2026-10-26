@@ -1,0 +1,80 @@
+{
+  "corpus_id": "ffmpeg-9.0.1",
+  "version_status": "pinned-release",
+  "source_kind": "manual",
+  "source": {
+    "type": "release-tarball",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
+    "filename": "ffmpeg-9.0.1.tar.xz",
+    "sha256": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
+    "asc_sha256": "b613a00005232a1245ace7080088781ac23a916119d3e5b0d6c042368eee0177",
+    "doc_toolchain": {
+      "makeinfo": "texi2any (GNU texinfo) 7.1",
+      "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "perl": "REF(0x579ae36a7280)"
+    },
+    "configure_flags": "--disable-autodetect",
+    "fetched_at": "2026-10-26T02:31:07Z"
+  },
+  "built_at": "2026-10-26T02:31:20Z",
+  "parser_version": null,
+  "documents": [
+    {
+      "name": "ffmpeg-bitstream-filters.html",
+      "sha256": "6fd6c59b68986d7fb570502fc099ef363fcba3562b0ca6755977399e9fe42a3a",
+      "bytes": 62887
+    },
+    {
+      "name": "ffmpeg-codecs.html",
+      "sha256": "4ca239158449a8a281ed1d87ba079322852cd3b0c966b430d277e1ff821b6f2e",
+      "bytes": 348527
+    },
+    {
+      "name": "ffmpeg-devices.html",
+      "sha256": "90f5f684abe368277feb72081862c411eafe3641d280017d7680775032dcbba8",
+      "bytes": 112801
+    },
+    {
+      "name": "ffmpeg-filters.html",
+      "sha256": "f97694429313c6946cc8314ec7f282569bde64f23273ddce1c3717723f571ec4",
+      "bytes": 1691848
+    },
+    {
+      "name": "ffmpeg-formats.html",
+      "sha256": "d7e0f5ca8b6f034fe3892d9a0533fe0f537980e3db9e70aa27d8c974924bc1f3",
+      "bytes": 332276
+    },
+    {
+      "name": "ffmpeg-protocols.html",
+      "sha256": "565ce9326a889a10c538c103e08e2112cbb4e7e5961ee1fb36478d67da4ddca2",
+      "bytes": 122252
+    },
+    {
+      "name": "ffmpeg-resampler.html",
+      "sha256": "f9c4aee784b17cb3ccbb7837ec96ea1722f4cbcb191fb87d190b184216aee1db",
+      "bytes": 13780
+    },
+    {
+      "name": "ffmpeg-scaler.html",
+      "sha256": "1ef407aa953316910924922d7c3cbdd6e856e4cd69e89dc88ae03c2e2b4d50d5",
+      "bytes": 12945
+    },
+    {
+      "name": "ffmpeg-utils.html",
+      "sha256": "02167c42955f33a04d0f5435e790cccb16c79285bb2a508630f9f5f5e8d76d8f",
+      "bytes": 55739
+    },
+    {
+      "name": "ffmpeg.html",
+      "sha256": "bdff785a5fb0882952ad8a0842f8550bef3fe24b8ff1e153fc9ff3235bdd843a",
+      "bytes": 217160
+    },
+    {
+      "name": "ffprobe.html",
+      "sha256": "6efac50cc57dff485156be4a874fe5fe4c5e9cfc673299adf53ae4ad6dcf2dcb",
+      "bytes": 58476
+    }
+  ],
+  "total_chunks": null,
+  "index_generation": 1
+}

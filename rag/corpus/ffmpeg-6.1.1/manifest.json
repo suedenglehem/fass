@@ -1,0 +1,75 @@
+{
+  "corpus_id": "ffmpeg-6.1.1",
+  "version_status": "pinned-release",
+  "source_kind": "manual",
+  "source": {
+    "type": "distro-deb",
+    "package": "ffmpeg-doc",
+    "version": "6.1.1-3ubuntu5",
+    "filename": "ffmpeg-doc_7%3a6.1.1-3ubuntu5_all.deb",
+    "sha256": "7f5f0ed49880be05860b8ba82b49e1fdd9423b6a88a8b436f686f82995ceb4e1",
+    "apt_source": "ubuntu noble (universe)",
+    "fetched_at": "2026-10-26T02:29:03Z"
+  },
+  "built_at": "2026-10-26T02:29:50Z",
+  "parser_version": null,
+  "documents": [
+    {
+      "name": "ffmpeg-bitstream-filters.html",
+      "sha256": "11eec06b54da950480f061109670fe0d41db07e24c34f2d3f306cea82d35a7d2",
+      "bytes": 52593
+    },
+    {
+      "name": "ffmpeg-codecs.html",
+      "sha256": "e83a968618d9ec8ce30e565f80ba467bf2d2ccd210be4886aaa1ec3fc0e6fda2",
+      "bytes": 314117
+    },
+    {
+      "name": "ffmpeg-devices.html",
+      "sha256": "dc076c558f0debb51f070c402522b97ec0adfc55cec751608a6d13742f58bbcf",
+      "bytes": 118897
+    },
+    {
+      "name": "ffmpeg-filters.html",
+      "sha256": "86538d692302649c3956b0cd1da1f5787e0cdcdfde663a0342c9c9fcbec3a8c5",
+      "bytes": 1564398
+    },
+    {
+      "name": "ffmpeg-formats.html",
+      "sha256": "0b44039c6ed2261a0435bf03a434739173d4eb783b6b306195e0919538f44314",
+      "bytes": 241388
+    },
+    {
+      "name": "ffmpeg-protocols.html",
+      "sha256": "893181ac5b3d5dcd4a1f7de31d2684809cc9f99a035892fc3e5f937bf01a3642",
+      "bytes": 108083
+    },
+    {
+      "name": "ffmpeg-resampler.html",
+      "sha256": "4366130eea3e0dd11672b5a5c2f033c1d33ad9ee5ed333d68f003041fb881dc5",
+      "bytes": 13759
+    },
+    {
+      "name": "ffmpeg-scaler.html",
+      "sha256": "ff20245eb8fb625b6bd6fd3d90ee7593548a23bd41eb754cde1b9b1cfdc06d5b",
+      "bytes": 8870
+    },
+    {
+      "name": "ffmpeg-utils.html",
+      "sha256": "d6d7685546f79a4eed823a8713fa0ae793eac656b3ca54a8f8d052fb4fe01d7d",
+      "bytes": 53751
+    },
+    {
+      "name": "ffmpeg.html",
+      "sha256": "dc4f0ff168ffc3590d951ff93f50db41e88ed3391210fab9f8083df85900848b",
+      "bytes": 169561
+    },
+    {
+      "name": "ffprobe.html",
+      "sha256": "f45693c59fd95dd1316904a4386c45b1deec7abd2bf5930617863c3c0ec2699e",
+      "bytes": 54361
+    }
+  ],
+  "total_chunks": null,
+  "index_generation": 1
+}

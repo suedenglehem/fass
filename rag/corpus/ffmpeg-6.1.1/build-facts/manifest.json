@@ -1,0 +1,2831 @@
+{
+  "corpus_id": "ffmpeg-6.1.1-build-help",
+  "version_status": "pinned-release",
+  "source_kind": "build_help",
+  "source": {
+    "type": "distro-deb",
+    "package": "ffmpeg-doc",
+    "version": "6.1.1-3ubuntu5",
+    "filename": "ffmpeg-doc_7%3a6.1.1-3ubuntu5_all.deb",
+    "sha256": "7f5f0ed49880be05860b8ba82b49e1fdd9423b6a88a8b436f686f82995ceb4e1",
+    "apt_source": "ubuntu noble (universe)",
+    "fetched_at": "2026-10-26T02:29:03Z",
+    "build_identity": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers"
+  },
+  "built_at": "2026-10-26T02:29:50Z",
+  "parser_version": null,
+  "documents": [
+    {
+      "name": "bsfs.txt",
+      "sha256": "a1722879bdd0dd22afaf28b031ee7071e5c5e90a5299d6837106a59e43d21eb3",
+      "bytes": 2466
+    },
+    {
+      "name": "encoders.txt",
+      "sha256": "37a71bf50a35ce40a5d0a72e4a2653cc26092ca2e73bf62ed48496edb69c47f6",
+      "bytes": 15057
+    },
+    {
+      "name": "filter-a3dscope.txt",
+      "sha256": "5f201515595d328844eaaa8255e3e61917d860dfddba04f4e3c64d0a2b99cd48",
+      "bytes": 3348
+    },
+    {
+      "name": "filter-abench.txt",
+      "sha256": "b300c065b62abcd5690f8b5f28636c3798bd3efb7528f8609ddb327ff5f043ea",
+      "bytes": 2207
+    },
+    {
+      "name": "filter-abitscope.txt",
+      "sha256": "5ef5ac47e1c3569fdc55b6bd39d89f8378e2acd2090b0b51ef64837a02945305",
+      "bytes": 2844
+    },
+    {
+      "name": "filter-abuffer.txt",
+      "sha256": "c8a1f9d339f6b22fa1da5aef4aa69db12594a98ef04a91339daa4f70c60e7b15",
+      "bytes": 2385
+    },
+    {
+      "name": "filter-abuffersink.txt",
+      "sha256": "4aa2bf78d301ee2378d6220a5ecf85636cb38b4e4c9d9b415ba9f46fd5e5aaf7",
+      "bytes": 2621
+    },
+    {
+      "name": "filter-acompressor.txt",
+      "sha256": "fefdd1344a8242ee8f85b4258e46547c7c8e3dd6c911404f3b2128c00d70122d",
+      "bytes": 3378
+    },
+    {
+      "name": "filter-acontrast.txt",
+      "sha256": "fa4f3cdd643ae3a0ce40f9470d2add0e3c97dc03edd00d9b8bde4133625bc6c8",
+      "bytes": 2123
+    },
+    {
+      "name": "filter-acopy.txt",
+      "sha256": "c7ddeb405df912a8cc3f454b9b56855a308af1c3f47434e84366565ec9a5f6c7",
+      "bytes": 1998
+    },
+    {
+      "name": "filter-acrossfade.txt",
+      "sha256": "387adc0450db173cd3f4c528b76757c44a2e20c50f88654b2849da8b8bbf2d3b",
+      "bytes": 9333
+    },
+    {
+      "name": "filter-acrossover.txt",
+      "sha256": "e0322b89413d355cd7a617380f7912cfbfc7e61ffe45e96aa43c142154818119",
+      "bytes": 3458
+    },
+    {
+      "name": "filter-acrusher.txt",
+      "sha256": "1817909d1718e3cee4e90f2e2a9bbc3a65f0b8b01a2db900ca78274b80564895",
+      "bytes": 3148
+    },
+    {
+      "name": "filter-acue.txt",
+      "sha256": "071d4ce75fb069944ad36e6b751e851f4ee8747bdbb44d8d1d91780d71545bc9",
+      "bytes": 2286
+    },
+    {
+      "name": "filter-addroi.txt",
+      "sha256": "ceec9b6d2550e92ce79f2aaa05c85551ae471e8fce2dd36004f2283ac68a8b9a",
+      "bytes": 2605
+    },
+    {
+      "name": "filter-adeclick.txt",
+      "sha256": "4c69a586ca4f0068c5ff1ab9ad3e4c0f709e6871d8280d6ddd867ff2c7a94ebc",
+      "bytes": 3691
+    },
+    {
+      "name": "filter-adeclip.txt",
+      "sha256": "0a738b7fc33959ddfd512c8b260000fa93ed10e12bc2cde705931777bf689245",
+      "bytes": 3702
+    },
+    {
+      "name": "filter-adecorrelate.txt",
+      "sha256": "8f86c471604cf16110461924e72623616bbe27c2dc008366a6a5595a6635762e",
+      "bytes": 2309
+    },
+    {
+      "name": "filter-adelay.txt",
+      "sha256": "ca72a9d872185758c8f993d670dacb6b42e1e58f24ee1b383c29505496b5773c",
+      "bytes": 2263
+    },
+    {
+      "name": "filter-adenorm.txt",
+      "sha256": "2e14ab8d87ea97627ba74c87251c7fe630dda7dca1056bebe79889dd58c3daa1",
+      "bytes": 2480
+    },
+    {
+      "name": "filter-aderivative.txt",
+      "sha256": "e27345615fa9c1e14a30a8aaef909ae0e708ee8bf18fb711e467f1ad0f4eb36d",
+      "bytes": 2093
+    },
+    {
+      "name": "filter-adrawgraph.txt",
+      "sha256": "4ba3a7eded282f2e9c010b49b5e6ea87af7fe81fda0ebce07458468858b0b2bc",
+      "bytes": 4074
+    },
+    {
+      "name": "filter-adrc.txt",
+      "sha256": "2b1fdd3c82d1c4be0bb6543b11499ce954f6178e5241b54b554db300bb990e24",
+      "bytes": 2462
+    },
+    {
+      "name": "filter-adynamicequalizer.txt",
+      "sha256": "38acd4655bedf78a7d4bedc8a20bae989b9a3cdb01f64d1503e5a17caae0119d",
+      "bytes": 4628
+    },
+    {
+      "name": "filter-adynamicsmooth.txt",
+      "sha256": "646e99b798d0db1635074515ccad544ed1e989da1dd7f06b06ec306e044b3979",
+      "bytes": 2292
+    },
+    {
+      "name": "filter-aecho.txt",
+      "sha256": "17c195b78e87e277d77e578a2af477031464fbb61568458eefa407076c4502ae",
+      "bytes": 2366
+    },
+    {
+      "name": "filter-aemphasis.txt",
+      "sha256": "7c5627d0bf6fa08fdaa7e1e917b2b549ec38b9c9e0e01ca2cd0a9a7f102a98c5",
+      "bytes": 3059
+    },
+    {
+      "name": "filter-aeval.txt",
+      "sha256": "e32ceb9fae67143ba6be2482c8588b88ee82ce7f8c6a7e318f9cb000a3cbbd48",
+      "bytes": 2320
+    },
+    {
+      "name": "filter-aevalsrc.txt",
+      "sha256": "e2522ffae8e2ee4d88b366338141ac604061f517ce19f8c0a2102c5945a4c406",
+      "bytes": 2850
+    },
+    {
+      "name": "filter-aexciter.txt",
+      "sha256": "ccb2b8157638de03e5dff782845ef65c37011488daa6a61da79ae60d5abdbcb9",
+      "bytes": 2790
+    },
+    {
+      "name": "filter-afade.txt",
+      "sha256": "3ea8d8c56900593dd496350d2832bd7b4c1e8ebdc2dbac95db3cfecb899e5ed2",
+      "bytes": 6751
+    },
+    {
+      "name": "filter-afdelaysrc.txt",
+      "sha256": "2262eebf2820166a9bd6073cac788de5853a3f163cf07ccc650601e8a7490772",
+      "bytes": 3064
+    },
+    {
+      "name": "filter-afftdn.txt",
+      "sha256": "6c5b7746a91644a34b2093c6f75f32096864ccff7e34ce4619916ac582d8c97c",
+      "bytes": 7193
+    },
+    {
+      "name": "filter-afftfilt.txt",
+      "sha256": "b8a8c515a7f1f0c66995dc74ad515ff6b774aa88cd634d156d58b7ab12596b19",
+      "bytes": 3816
+    },
+    {
+      "name": "filter-afifo.txt",
+      "sha256": "568d2dd16f7d917d1235fe20f05c592d869806be43e2ff14229b53ee0ece0c33",
+      "bytes": 2011
+    },
+    {
+      "name": "filter-afir.txt",
+      "sha256": "5e4c4643d1905717d2663d20761cdc4932257d27d4958065832b2602bade02c4",
+      "bytes": 4543
+    },
+    {
+      "name": "filter-afireqsrc.txt",
+      "sha256": "ece02874c84505bdfa15b817adf753290f50bf6a035e381504850b101f1bacff",
+      "bytes": 5986
+    },
+    {
+      "name": "filter-afirsrc.txt",
+      "sha256": "1bcf25bbff0f6103252ad7bf91e95cb1e778af1142c30496c801e2e3d227ceda",
+      "bytes": 8194
+    },
+    {
+      "name": "filter-aformat.txt",
+      "sha256": "bd84f60efc4eef1d0bb3b30617a4b347488c0832559e25b8b22ce441a8b28f17",
+      "bytes": 2545
+    },
+    {
+      "name": "filter-afreqshift.txt",
+      "sha256": "08c5cbc1bc1fdcbb7325b6c67d2a37ed86cf1c3fcd50696cfd7e224ee0e27653",
+      "bytes": 2405
+    },
+    {
+      "name": "filter-afwtdn.txt",
+      "sha256": "46644f64defa864ac6574a35feb7d2c9662544f3bc16172e6aff0f3b8f4245d0",
+      "bytes": 3238
+    },
+    {
+      "name": "filter-agate.txt",
+      "sha256": "19708d0292c49d9a8e94195ec930c6bc224a8eef7265e5a1a2cdb17dcfae8c17",
+      "bytes": 3430
+    },
+    {
+      "name": "filter-agraphmonitor.txt",
+      "sha256": "644765f5681a45bacb81f32753a27360c9eb315bf6dc55b240a33f13837b3093",
+      "bytes": 5024
+    },
+    {
+      "name": "filter-ahistogram.txt",
+      "sha256": "2812e66e85ea5d7d4b29db4cd54da5713f2f62549a4a87f6e5cf1ddada85fe98",
+      "bytes": 3880
+    },
+    {
+      "name": "filter-aiir.txt",
+      "sha256": "4385278cc60563c61ccdbd65e516396a09625fb8b018d0dd0b62e2cca775d32e",
+      "bytes": 5949
+    },
+    {
+      "name": "filter-aintegral.txt",
+      "sha256": "5c0dd20cedcf5281ad53e6ae8c28b53c9094735806206ebb2d11d2be7d27ac91",
+      "bytes": 2089
+    },
+    {
+      "name": "filter-ainterleave.txt",
+      "sha256": "c07ea932d908e23fedb83423eb39e691715cc98f7bea4be38e080f4272752ffb",
+      "bytes": 2560
+    },
+    {
+      "name": "filter-alatency.txt",
+      "sha256": "5e824c5355b18b27ca4ac438afd7c1ab47ceba0f0ca086ed1c414824af4be75c",
+      "bytes": 2053
+    },
+    {
+      "name": "filter-alimiter.txt",
+      "sha256": "55db2af1810458f6718a581eafcc318de24808fcdc127d9e48c379efe67effd2",
+      "bytes": 2830
+    },
+    {
+      "name": "filter-allpass.txt",
+      "sha256": "d56002bcf97b59108c8419e17ecf2eb4eb193d03a6a710b0a30a77cf12b00187",
+      "bytes": 5824
+    },
+    {
+      "name": "filter-allrgb.txt",
+      "sha256": "03d7597f9d16116864a37abadba44678b4d04075b7c041703cfcea14bc0155f6",
+      "bytes": 2438
+    },
+    {
+      "name": "filter-allyuv.txt",
+      "sha256": "5534abd352a3ec996f8fd110fa79e7b11b3c5fc704b99a0e08e2de12eb6861be",
+      "bytes": 2438
+    },
+    {
+      "name": "filter-aloop.txt",
+      "sha256": "8ef939a8960b8f9ba50d752f1477302c82fe8629df5924d7b4f1df4948b29098",
+      "bytes": 2388
+    },
+    {
+      "name": "filter-alphaextract.txt",
+      "sha256": "f551a165648287cd09fa90e685651e53b9d399804f14f41ed9981755bb145bd8",
+      "bytes": 2016
+    },
+    {
+      "name": "filter-alphamerge.txt",
+      "sha256": "efb1291835b7c4d68e971ac8686b601ec17abc1b5d63ab4c047a6c57aa402712",
+      "bytes": 3168
+    },
+    {
+      "name": "filter-amerge.txt",
+      "sha256": "f880ea264434ddf80ca8c193648cc635b227e5db314adf4d04449f55f321693b",
+      "bytes": 2158
+    },
+    {
+      "name": "filter-ametadata.txt",
+      "sha256": "92e650ade57ccfbc7bc52decf5c1268b67b4aba7bcc5861add2ec300e39cea72",
+      "bytes": 3332
+    },
+    {
+      "name": "filter-amix.txt",
+      "sha256": "a2356f90c0c27db946175a3df52cde0d4ba469bd8c64a573714b89939bd5acf4",
+      "bytes": 2749
+    },
+    {
+      "name": "filter-amovie.txt",
+      "sha256": "41eabeea4fede876ea38ad431e5da55d831b9b84161e85624f02febe4412fc0b",
+      "bytes": 3097
+    },
+    {
+      "name": "filter-amplify.txt",
+      "sha256": "9d3542c26b752266c6a63a3041393a1106da7e6366a4b78d19829c1998b3340c",
+      "bytes": 2780
+    },
+    {
+      "name": "filter-amultiply.txt",
+      "sha256": "958dbf2c9c0ad92e767f0bbca8490a48d13241e53820328c5f52506f23a0d111",
+      "bytes": 2015
+    },
+    {
+      "name": "filter-anequalizer.txt",
+      "sha256": "408baa9e0061d0900a7f56bc64080c185c2f0495f16bd8c662d1c34e10d139f3",
+      "bytes": 2815
+    },
+    {
+      "name": "filter-anlmdn.txt",
+      "sha256": "85fe63d4cca27eeb0f435764e59ab609696ddb3deab5ace7724ba9a376d534eb",
+      "bytes": 3348
+    },
+    {
+      "name": "filter-anlmf.txt",
+      "sha256": "c68f9840595483167051836d8247eb8c25d5b2009a0f0f39227d5fb1b666bbaa",
+      "bytes": 2892
+    },
+    {
+      "name": "filter-anlms.txt",
+      "sha256": "773f77d1ee5ef92d02177a1dd332630bb22a606065742f109897bd3b1a35a248",
+      "bytes": 2893
+    },
+    {
+      "name": "filter-anoisesrc.txt",
+      "sha256": "743aaad51d18a263566ec7ed785b294c35c643f2e5960f438cd7dd1e0b87ed7c",
+      "bytes": 4166
+    },
+    {
+      "name": "filter-anull.txt",
+      "sha256": "580d9057f1fe05e7f4e49ce18047c48f69b0e69b48d428e8e5f10eec0d0c4700",
+      "bytes": 1993
+    },
+    {
+      "name": "filter-anullsink.txt",
+      "sha256": "b8297f4831da190c3118b194ad25b23895935b607609179e8e402839d580b9f9",
+      "bytes": 2000
+    },
+    {
+      "name": "filter-anullsrc.txt",
+      "sha256": "ff30ac10512194e24f56d3df81c80d26fa4a4200e86b4abfb271b37baea4cca0",
+      "bytes": 2780
+    },
+    {
+      "name": "filter-apad.txt",
+      "sha256": "a56c21afc857cd21775e72603c300b099c5f1e7c33a9829cbe39012ce3d9c2d6",
+      "bytes": 2631
+    },
+    {
+      "name": "filter-aperms.txt",
+      "sha256": "860931133d39fcec487ef1f8e6aac75c5a8cf371a1f1a37e2406664f4e698416",
+      "bytes": 2647
+    },
+    {
+      "name": "filter-aphasemeter.txt",
+      "sha256": "06447275ed85344ace212a9fb39f3a345d85c7482bf4ad8421afa8e7f0c1447f",
+      "bytes": 3598
+    },
+    {
+      "name": "filter-aphaser.txt",
+      "sha256": "dda41bc21f8d20e8066e3eecc5239023519f4dfca8c7de015a544b3a9f3726ef",
+      "bytes": 2760
+    },
+    {
+      "name": "filter-aphaseshift.txt",
+      "sha256": "7566b77580b0bf711e221aec5f2de84e8d9ff9beaf6f5cc347a025cb22608b58",
+      "bytes": 2383
+    },
+    {
+      "name": "filter-apsnr.txt",
+      "sha256": "54002a5a28be68900a0947db5e70f895378e369ae073cff0889fa82f5f968084",
+      "bytes": 2115
+    },
+    {
+      "name": "filter-apsyclip.txt",
+      "sha256": "352273603b5cd9b53ebc12a195123f5fb252d63be74f62078b29218ca67ab494",
+      "bytes": 2733
+    },
+    {
+      "name": "filter-apulsator.txt",
+      "sha256": "4f8d43716876b6945deff300815c8a2a4b6b6569b6fc6731e9b071855b056679",
+      "bytes": 3329
+    },
+    {
+      "name": "filter-arealtime.txt",
+      "sha256": "bba4abe8c963bf7c230e5e68b774926bb629d1d1a075be01fa073c1f672e3b4e",
+      "bytes": 2191
+    },
+    {
+      "name": "filter-aresample.txt",
+      "sha256": "85ca247b5c29fe7cd2fe885d63d1d6fbe053a04377b910e6f41b2a02fe69aea9",
+      "bytes": 9742
+    },
+    {
+      "name": "filter-areverse.txt",
+      "sha256": "45d4f0dde3193b72521643389af3171c9344320f3e941345159aeca47d6fae6c",
+      "bytes": 1978
+    },
+    {
+      "name": "filter-arls.txt",
+      "sha256": "7a6a4f80dffe6382c2d0ba9537bc1f5c8f01d9edeced756f0e07b367a3f3b9ef",
+      "bytes": 2792
+    },
+    {
+      "name": "filter-arnndn.txt",
+      "sha256": "2e30f2a43aa36b173d9cf231a64b1b715db5ca1009f3ca4e9a735d981cbe095d",
+      "bytes": 2345
+    },
+    {
+      "name": "filter-asdr.txt",
+      "sha256": "3e0d70d91288d638ac6c4e24da078135cdd5e80880efceb1c2d4c42ff64c828f",
+      "bytes": 2114
+    },
+    {
+      "name": "filter-asegment.txt",
+      "sha256": "bd17bc2c3e91eea4cbbe0284d4e2b45ee33e9eddd63ce33c79414aa11172128b",
+      "bytes": 2182
+    },
+    {
+      "name": "filter-aselect.txt",
+      "sha256": "62e109d23a62a0b09ee302df97b7816a02b73523cf85d29fc7d050dac852795f",
+      "bytes": 2449
+    },
+    {
+      "name": "filter-asendcmd.txt",
+      "sha256": "e18541435cd531c6d3d2f07a30b852a55d1c9c885731260f90b311cc2f043706",
+      "bytes": 2250
+    },
+    {
+      "name": "filter-asetnsamples.txt",
+      "sha256": "a0be4a9b5a37db68bfd4dfed02e8de706594fcce5305aaceec4c66bf1e8fb350",
+      "bytes": 2528
+    },
+    {
+      "name": "filter-asetpts.txt",
+      "sha256": "1a05afe00042f323052b28a9851f6f2dc5cd10aaec67a682caf32c85dbb67fd3",
+      "bytes": 2115
+    },
+    {
+      "name": "filter-asetrate.txt",
+      "sha256": "f883140c79c6d459a92f7bd4f72128941d2df0a4d43ed7b146f2293259fe33ae",
+      "bytes": 2230
+    },
+    {
+      "name": "filter-asettb.txt",
+      "sha256": "3917d5a3cf0743e4946d69bfc2bdfb2ad47ae40c32d62138ca8b621389231e50",
+      "bytes": 2232
+    },
+    {
+      "name": "filter-ashowinfo.txt",
+      "sha256": "60d3a75c8c9be767f6dfbbc3d8db2c642c77a4b1862d6f1b4c06983ad1edae94",
+      "bytes": 2003
+    },
+    {
+      "name": "filter-asidedata.txt",
+      "sha256": "9f13f23fcc78f964d57a07c8d27fb8491c8dad5089a33c5eee049eca41691275",
+      "bytes": 3420
+    },
+    {
+      "name": "filter-asisdr.txt",
+      "sha256": "cf4b8a675b4d639d4ac2642b2bc14f5ce945fd902dcbe72ccf0e03833afd4e22",
+      "bytes": 2132
+    },
+    {
+      "name": "filter-asoftclip.txt",
+      "sha256": "8368b1993784be1511de14f942687ebce960f77c1c029ec6b6f23f97df353f45",
+      "bytes": 2996
+    },
+    {
+      "name": "filter-aspectralstats.txt",
+      "sha256": "7da83c0c6e4131aa5359077f66061c6b77172119028b7909248b94c04af9d884",
+      "bytes": 4475
+    },
+    {
+      "name": "filter-asplit.txt",
+      "sha256": "a98781c3d6f984a7943a06d95e9574b518e796b954cd8673c0af307654bfa36b",
+      "bytes": 2134
+    },
+    {
+      "name": "filter-asr.txt",
+      "sha256": "8dae07499d30d7a716f6e30fc4767aa7f674bf6c87ec5e19bfdd2a18edfea262",
+      "bytes": 2576
+    },
+    {
+      "name": "filter-ass.txt",
+      "sha256": "0281868751f9060bf592fb0166c10cf7909c27f2801aebf0573dd726661e4caa",
+      "bytes": 2745
+    },
+    {
+      "name": "filter-astats.txt",
+      "sha256": "a704437ad9bc0558f4fc52af311dd09c58e87079bc72b634146c184fd7ae25c9",
+      "bytes": 5985
+    },
+    {
+      "name": "filter-astreamselect.txt",
+      "sha256": "d6809f7615ff8ea77a06f7301c4d976565d3eeddf7b01d9fa57f2bb604d14229",
+      "bytes": 2223
+    },
+    {
+      "name": "filter-asubboost.txt",
+      "sha256": "1e5aa495668af30a946ff099c54d1976611dc86035fc88a5d1b4afb529e537f2",
+      "bytes": 2876
+    },
+    {
+      "name": "filter-asubcut.txt",
+      "sha256": "f68840184cde45bea71c9d6394fe313fff64da906774b57eb751fad5fb1114fc",
+      "bytes": 2372
+    },
+    {
+      "name": "filter-asupercut.txt",
+      "sha256": "b3114b8eed5dba1737514e22ee7081708b6e8d1a6efe2839364e0af16a34f106",
+      "bytes": 2382
+    },
+    {
+      "name": "filter-asuperpass.txt",
+      "sha256": "e1168cfc89113af0af5c3906f5121d6ad583a95df18a95fcd1a9d4725fe7daaf",
+      "bytes": 2503
+    },
+    {
+      "name": "filter-asuperstop.txt",
+      "sha256": "7adec276644d6c10445d20225b36b3aef3ac07e7627d68f51f3ce0eb897c7cde",
+      "bytes": 2503
+    },
+    {
+      "name": "filter-atadenoise.txt",
+      "sha256": "5e6b51975494204721feb29ba1b34360a821e49afa98216739d43f8966d87711",
+      "bytes": 3461
+    },
+    {
+      "name": "filter-atempo.txt",
+      "sha256": "2f08cef168b873108098c8f920eee3366576f2d83bca7f50cf04f5ab7be51f18",
+      "bytes": 2091
+    },
+    {
+      "name": "filter-atilt.txt",
+      "sha256": "cf10b38730b0b2b2e60c5eeee5e84875c8511a62973e168bb46967f6f62f1f74",
+      "bytes": 2566
+    },
+    {
+      "name": "filter-atrim.txt",
+      "sha256": "fa0d5073c4d9266cb5726624697b81643cd05e10b4b695c30c89fd8f139d3d54",
+      "bytes": 3274
+    },
+    {
+      "name": "filter-avectorscope.txt",
+      "sha256": "75c89438dde4ce18f917b91b9175ac85e96ff42b0c3e2693c8cb729ddd4f671b",
+      "bytes": 4647
+    },
+    {
+      "name": "filter-avgblur.txt",
+      "sha256": "870ae38ccc70a4f0e9b8a286ecb9d1527866f06758cffb3c4dbd23f32a06d1e3",
+      "bytes": 2350
+    },
+    {
+      "name": "filter-avgblur_opencl.txt",
+      "sha256": "30378535021314e03433949f6e5a24137ecc980c8d31b9e67e53accebfaecc1b",
+      "bytes": 2297
+    },
+    {
+      "name": "filter-avgblur_vulkan.txt",
+      "sha256": "0cd923ba4353657a46a39d86ad80b0328c7164072926ea52dbe36dd9bdfbe18c",
+      "bytes": 2315
+    },
+    {
+      "name": "filter-avsynctest.txt",
+      "sha256": "8b1a010ede948b1692e64a7d63be9ab30efa509224f3ee12bbd2fa0e9366224c",
+      "bytes": 3648
+    },
+    {
+      "name": "filter-axcorrelate.txt",
+      "sha256": "3f2f9532b31ad9c74ab0dfed46316862a4e92dea1d9a2e3f14ece94aaa8bd0a0",
+      "bytes": 2430
+    },
+    {
+      "name": "filter-azmq.txt",
+      "sha256": "c562408c2a227a7da06e0516d4902b7ece2117e2c441ad2985bede0f4d07a1e4",
+      "bytes": 2203
+    },
+    {
+      "name": "filter-backgroundkey.txt",
+      "sha256": "9dfa60995d6cf195e432f87b67e770e4f309d305cb13d479b067339e0ac996e8",
+      "bytes": 2418
+    },
+    {
+      "name": "filter-bandpass.txt",
+      "sha256": "007862a3d1298de8ca6d68e49949eb3346c6ee4ad21ed2d1e502f8cfa5351545",
+      "bytes": 5933
+    },
+    {
+      "name": "filter-bandreject.txt",
+      "sha256": "6fb39c86dc9caab63052a4d243861a8c93620e0a4f2acb774db72594749e9ae1",
+      "bytes": 5853
+    },
+    {
+      "name": "filter-bass.txt",
+      "sha256": "1e9ca2b055b3a6a2c7804e91da56ef8abd64e9c77c82cd67781c851b03a73ade",
+      "bytes": 6187
+    },
+    {
+      "name": "filter-bbox.txt",
+      "sha256": "f0d966c34f6e0f0c3a0bda017169f3331b7f02cf30c6b40d6a000646ac493918",
+      "bytes": 2193
+    },
+    {
+      "name": "filter-bench.txt",
+      "sha256": "c889a37efb10579a8e3558c5b8ae92831288032faf88964b6abad8108f1dd50d",
+      "bytes": 2205
+    },
+    {
+      "name": "filter-bilateral.txt",
+      "sha256": "c52eb96c569d8b01dbb113584b1f41dc8e47f8f02584b32b60fc3fcbda5bf702",
+      "bytes": 2376
+    },
+    {
+      "name": "filter-bilateral_cuda.txt",
+      "sha256": "389ab9b9ee63ec1ccbe491c754ca1aa70061949c647054e31908af17a413e215",
+      "bytes": 2311
+    },
+    {
+      "name": "filter-biquad.txt",
+      "sha256": "485a00894639631e30338cf4f39d79dcb1e7010b02a0b56f33c807ed1239c5a8",
+      "bytes": 5269
+    },
+    {
+      "name": "filter-bitplanenoise.txt",
+      "sha256": "06d68b21f88a2fd0e00b1fcebeef749e29948adf5ccbec1167a8471ebe6a8858",
+      "bytes": 2271
+    },
+    {
+      "name": "filter-blackdetect.txt",
+      "sha256": "7e626d3599bbf25581b65094c214c1aed605e61e800af80ff00c52820d89a5b9",
+      "bytes": 2750
+    },
+    {
+      "name": "filter-blackframe.txt",
+      "sha256": "61f41d06a31437d92fd0c320561ffc04d89f3d9cba705e6381c03c67e89e28df",
+      "bytes": 2454
+    },
+    {
+      "name": "filter-blend.txt",
+      "sha256": "7e4615175b5c90599d6d4ffab50109ea0a305dcb8adc2330d78f1ff0f7917101",
+      "bytes": 14475
+    },
+    {
+      "name": "filter-blend_vulkan.txt",
+      "sha256": "53bec7e451553627699aaf2acd90581b0fcb244e91ee573a49a721538c4db1e2",
+      "bytes": 3563
+    },
+    {
+      "name": "filter-blockdetect.txt",
+      "sha256": "5fc92729a78b5af51202673368b563de9a2459e068847c844e369bdf30359f2f",
+      "bytes": 2301
+    },
+    {
+      "name": "filter-blurdetect.txt",
+      "sha256": "0de553d279f3e2bd221979fb4a2a58c49a9eeea19cd8757794a1cddb77a8c56e",
+      "bytes": 2794
+    },
+    {
+      "name": "filter-bm3d.txt",
+      "sha256": "d6cb11d0395ee73a0d3b1ef2605a6ccfc72451d5d2f6c3384a3c658633eab51e",
+      "bytes": 3394
+    },
+    {
+      "name": "filter-boxblur.txt",
+      "sha256": "804995c8cb6976d0b916d1bab990c89809f10cb5d633d0281f9216446fc56e81",
+      "bytes": 3358
+    },
+    {
+      "name": "filter-boxblur_opencl.txt",
+      "sha256": "ae1b1259c5edec4ccfad80b0bd7f96c9c39cbe90cf671a5f6ab36fd9be67c59c",
+      "bytes": 3326
+    },
+    {
+      "name": "filter-bs2b.txt",
+      "sha256": "d3f0e7794a5870ac4e99a508e5394dae4a38e538d7b64bfe4b1094ce07756a80",
+      "bytes": 2507
+    },
+    {
+      "name": "filter-buffer.txt",
+      "sha256": "2b81099e50221ce2a3f35eb758d1cc0c1c11d16aa95499d7797bf77b3f142dd2",
+      "bytes": 2663
+    },
+    {
+      "name": "filter-buffersink.txt",
+      "sha256": "16003f9d604567536416cafd7e2eb565333c2fc4f0ee6cfeb00164773c82d07a",
+      "bytes": 2135
+    },
+    {
+      "name": "filter-bwdif.txt",
+      "sha256": "b1f91f31dec40c3c4d7c3119a1761bd3d9f07f46b4c3dc788fd03d3f3a4b0742",
+      "bytes": 2950
+    },
+    {
+      "name": "filter-bwdif_cuda.txt",
+      "sha256": "9e245af2a6a9cb8126f0f4658fcebc08b2b9bdf6d9b6c2bad504eddfd0b8f0b3",
+      "bytes": 3159
+    },
+    {
+      "name": "filter-bwdif_vulkan.txt",
+      "sha256": "80daee75719cf880b73f3f42b2906fcab8b135d6d617fbc9802c499bd529e20d",
+      "bytes": 3175
+    },
+    {
+      "name": "filter-cas.txt",
+      "sha256": "38e2198d25198d3630ec7574b5b9b5fb2a647e7e540dccd22d7f4c0b4a6acf01",
+      "bytes": 2273
+    },
+    {
+      "name": "filter-ccrepack.txt",
+      "sha256": "e8c84402510bc91833b18de56fb5b5169deb7afcf5e76c3d673cd2921698d3c1",
+      "bytes": 2015
+    },
+    {
+      "name": "filter-cellauto.txt",
+      "sha256": "2477b650ca55fa03d40a64a7a640a5ee37e83b333a276b5ea6df69fa87a1a928",
+      "bytes": 3556
+    },
+    {
+      "name": "filter-channelmap.txt",
+      "sha256": "a7decf0b41ee01cd73b432b652bef1d36858e510961b709a58703b6a9cd6b409",
+      "bytes": 2182
+    },
+    {
+      "name": "filter-channelsplit.txt",
+      "sha256": "bfff91b82a38b46e61be86d90835834e41497b6202cb8e886ac4fec9a0fa2390",
+      "bytes": 2208
+    },
+    {
+      "name": "filter-chorus.txt",
+      "sha256": "1d85fb79d3659af44b59ba8108a7ed6c246a6314367dc10cf0be8d2a6eabb723",
+      "bytes": 2413
+    },
+    {
+      "name": "filter-chromaber_vulkan.txt",
+      "sha256": "cc1ce1dbb32301c4a328d6e06db4800d0f59807e5a6f46d49bdc2eab775fc4de",
+      "bytes": 2258
+    },
+    {
+      "name": "filter-chromahold.txt",
+      "sha256": "4f2f6cdb6bf97f18dfe6e60f3d907d7eec1eade98254e343cdec224b961aace1",
+      "bytes": 2529
+    },
+    {
+      "name": "filter-chromakey.txt",
+      "sha256": "d3c9eacad4cb56dccc0ed73ae0779f660ef281fd14b6823a84b2e7e2eeec78b6",
+      "bytes": 2554
+    },
+    {
+      "name": "filter-chromakey_cuda.txt",
+      "sha256": "f9c4af54f27d26bf4743eea2e70d10f8db53f52059668cf4adeed31e83766733",
+      "bytes": 2434
+    },
+    {
+      "name": "filter-chromanr.txt",
+      "sha256": "9e34baac1a0ce0fff30f36aa649578587a89e46ab3886e0b84d0b812c38ac6d1",
+      "bytes": 3043
+    },
+    {
+      "name": "filter-chromashift.txt",
+      "sha256": "62b598b51be36ce5e2cbcafa1551f2d09f0b1d950441675b43d4b667f289798a",
+      "bytes": 2705
+    },
+    {
+      "name": "filter-ciescope.txt",
+      "sha256": "d08991080bb4952466fe5cb789efaa65ee6b0a9604d496ef744e5e08775da3c2",
+      "bytes": 4796
+    },
+    {
+      "name": "filter-codecview.txt",
+      "sha256": "cdbdf3ea39699e7772a2b3247f0a441a5871c4625d3322f805a78d10c8592b6d",
+      "bytes": 3564
+    },
+    {
+      "name": "filter-color.txt",
+      "sha256": "a54daa245667f2562ae53414bb6010bb39df74a397264cba9a5f7290d5d01fe4",
+      "bytes": 2750
+    },
+    {
+      "name": "filter-color_vulkan.txt",
+      "sha256": "e40f06164b8e817da572c3b8900d4bae1a8f2d1d0b5fd6115bbb28b33a63f089",
+      "bytes": 3339
+    },
+    {
+      "name": "filter-colorbalance.txt",
+      "sha256": "6791b98b3c4a402cf93b9ee5dad22efe94cf7503a888d27aed45abf7ce16d359",
+      "bytes": 3009
+    },
+    {
+      "name": "filter-colorchannelmixer.txt",
+      "sha256": "4929cf7ccb66a7a0ec0a10d0e3c35953a59f772cfcb6834ffa123c90768fd9b2",
+      "bytes": 4503
+    },
+    {
+      "name": "filter-colorchart.txt",
+      "sha256": "eae0d39fcd545d03eb83027c60485635358b4c2100311c1f45bdaf2317b42194",
+      "bytes": 2761
+    },
+    {
+      "name": "filter-colorcontrast.txt",
+      "sha256": "7e7e348bc6a8ef139d29f105932b9d6ecd23fa3fc0233347bdd40487eaf4988d",
+      "bytes": 2840
+    },
+    {
+      "name": "filter-colorcorrect.txt",
+      "sha256": "cb6c33f14935cf9dd139ad049e7e6dcbc76d41430a52f74ca03919958566bdc6",
+      "bytes": 2998
+    },
+    {
+      "name": "filter-colorhold.txt",
+      "sha256": "9a43a8e63f5c068aa984b6613eaa2e1357ad30eb4b790a2fdf006f27c9b83014",
+      "bytes": 2445
+    },
+    {
+      "name": "filter-colorize.txt",
+      "sha256": "d56ae99e84d9fc4d61827ee5f9d2184bc4fe78d4aad8da3b889cbc9776357b87",
+      "bytes": 2490
+    },
+    {
+      "name": "filter-colorkey.txt",
+      "sha256": "59996f175caa75b55a9d0c3a7bb23f7b49549ed4971134ee9b115ff00786a392",
+      "bytes": 2446
+    },
+    {
+      "name": "filter-colorkey_opencl.txt",
+      "sha256": "63cf16a20c8d2856f4606de16c4d0747e67fd5c032ddae98fa5ccc3c35a41eaf",
+      "bytes": 2363
+    },
+    {
+      "name": "filter-colorlevels.txt",
+      "sha256": "0519278310b8681e5c674c0cba3fa1855d829b4b06405d7855696bbe9856ea7a",
+      "bytes": 4174
+    },
+    {
+      "name": "filter-colormap.txt",
+      "sha256": "92f02c9d77193b00faac6a428937b07c832cb896c87a53f650a9f5f5d25d2bf0",
+      "bytes": 2913
+    },
+    {
+      "name": "filter-colormatrix.txt",
+      "sha256": "d1a544875987b81dbef7daa1badac41fe0893f1976461bfab3167429e3f204c4",
+      "bytes": 3407
+    },
+    {
+      "name": "filter-colorspace.txt",
+      "sha256": "d9c3607275ee796f28730624f4adeb68ebef70661ca241e372b5c4a43536c211",
+      "bytes": 8566
+    },
+    {
+      "name": "filter-colorspace_cuda.txt",
+      "sha256": "497587c37fa0ff603021451a9a5aa30be6e6aa44bfcfa245b69e2172b33a6a15",
+      "bytes": 2354
+    },
+    {
+      "name": "filter-colorspectrum.txt",
+      "sha256": "56ebc42635fbc133c4c56052a6cbb05f14b8df8081bd28f474c3ec292f491adc",
+      "bytes": 2893
+    },
+    {
+      "name": "filter-colortemperature.txt",
+      "sha256": "f3aa773039db11817d0301ddcbf45aa0e86af894fac5610cec191977a4c94f28",
+      "bytes": 2451
+    },
+    {
+      "name": "filter-compand.txt",
+      "sha256": "8d0c45e3dcc0dcc4550217fdb4d893159badc9b5ff473742d3fea60dc24d5c1a",
+      "bytes": 2767
+    },
+    {
+      "name": "filter-compensationdelay.txt",
+      "sha256": "decdf9006c61e60c4e64517f254b5f91eca19d34cdc7dadccf8db4f5acc782fd",
+      "bytes": 2633
+    },
+    {
+      "name": "filter-concat.txt",
+      "sha256": "4101413b3d32218d9734f4b23a119f94990904482f63523c104ca38d20843bb8",
+      "bytes": 2459
+    },
+    {
+      "name": "filter-convolution.txt",
+      "sha256": "2dab9f8fc55f3414a47a0af68e8ccb2648809805086ec90b2e5423faf09e69b4",
+      "bytes": 4508
+    },
+    {
+      "name": "filter-convolution_opencl.txt",
+      "sha256": "04eaf30fc26b0e211c5ed8574885600a874f922dcc35561847ee3491b46b9d7c",
+      "bytes": 3246
+    },
+    {
+      "name": "filter-convolve.txt",
+      "sha256": "0b5d76792389e29614a5bd73c31c4279d09d9ebb389f026ce46512a55c28b636",
+      "bytes": 3601
+    },
+    {
+      "name": "filter-copy.txt",
+      "sha256": "4c33624aa9cc270c371b688db8ddbdf751941767d87422346f7e30a48c734ec0",
+      "bytes": 1997
+    },
+    {
+      "name": "filter-corr.txt",
+      "sha256": "a9c8f8d529d1f79fca13215355257a2d60f57738df98f06630c1d7181eff95bd",
+      "bytes": 3130
+    },
+    {
+      "name": "filter-cover_rect.txt",
+      "sha256": "a71e5275ce448ec8acb29d7675785fc087a658c22f828ac21f272618506e006a",
+      "bytes": 2305
+    },
+    {
+      "name": "filter-crop.txt",
+      "sha256": "f488770353107189cfb1f97631a0c4561f5552ced42902d877b278b31ae75e6f",
+      "bytes": 2744
+    },
+    {
+      "name": "filter-cropdetect.txt",
+      "sha256": "7c808c83e859551b176eb5b5901ab619edf0f7de5e4e0d82a0f1b94f44938d89",
+      "bytes": 3439
+    },
+    {
+      "name": "filter-crossfeed.txt",
+      "sha256": "4dd103d067451970e9bd9ab5938d4c1f3b09fd53aac54cf4ada55e7aafc844f8",
+      "bytes": 2634
+    },
+    {
+      "name": "filter-crystalizer.txt",
+      "sha256": "d63e87164f5ac351068f2732efec8b22a7c223265cdb896627b2c404345bf421",
+      "bytes": 2282
+    },
+    {
+      "name": "filter-cue.txt",
+      "sha256": "5727ff397503be5d27a11bc9e83ff6ef9dcedfc0acf61842bb7fc0f3a5c967c4",
+      "bytes": 2285
+    },
+    {
+      "name": "filter-curves.txt",
+      "sha256": "96a22ab9c7a707deb655447b976115b63f674654fc652082f5185f07371701d1",
+      "bytes": 3825
+    },
+    {
+      "name": "filter-datascope.txt",
+      "sha256": "7bf4ea1d9ca208d361e5d22345d3487eba16f94505ff23198367ac26b66898b4",
+      "bytes": 3075
+    },
+    {
+      "name": "filter-dblur.txt",
+      "sha256": "e4b69e9e824dd0ff19fdb1307a138ebfbd55ec61b155e35eeb0177cdfdd0b67f",
+      "bytes": 2333
+    },
+    {
+      "name": "filter-dcshift.txt",
+      "sha256": "614938acf585fc1dc03660bd80e370ca289189323bf249f35d8940b8b00066e2",
+      "bytes": 2246
+    },
+    {
+      "name": "filter-dctdnoiz.txt",
+      "sha256": "0b7aca91fbd381e37c02185c3624431ee8e9ffba698f2ab0593d2bd70d8d45cd",
+      "bytes": 2683
+    },
+    {
+      "name": "filter-deband.txt",
+      "sha256": "0322b301501fbc74aabab21eec0ee7070079a739e18929ba2065e2c95232c576",
+      "bytes": 3205
+    },
+    {
+      "name": "filter-deblock.txt",
+      "sha256": "1c0bf739b672bed9859108557218577bdd91241f6f98777d4b729683372aa025",
+      "bytes": 2843
+    },
+    {
+      "name": "filter-decimate.txt",
+      "sha256": "7c22ff559eeb776d80e30d14748d6e240c0cea34183e66aabba59e7513b6c5aa",
+      "bytes": 3059
+    },
+    {
+      "name": "filter-deconvolve.txt",
+      "sha256": "325cf71cfd2661327d01ff12b60628c9e43ea108f621244e61bf93f36c78fbad",
+      "bytes": 3609
+    },
+    {
+      "name": "filter-dedot.txt",
+      "sha256": "1af2fbbb8c36cdad5d4cb623f6f9d5ca7030cee7d61d2409ea76e725ea4da199",
+      "bytes": 2728
+    },
+    {
+      "name": "filter-deesser.txt",
+      "sha256": "24b97c75ebcc94eda6d910f019c2039863030a865ceed06bcf80bb074fcb6e32",
+      "bytes": 2578
+    },
+    {
+      "name": "filter-deflate.txt",
+      "sha256": "b3bae5260eb77065868a064871eb168d11c776b0f843a6e0a88f6f518da40f83",
+      "bytes": 2532
+    },
+    {
+      "name": "filter-deflicker.txt",
+      "sha256": "a96a3646d8b203e4d6f06cb484e69a7697901c899f6db8227809bacfdb7b9ded",
+      "bytes": 3333
+    },
+    {
+      "name": "filter-deinterlace_qsv.txt",
+      "sha256": "083c0f1d02d917bccae723aa1c362ebb84c05ef0f61d321d2dc0c1277abd9487",
+      "bytes": 2255
+    },
+    {
+      "name": "filter-deinterlace_vaapi.txt",
+      "sha256": "5c278cacd58a3fb1c5cf5e9f8da603f1201c1cef8815f45433a0f2ced5973ee1",
+      "bytes": 3080
+    },
+    {
+      "name": "filter-dejudder.txt",
+      "sha256": "016c045218c670689e2339e8af03f774d1d21e3b31e12d8b061756099a8924de",
+      "bytes": 2135
+    },
+    {
+      "name": "filter-delogo.txt",
+      "sha256": "0d234d345912802c316bd5597a2ae1a14611de8fbbe575a858b25759ebae5d11",
+      "bytes": 2462
+    },
+    {
+      "name": "filter-denoise_vaapi.txt",
+      "sha256": "6ce83ed3f5db72419b89454a4a733f562904dbdf99942c7660596c453067391c",
+      "bytes": 2096
+    },
+    {
+      "name": "filter-derain.txt",
+      "sha256": "a9b855580167788d2c616fd20143e481802fb99a71bbdf84c2f29f9f17f81faf",
+      "bytes": 2624
+    },
+    {
+      "name": "filter-deshake.txt",
+      "sha256": "0a6314bbdcce0660b74e0d35ce06852802253a1b1526f01dcec4501f28aa7589",
+      "bytes": 3717
+    },
+    {
+      "name": "filter-deshake_opencl.txt",
+      "sha256": "1254cf607365a0ec338a6ebdd4353af41cfe92a870925d942f667e6b80c1c7ce",
+      "bytes": 2805
+    },
+    {
+      "name": "filter-despill.txt",
+      "sha256": "d2957b3089034e51f72c8626a7e10cc0ed75dec2992868297c08762156394130",
+      "bytes": 2939
+    },
+    {
+      "name": "filter-detelecine.txt",
+      "sha256": "60751a132263f19cc92ab7ef6fce61a5d6ec5f41cf960b5ea83304e2571241b3",
+      "bytes": 2662
+    },
+    {
+      "name": "filter-dialoguenhance.txt",
+      "sha256": "fcfccf9b31e108e8ea924966e241741a6c701da7f8235b1f85fb4ecc827a59fb",
+      "bytes": 2381
+    },
+    {
+      "name": "filter-dilation.txt",
+      "sha256": "82120b06b56cd7ef4f2c2b9edecb43aa0e2003a16cfdeedbebc1613c807b86b3",
+      "bytes": 2627
+    },
+    {
+      "name": "filter-dilation_opencl.txt",
+      "sha256": "dd4a58d75173283dbbdd277176ade6410f9340ac159b61fce1ed900a7d309d14",
+      "bytes": 2536
+    },
+    {
+      "name": "filter-displace.txt",
+      "sha256": "a0bd65c8cbc5fc0669fa7b096503d07e9348c7273d599e9a0e722a3d2fe9c4c1",
+      "bytes": 2414
+    },
+    {
+      "name": "filter-dnn_classify.txt",
+      "sha256": "4e6b06797c56f910673a75b7c1947a3fc7ad5ff0e366c77b2d297ba164ca26a1",
+      "bytes": 2847
+    },
+    {
+      "name": "filter-dnn_detect.txt",
+      "sha256": "423e934ba5a4f23e2500d80f59ce531e896f8c4802bbb2e7f55579cf3371d3d1",
+      "bytes": 2768
+    },
+    {
+      "name": "filter-dnn_processing.txt",
+      "sha256": "ff12aa2ab9f8f6ff4fc47c2084d3e327e24ac7c9b3bceaf3addb36ef27e678c1",
+      "bytes": 2616
+    },
+    {
+      "name": "filter-doubleweave.txt",
+      "sha256": "fa603d649cd4d216d6709615fb659a364fc61ef16c3370b700659f9967547251",
+      "bytes": 2429
+    },
+    {
+      "name": "filter-drawbox.txt",
+      "sha256": "c4365154ad476a2974fa9c137366d3fb3067ba3674c93403ab55ff85a7559bf0",
+      "bytes": 3117
+    },
+    {
+      "name": "filter-drawgraph.txt",
+      "sha256": "5f1914815edd78631d6d6cfb33ca65b65e48c53111797973990765ba00bb4b52",
+      "bytes": 4073
+    },
+    {
+      "name": "filter-drawgrid.txt",
+      "sha256": "34e8dfe7e29979ea07a9af7a46a5e861e02235589b889b360a997158fd56a81f",
+      "bytes": 3002
+    },
+    {
+      "name": "filter-drawtext.txt",
+      "sha256": "267e68b4981cf34244e15b22b54aac95b1e163aac17299bfa9eb52a3a8ab0961",
+      "bytes": 7128
+    },
+    {
+      "name": "filter-drmeter.txt",
+      "sha256": "de9f5eb5ac8099cac926a94b3165bd2b0a1fae170e80a934b62f51a8ce4342ed",
+      "bytes": 2101
+    },
+    {
+      "name": "filter-dynaudnorm.txt",
+      "sha256": "bca67bd7efd0b211651a538a81d0b3ab1eecca52c6f9b780167c8b446d3d84b0",
+      "bytes": 4490
+    },
+    {
+      "name": "filter-earwax.txt",
+      "sha256": "18b708638ddceb197676950f937ac059e9d9776e94471b5e8d0c17e180d686e1",
+      "bytes": 1977
+    },
+    {
+      "name": "filter-ebur128.txt",
+      "sha256": "349a4d689626810b3a0d7ca8800233feec3b70de404632f22a147fc98daa6ede",
+      "bytes": 4748
+    },
+    {
+      "name": "filter-edgedetect.txt",
+      "sha256": "63867f0e06feda86370a410e91ce21bfe3faa736d47bd8f830273f800c7cf5fb",
+      "bytes": 3014
+    },
+    {
+      "name": "filter-elbg.txt",
+      "sha256": "815e09a14f9ff59376c72d724527e124f94af09d04424cef088d99787e7a1473",
+      "bytes": 2858
+    },
+    {
+      "name": "filter-entropy.txt",
+      "sha256": "b5f014ec6135adf1fcc1a747ac5fa2f6672c72166c988d00b2365e783c946c3b",
+      "bytes": 2281
+    },
+    {
+      "name": "filter-epx.txt",
+      "sha256": "03764127eb8f12f744c51b34391398a735b4078568a6cee44ca5451623fc5c5c",
+      "bytes": 2122
+    },
+    {
+      "name": "filter-eq.txt",
+      "sha256": "597a5e3067fd6317772fc7a70429721b100f65fa8301b1d1ff7088d34ad21c69",
+      "bytes": 3142
+    },
+    {
+      "name": "filter-equalizer.txt",
+      "sha256": "66fc55c6fe3ea920d8ca5d2039747b39d3166d55b69fe04d0f04324e3038a79d",
+      "bytes": 6013
+    },
+    {
+      "name": "filter-erosion.txt",
+      "sha256": "51418c3b982b7d2e6c9a99f83875c88557cb0af6f2136af14df81814a9e53751",
+      "bytes": 2625
+    },
+    {
+      "name": "filter-erosion_opencl.txt",
+      "sha256": "bf1fd3b7bb9ebe21f39ab0545926d36aee84463c9ff0f2e9c4fe64416d26ba70",
+      "bytes": 2533
+    },
+    {
+      "name": "filter-estdif.txt",
+      "sha256": "9c6af4aa6418fc18e667a94d0a2723609845e50cb429e7526e5ec6192a32306a",
+      "bytes": 3851
+    },
+    {
+      "name": "filter-exposure.txt",
+      "sha256": "4266c88a2bc148ad5725c834c1ed2a26d9a9b2b58c652606ee31fe442bec0a04",
+      "bytes": 2314
+    },
+    {
+      "name": "filter-extractplanes.txt",
+      "sha256": "59ed0226ac05e430057129d22318bc91c4c86197b55c9b2c20b270b8710e5de0",
+      "bytes": 2529
+    },
+    {
+      "name": "filter-extrastereo.txt",
+      "sha256": "820365c84ebc7f4ccdf904ebc50975b4d816034cead679a29707b508e33cef4b",
+      "bytes": 2284
+    },
+    {
+      "name": "filter-fade.txt",
+      "sha256": "e2fae4567a92d238089684216b9de611ac17ef31b5a3a44db7cc58bb26562638",
+      "bytes": 3692
+    },
+    {
+      "name": "filter-feedback.txt",
+      "sha256": "2b0c111bf51b2f5e4ab698718429006e7f427f21c51856afdf387d84971ac9f3",
+      "bytes": 2452
+    },
+    {
+      "name": "filter-fftdnoiz.txt",
+      "sha256": "4c24705fbd0ec4890d4da081298860a1cf23f3bc3b7750ebd1b714841f619bb0",
+      "bytes": 4352
+    },
+    {
+      "name": "filter-fftfilt.txt",
+      "sha256": "0ad620cecf5dec352dc32d751d87ac9d3ada484a4e861b35924a7315a4bfea1e",
+      "bytes": 2962
+    },
+    {
+      "name": "filter-field.txt",
+      "sha256": "4420b6d1f7ab74bbca4ee1442c6da3f0b502b28e487fc2772030b18f6700c727",
+      "bytes": 2242
+    },
+    {
+      "name": "filter-fieldhint.txt",
+      "sha256": "92a550bb8b68324f20f50fbdd33464458deddd4cde7bc7ac5c836acab70e3719",
+      "bytes": 2297
+    },
+    {
+      "name": "filter-fieldmatch.txt",
+      "sha256": "2bda1cd00b035665d56ed8a3e8cecf59067c022e4a6c97fce6cc0ed19e754eb4",
+      "bytes": 5439
+    },
+    {
+      "name": "filter-fieldorder.txt",
+      "sha256": "e4cf9ac4af14c0cd3a4db68d8b92b45d6b4ef1ba2fea35f096620bc390521521",
+      "bytes": 2287
+    },
+    {
+      "name": "filter-fifo.txt",
+      "sha256": "584226d36dbebe6113c9cd188afb7516a06d9210d770049f42a1b9023ec198e4",
+      "bytes": 2010
+    },
+    {
+      "name": "filter-fillborders.txt",
+      "sha256": "064e8e2faaa1458c1239c62e4fb99b4d7cbd08fba9251fd7426b503dc2b1a203",
+      "bytes": 3021
+    },
+    {
+      "name": "filter-find_rect.txt",
+      "sha256": "0c5045b50237d4b24ee6a9919d8c55393fedf9e0c6bdb9a5f1d2fefdb6a58566",
+      "bytes": 2628
+    },
+    {
+      "name": "filter-firequalizer.txt",
+      "sha256": "9b66f184d97e7135e0f3aa3e78cae8b6716ef50c5d33a5704e3510d2c8e085d4",
+      "bytes": 4359
+    },
+    {
+      "name": "filter-flanger.txt",
+      "sha256": "545f4a5361704bc962ef7bfb011b12b7180d79af6e7841d00c8b11189f6a09b9",
+      "bytes": 3171
+    },
+    {
+      "name": "filter-flip_vulkan.txt",
+      "sha256": "beb00e01913e1599c2a4fcc49525307c02cae00446c20b483f0131a1e039db09",
+      "bytes": 2020
+    },
+    {
+      "name": "filter-flite.txt",
+      "sha256": "f3a9eb3318dc747e16e62b316029f715c08b7fff075d6b4a8c38aa54c78000ee",
+      "bytes": 2610
+    },
+    {
+      "name": "filter-floodfill.txt",
+      "sha256": "9ad0a36842c61ab3afbf1a91256785891da6925cb154400b333b4cc830116ebe",
+      "bytes": 3160
+    },
+    {
+      "name": "filter-format.txt",
+      "sha256": "43f2f94f7d41888b3d21598df1706ca9882862a8814ccd4b1e8fe624377ff47b",
+      "bytes": 2123
+    },
+    {
+      "name": "filter-fps.txt",
+      "sha256": "65223cc08b64effa19b8afb348fa2f122b6e3c1c97d4b3f13c1c6dc7b85a8779",
+      "bytes": 2919
+    },
+    {
+      "name": "filter-framepack.txt",
+      "sha256": "6d5e299e0617277b666923879ce7bf2e7d1ba22b13848e630a459d8832c419ea",
+      "bytes": 2546
+    },
+    {
+      "name": "filter-framerate.txt",
+      "sha256": "5fac5ef6203c2d1ad330b8c81a010f5f6c336c54a5e76c9a50caa2a4534d8f6d",
+      "bytes": 2745
+    },
+    {
+      "name": "filter-framestep.txt",
+      "sha256": "82ee502f91f332a463b808ad784bbdd33ec9e9a770dace114da6fd5a407f3d6d",
+      "bytes": 2170
+    },
+    {
+      "name": "filter-freezedetect.txt",
+      "sha256": "068859927c374689f26706068d3c3c5b31b3b81fd6310a283831b013f9d4b5d7",
+      "bytes": 2384
+    },
+    {
+      "name": "filter-freezeframes.txt",
+      "sha256": "ce6db505a0cddd71e34af7e03a25caa21b89d798eda9e68d8a7a95fc7e6990c4",
+      "bytes": 2337
+    },
+    {
+      "name": "filter-frei0r.txt",
+      "sha256": "35e16cea4c290bf141158bce41e2b5b24abbe318e854e379e441d4a99c4345d7",
+      "bytes": 2153
+    },
+    {
+      "name": "filter-frei0r_src.txt",
+      "sha256": "f30d8f2bf862ddd3923a665a30e2ef203ea3af4981d7a42e78aa226465d44b7c",
+      "bytes": 2262
+    },
+    {
+      "name": "filter-fspp.txt",
+      "sha256": "967b71f9f910c6b29624acdb5ddb25cc0c667c0d2eddfd09cd81c8a29eb1081d",
+      "bytes": 2444
+    },
+    {
+      "name": "filter-gblur.txt",
+      "sha256": "732f01a214a68896c49da36ca114c4b5583812543322ed339c6b2d9f97115ad7",
+      "bytes": 2464
+    },
+    {
+      "name": "filter-gblur_vulkan.txt",
+      "sha256": "1fcca14d1a23cc792156f00223eefedd0771932da4eef6f4cb86aeba2c601595",
+      "bytes": 2477
+    },
+    {
+      "name": "filter-geq.txt",
+      "sha256": "7295070b5dc0dc82600cf67c61a55ea52eacf17dbefcef497fb2b0111d02e62b",
+      "bytes": 3818
+    },
+    {
+      "name": "filter-gradfun.txt",
+      "sha256": "0037a01635584750ef3a13fa7440f933637c877f5f98f86c26121b559d79b2f7",
+      "bytes": 2338
+    },
+    {
+      "name": "filter-gradients.txt",
+      "sha256": "627bf929af892151f30adae96b01abc7e2fd34a997652d0feb25c4a45cc6cd6a",
+      "bytes": 4686
+    },
+    {
+      "name": "filter-graphmonitor.txt",
+      "sha256": "e06623d0bf12d4f4aee2b4b0519001b92cfa1e18732a962fe169ec203d102edc",
+      "bytes": 5023
+    },
+    {
+      "name": "filter-grayworld.txt",
+      "sha256": "cb7ca9ff78cec8a88b532469c0bb6223078f39247db9ce0d9dc8b4c5f94bdb98",
+      "bytes": 2126
+    },
+    {
+      "name": "filter-greyedge.txt",
+      "sha256": "d11df79f5f4e54f5eeb4145c54f492a6c54f42a55e26474fce718bb43d9f9689",
+      "bytes": 2401
+    },
+    {
+      "name": "filter-guided.txt",
+      "sha256": "f8bb841f55798cd4f2d86300b4e46dd7b7e0df06b764b205c0fcf6fa4ce94e7e",
+      "bytes": 3034
+    },
+    {
+      "name": "filter-haas.txt",
+      "sha256": "baef5181159c12bc89b6105621f48cafa32fd93c040246d26fcff52b60372278",
+      "bytes": 3348
+    },
+    {
+      "name": "filter-haldclut.txt",
+      "sha256": "5e1e1a21f21cdec0a405aa07e9c7f3afcb5213e23384f5e30f7a55239a76a2d4",
+      "bytes": 3927
+    },
+    {
+      "name": "filter-haldclutsrc.txt",
+      "sha256": "ca037eae6b7b5c3b4c7a0df0e2a40c94d6ff1b9c3933c24840dbc6bdfb552263",
+      "bytes": 2530
+    },
+    {
+      "name": "filter-hdcd.txt",
+      "sha256": "81f08415229a6ab88ff255225193e32a9e77246b9896948feab653839385149a",
+      "bytes": 3427
+    },
+    {
+      "name": "filter-headphone.txt",
+      "sha256": "da1877c7eb1bb90748324015b572b1e9e5d6dfd23dbbccfdde0fc8bb28e49f5a",
+      "bytes": 2920
+    },
+    {
+      "name": "filter-hflip.txt",
+      "sha256": "49fe75bad3c1d35f637dea6a8585b0bf2f3df1f3ba8bec8256e65d329a5cbe3d",
+      "bytes": 2101
+    },
+    {
+      "name": "filter-hflip_vulkan.txt",
+      "sha256": "4fbf39400da170a21380d5a92e7dc8631771a33e1f1ee276e5f33611e39f4b2a",
+      "bytes": 2028
+    },
+    {
+      "name": "filter-highpass.txt",
+      "sha256": "e6b9822fe87396c02c3aae85fcf12a8e9f285663dc3fe2fd9849c08aeedd860a",
+      "bytes": 6023
+    },
+    {
+      "name": "filter-highshelf.txt",
+      "sha256": "a23c8fb7565a316affb649b79720f3f009af90abe06f357182f12ec046fa857a",
+      "bytes": 6197
+    },
+    {
+      "name": "filter-hilbert.txt",
+      "sha256": "3de8b7e683bd9109c9774d544b0e6d7a2b4d738cffb16a65527eb8ee2626f70d",
+      "bytes": 7713
+    },
+    {
+      "name": "filter-histeq.txt",
+      "sha256": "c918b8014996b5b7b8efc1c00c9e5dc0b8960328d078387ea2ab788ae5b48459",
+      "bytes": 2573
+    },
+    {
+      "name": "filter-histogram.txt",
+      "sha256": "a9f5346a652972bc6578ae4f275d3fbc914f85e1001397f262d9a68f4b3212c1",
+      "bytes": 4742
+    },
+    {
+      "name": "filter-hqdn3d.txt",
+      "sha256": "871f7bbf9ee0e48371d30408940b9aab775da5a5c30a2bad66180fb60def84d9",
+      "bytes": 2508
+    },
+    {
+      "name": "filter-hqx.txt",
+      "sha256": "a6502e0e4c10e3f720fad5d0d1a70f9bb5f1f0f72472ba4a2d1a4b633237cd8e",
+      "bytes": 2154
+    },
+    {
+      "name": "filter-hstack.txt",
+      "sha256": "5429e57e530177944e8d01a3ab29515f0ddacae9e0070c9222cb1b8d647fc559",
+      "bytes": 2269
+    },
+    {
+      "name": "filter-hstack_qsv.txt",
+      "sha256": "76d245ec11a52007bd6135242c71826b3f28fd8dad9fdc0eb6bdfb37c6607255",
+      "bytes": 2361
+    },
+    {
+      "name": "filter-hstack_vaapi.txt",
+      "sha256": "810e8c1a4efb2fcac4aca7600e8e0e7e7c5ef4fdcb12fd8234b9ce62d9db8a55",
+      "bytes": 2355
+    },
+    {
+      "name": "filter-hsvhold.txt",
+      "sha256": "a4b171fc2a3399402079986fa4fce41c438081f5b50c601a909700ed86b451ea",
+      "bytes": 2605
+    },
+    {
+      "name": "filter-hsvkey.txt",
+      "sha256": "e717630f77c23306e8f21bda91f8c21eeca38f9479a83d8400a39248435b9f8e",
+      "bytes": 2633
+    },
+    {
+      "name": "filter-hue.txt",
+      "sha256": "a87b740ea12cbb6ae0361a8e45dcdde50ee9f1af23f27663e894b13e54315dec",
+      "bytes": 2428
+    },
+    {
+      "name": "filter-huesaturation.txt",
+      "sha256": "89f3caebe3077c351837269481b6aed047cc5b016aed2fce174e103addae6209",
+      "bytes": 3383
+    },
+    {
+      "name": "filter-hwdownload.txt",
+      "sha256": "d65d67baa78671ecad80dab2cf7b1b67a71a6ca1ce744e5b3715c95152488d54",
+      "bytes": 2001
+    },
+    {
+      "name": "filter-hwmap.txt",
+      "sha256": "fb6effc385c1f149d217af937234039c06f8381d6a162077ade890517a4113f3",
+      "bytes": 2601
+    },
+    {
+      "name": "filter-hwupload.txt",
+      "sha256": "28819c16c02f70046da531a1517c516fa1104900b55b42c73f1628b75b70122a",
+      "bytes": 2097
+    },
+    {
+      "name": "filter-hwupload_cuda.txt",
+      "sha256": "2aa6a2509d54c3d8564835264d814e897eb41c2ce6c89f12f03a242f7a9e760d",
+      "bytes": 2136
+    },
+    {
+      "name": "filter-hysteresis.txt",
+      "sha256": "cb4cc93735212f74f21df24d8401a32f5709211ad0bcbd91a648acd1d927be9f",
+      "bytes": 3321
+    },
+    {
+      "name": "filter-identity.txt",
+      "sha256": "8f39f52883a5bee1f8a460951a097df4b06129117684e6a3cc984f9f308327a2",
+      "bytes": 3165
+    },
+    {
+      "name": "filter-idet.txt",
+      "sha256": "30b1302a5ecde2e6dd09ebaba5402183715003c21dc7b2d44915552a7587ae43",
+      "bytes": 2581
+    },
+    {
+      "name": "filter-il.txt",
+      "sha256": "09d79c0270cc29de5eabb19b7be50a4a6178350c9dd5414af136a05af9151a2b",
+      "bytes": 4483
+    },
+    {
+      "name": "filter-inflate.txt",
+      "sha256": "f56eabd9814dd7c425e3725440b9592efe7e2c41465bb6eb5391368a77f0a698",
+      "bytes": 2532
+    },
+    {
+      "name": "filter-interlace.txt",
+      "sha256": "cec6a35fd01b88419b7631858b4860f6eab36e72b8e65fb60937c79329fc19b9",
+      "bytes": 2578
+    },
+    {
+      "name": "filter-interleave.txt",
+      "sha256": "9417a4feadb4a6cbfbec2e0fc2382345bb898f4aaec5964cbf8ad2168f5d80bb",
+      "bytes": 2558
+    },
+    {
+      "name": "filter-join.txt",
+      "sha256": "11ae81354f87fa380a19d47a8d4f9b2ad1a95d309225a92bb8020066a2281d2e",
+      "bytes": 2388
+    },
+    {
+      "name": "filter-kerndeint.txt",
+      "sha256": "29370367b55562112d87dce9095a1ec03e6dec0e8d90368a802fc4e88984599a",
+      "bytes": 2412
+    },
+    {
+      "name": "filter-kirsch.txt",
+      "sha256": "ffef263e922a540e43cef10d856229f72c940c3590fba60d89f9c383452585b3",
+      "bytes": 2392
+    },
+    {
+      "name": "filter-ladspa.txt",
+      "sha256": "e5e429a267d5320e60f1558c4821134c6302db21de30cb9ef0d1cc41f256bf03",
+      "bytes": 3215
+    },
+    {
+      "name": "filter-lagfun.txt",
+      "sha256": "cdff8cd6d10b40a02d6b8dc9e13d00feda36ae2940cfff4da0b3bcf6215b863e",
+      "bytes": 2266
+    },
+    {
+      "name": "filter-latency.txt",
+      "sha256": "bc0fdddb69ad8f7f4bd74f5d69f5cd3e2859678244a24ad35d54f0e3f47c59c3",
+      "bytes": 2052
+    },
+    {
+      "name": "filter-lenscorrection.txt",
+      "sha256": "41c958286151e8e0da5351cddcf648d84097def416420df2a64d1b9a8e5ee6ce",
+      "bytes": 2870
+    },
+    {
+      "name": "filter-libplacebo.txt",
+      "sha256": "4ae3eba0f42ce4af56912d5492fe2a28b1571c5002a4fc03d4f9aeba14691855",
+      "bytes": 14726
+    },
+    {
+      "name": "filter-life.txt",
+      "sha256": "bc701cf8aeee62bad2aaf09f3691bc5db1ce90d4cbd177ffe6b941316e36c7be",
+      "bytes": 3400
+    },
+    {
+      "name": "filter-limitdiff.txt",
+      "sha256": "5374e68726ffe367bc4347664e60fddfe6e9bfdee29ea21a318ad41cd5ae219c",
+      "bytes": 2508
+    },
+    {
+      "name": "filter-limiter.txt",
+      "sha256": "af6f58850093f03ecb7361e0c66664b9e697f6fde3e35fb8672e651536634101",
+      "bytes": 2387
+    },
+    {
+      "name": "filter-loop.txt",
+      "sha256": "4748f42900190ee7a11b887459ad7a60297a8d6e69969357fc16220daa966a29",
+      "bytes": 2381
+    },
+    {
+      "name": "filter-loudnorm.txt",
+      "sha256": "98e0e545b398fac52979d2caa99f53ad0c0a12b6b61749a14fbd79573f34ebba",
+      "bytes": 3856
+    },
+    {
+      "name": "filter-lowpass.txt",
+      "sha256": "15c8da9ef2f2fe6e61535a9353760f362b473c10398a58350b12c7e7870e34fa",
+      "bytes": 6018
+    },
+    {
+      "name": "filter-lowshelf.txt",
+      "sha256": "8bfd877a8e5dc961181764ef1fc5e1832aef23cb78a81359feb77df50639b8c8",
+      "bytes": 6185
+    },
+    {
+      "name": "filter-lumakey.txt",
+      "sha256": "a7a0e069cfa7d71340b5e845fd0c78854a6db72601c7a1488f8360bbfc95ca7a",
+      "bytes": 2400
+    },
+    {
+      "name": "filter-lut.txt",
+      "sha256": "d535eae1453fb72539ca88fcd2176df1be1ff31667f140bac3215fd22879183e",
+      "bytes": 3094
+    },
+    {
+      "name": "filter-lut1d.txt",
+      "sha256": "c39a3d0a7b7ed565e0bef8ae1732aace9e5d2575aa3041284f43b406d6c4e76e",
+      "bytes": 2702
+    },
+    {
+      "name": "filter-lut2.txt",
+      "sha256": "577a503fdd09291888c0c04d42e0f7f91715edfc64e9d671ff5e387169242e69",
+      "bytes": 3600
+    },
+    {
+      "name": "filter-lut3d.txt",
+      "sha256": "3b4e7d4395aa4f3f565b07fd0c7ab129eceb4993a5a6305a97c7e39591fb6989",
+      "bytes": 2947
+    },
+    {
+      "name": "filter-lutrgb.txt",
+      "sha256": "61da52ecd6bbf3d9ae3285e727a11fbdc22100cc608959c326c62c7694c8d0ab",
+      "bytes": 3093
+    },
+    {
+      "name": "filter-lutyuv.txt",
+      "sha256": "a021936639b3fcbdf73e55d847f38bc4e9a73eb345f6c55bf662e59498c47e08",
+      "bytes": 3093
+    },
+    {
+      "name": "filter-lv2.txt",
+      "sha256": "30f34d7dbc5fe941f5a33b001364a851243bd9bdbb3f114cafedac1900f951e0",
+      "bytes": 2872
+    },
+    {
+      "name": "filter-mandelbrot.txt",
+      "sha256": "660e7d7069146831a06399c16cf0329d4cc9c5c2e40df1b782d1433aaee8c84c",
+      "bytes": 4229
+    },
+    {
+      "name": "filter-maskedclamp.txt",
+      "sha256": "36e6af3451f46ad94901ddfe1fac7d70ab4f4be768ea99e79a63c9702c91f3f3",
+      "bytes": 2447
+    },
+    {
+      "name": "filter-maskedmax.txt",
+      "sha256": "490ff140cf4eaf96db41921e20657577cc2bb3b3fa83918e11be12068340c156",
+      "bytes": 2274
+    },
+    {
+      "name": "filter-maskedmerge.txt",
+      "sha256": "7ab374f27d42e1780baaba62483d09db1d2c0bae75a2ebd27c5e18aaa4361df0",
+      "bytes": 2277
+    },
+    {
+      "name": "filter-maskedmin.txt",
+      "sha256": "da6b3e36863e9d169e1278710934183dbf1c03275f6f6f0d307ee5933d4d5f12",
+      "bytes": 2274
+    },
+    {
+      "name": "filter-maskedthreshold.txt",
+      "sha256": "0cce33503c60ccd3dc7827efe4c661a26e82a850bbc91ee994ab08b4d15a645f",
+      "bytes": 2539
+    },
+    {
+      "name": "filter-maskfun.txt",
+      "sha256": "291c778905681d896e99a13e723b78e0a5b89b97b026796c53177b795bd909b1",
+      "bytes": 2541
+    },
+    {
+      "name": "filter-mcdeint.txt",
+      "sha256": "9a1d82420b0fc475284e587b55d5b78f1d2c3e0cedf5921cc8e149291158c5e2",
+      "bytes": 2627
+    },
+    {
+      "name": "filter-mcompand.txt",
+      "sha256": "9ca5d5020b8492f885dd508cb79508510a7a3360bb585166a2b6a550a423bbcb",
+      "bytes": 2339
+    },
+    {
+      "name": "filter-median.txt",
+      "sha256": "42b91c32a140ed8984d599a09a0fe40267710986c0ad1a0fe96a8520e94bac56",
+      "bytes": 2473
+    },
+    {
+      "name": "filter-mergeplanes.txt",
+      "sha256": "4f593b30843af6d331b8b5f96a1d6fa00d16b54f09b86419ab79b9200aa87b08",
+      "bytes": 3103
+    },
+    {
+      "name": "filter-mestimate.txt",
+      "sha256": "25c938cbbce7ab6a08203d3c1e4521065ec88b1a5d55f7c7fa7444daf1c84f6b",
+      "bytes": 2913
+    },
+    {
+      "name": "filter-metadata.txt",
+      "sha256": "c4775908dea6e234bde52ef28a6aa5c861500c832961a846bb4ca3c1c59e8c6f",
+      "bytes": 3330
+    },
+    {
+      "name": "filter-midequalizer.txt",
+      "sha256": "d6369984bf08b67a80697568120e29e4ea1651f01b5629136a930d975f0fbd8a",
+      "bytes": 2181
+    },
+    {
+      "name": "filter-minterpolate.txt",
+      "sha256": "57f10cb26b913eff30e05925b3cfcd8102f1fecb1c06b1d2139e4fcf43ca0eb5",
+      "bytes": 4292
+    },
+    {
+      "name": "filter-mix.txt",
+      "sha256": "82767c6d50a0c191348499d2704fc0e8f096212fd9103b3416434144f9352a05",
+      "bytes": 2775
+    },
+    {
+      "name": "filter-monochrome.txt",
+      "sha256": "2743f44573d623c12f964c3f1bd6ce7963e52794c70a75a9c93550b20c101e9c",
+      "bytes": 2521
+    },
+    {
+      "name": "filter-morpho.txt",
+      "sha256": "46b7e61eb7a55d90fd2e0a6b5edb9b19cae10312b7b5f3fcd80b2f8f14fe6607",
+      "bytes": 3919
+    },
+    {
+      "name": "filter-movie.txt",
+      "sha256": "3d2fd2f333df85e34f3b9d82dd4d91672449ebd1bc4aabd48f9e760bc6cae4eb",
+      "bytes": 3090
+    },
+    {
+      "name": "filter-mpdecimate.txt",
+      "sha256": "4cf5de95a960265630b87fa046102b90d3187b39fe55a86eb2498e6634355406",
+      "bytes": 2724
+    },
+    {
+      "name": "filter-mptestsrc.txt",
+      "sha256": "4796fe1a2d1e78d71d390f87742f67f15dd345de2b901107831953f50b788cfc",
+      "bytes": 3839
+    },
+    {
+      "name": "filter-msad.txt",
+      "sha256": "8e64a54abc7ba7075e46af8caff14397e59aa8184fd3256030debd5974a96c37",
+      "bytes": 3153
+    },
+    {
+      "name": "filter-multiply.txt",
+      "sha256": "f96c660e6b4d03b5c9c65d9e2666859fd1f0946ed2d47b873046ac8fc16ea525",
+      "bytes": 2388
+    },
+    {
+      "name": "filter-names.txt",
+      "sha256": "b9c18c064a3449ca8dccb3f7145077d28e1da231b136a880496217a9ea18238f",
+      "bytes": 5263
+    },
+    {
+      "name": "filter-negate.txt",
+      "sha256": "3c27173ce77e3b22e1a0f23dd47101c3e6f5b056c595c6e6c137c07095e907a0",
+      "bytes": 2693
+    },
+    {
+      "name": "filter-nlmeans.txt",
+      "sha256": "fbef03750884acfc7da5e6d3af646f35e51bc1bbdd11a33ec409771c2327a350",
+      "bytes": 2571
+    },
+    {
+      "name": "filter-nlmeans_opencl.txt",
+      "sha256": "0ae9302cb57edea28658f51660d9133d7e68818b5cd79d1910fc302e19506c9e",
+      "bytes": 2503
+    },
+    {
+      "name": "filter-nlmeans_vulkan.txt",
+      "sha256": "77ec6b0da910113fb41a782bf684c62880d09d473936fe8ed2949e579377dfcf",
+      "bytes": 3257
+    },
+    {
+      "name": "filter-nnedi.txt",
+      "sha256": "e68ce13d85f39cd714181553c3079e4dda3749549b245773da08336fd61db954",
+      "bytes": 4943
+    },
+    {
+      "name": "filter-noformat.txt",
+      "sha256": "658960d62ff79ecf35a1200497dbc82d8856b35b92198494bd9b82b9ecbacce7",
+      "bytes": 2160
+    },
+    {
+      "name": "filter-noise.txt",
+      "sha256": "e2d2888d58671c03c353b69fc19375e56da2c67d14ab0a687e90a6496cd47bc5",
+      "bytes": 6927
+    },
+    {
+      "name": "filter-normalize.txt",
+      "sha256": "6f755fe621137251ca244b7df5197b13721fb035861a659655582a106d85fb99",
+      "bytes": 2707
+    },
+    {
+      "name": "filter-null.txt",
+      "sha256": "33c6e47a9a076b16058c6dd0c12970680dc24f05567a9b1e5a36bcf776c44433",
+      "bytes": 1992
+    },
+    {
+      "name": "filter-nullsink.txt",
+      "sha256": "da6799bd9f63396d7b9987a88601d93e92aff509ec5a40798a923c319ca56cab",
+      "bytes": 1999
+    },
+    {
+      "name": "filter-nullsrc.txt",
+      "sha256": "9ae0d69fded5333dcc3fd27a4f8f6d5f35d86f628a68f01b8f627f2528efdd6d",
+      "bytes": 2633
+    },
+    {
+      "name": "filter-openclsrc.txt",
+      "sha256": "98689713c659db43aa3eb9cd8135618f32b868c05514f44a48f6d1ad435704e3",
+      "bytes": 2505
+    },
+    {
+      "name": "filter-oscilloscope.txt",
+      "sha256": "14f0b950dc0b19c98b54f5a4bc433b963cedc97c3ad7e051e1785118f76ac44e",
+      "bytes": 3231
+    },
+    {
+      "name": "filter-overlay.txt",
+      "sha256": "3aa44953dbe3b1a3d0bdbf37d9bdb37a3b199afdf57c6d1de2d212abaf6a21a8",
+      "bytes": 4862
+    },
+    {
+      "name": "filter-overlay_cuda.txt",
+      "sha256": "1fadbb4fe53991b75986c39f7a2635943c7200d29742bd2ba4f7008c7e6b9cdb",
+      "bytes": 4097
+    },
+    {
+      "name": "filter-overlay_opencl.txt",
+      "sha256": "7d68661cb5e1796e8977984574dd38ddccfee631d90bcea296b8d0b4da8df66d",
+      "bytes": 2242
+    },
+    {
+      "name": "filter-overlay_qsv.txt",
+      "sha256": "1353fe5373d1c5dd9619b28739fc05c0ece075d9d96095d78465e3cab603a0a1",
+      "bytes": 4049
+    },
+    {
+      "name": "filter-overlay_vaapi.txt",
+      "sha256": "92c5b7d8111df6aa2fa6e792705b4564afdb4b6ff985e07290b02502dca3a87b",
+      "bytes": 4059
+    },
+    {
+      "name": "filter-overlay_vulkan.txt",
+      "sha256": "1632bb229969973bb99ea3dcf5810d39addc4be8b7c1ffce8ea12966da76f048",
+      "bytes": 2245
+    },
+    {
+      "name": "filter-owdenoise.txt",
+      "sha256": "3376fd53c595b23ec8cc0ee9fdcc7950053410e5fc10032ec1e57f04672177d4",
+      "bytes": 2527
+    },
+    {
+      "name": "filter-pad.txt",
+      "sha256": "036ef55b2394471f48d6c352802642009585bdeffd988df4645e4f39562d25e8",
+      "bytes": 3133
+    },
+    {
+      "name": "filter-pad_opencl.txt",
+      "sha256": "0a21694d911ea74e58d522138c990b62911aaa16d200aa3cf349faa54921f77f",
+      "bytes": 2778
+    },
+    {
+      "name": "filter-pal100bars.txt",
+      "sha256": "ed9f7aba4c9d611939e2739aa99b827b19115dc48d2e0148855b27c546dd2040",
+      "bytes": 2611
+    },
+    {
+      "name": "filter-pal75bars.txt",
+      "sha256": "c4821a3848a0f161ce59569a39cc3343e9e253e7a162e1f5ad41f2b7d3f656e2",
+      "bytes": 2609
+    },
+    {
+      "name": "filter-palettegen.txt",
+      "sha256": "f46e419c0453fa0a2da66a5658d490451cab07dd15e11dbbe279b61e6c1e9095",
+      "bytes": 2734
+    },
+    {
+      "name": "filter-paletteuse.txt",
+      "sha256": "1f49915995912cabc2ecbbe80575e4225f3bd0915a89c3bfc145c0975ddc59ac",
+      "bytes": 3544
+    },
+    {
+      "name": "filter-pan.txt",
+      "sha256": "90d8bedf5bde2289279170bb210e7ed10f092f1f4ca57f7c2a9920f394b3c8f1",
+      "bytes": 2056
+    },
+    {
+      "name": "filter-perms.txt",
+      "sha256": "3c3ff26d52ec02e32a1057e9d941c2b9ae466e4b80135fe4e1fc32140cdc0adb",
+      "bytes": 2646
+    },
+    {
+      "name": "filter-perspective.txt",
+      "sha256": "0c1f245d93cc96115045f622cdd83ec3236ab681a6e8bc2514ce6c19e78ac4cc",
+      "bytes": 3607
+    },
+    {
+      "name": "filter-phase.txt",
+      "sha256": "32c2036fa4afd4d27b4523c7e573e4172566689b6354a9df1cc9ebeb9e65ba30",
+      "bytes": 2670
+    },
+    {
+      "name": "filter-photosensitivity.txt",
+      "sha256": "9ebf3ef1911341c97e345a5d691e26d4b1058ab9a2836f2ae240a8cad52ae727",
+      "bytes": 2719
+    },
+    {
+      "name": "filter-pixdesctest.txt",
+      "sha256": "3ef6e997daedd9990abba92ed43648014b30322eb10dbd361afb5bd48d1c65ec",
+      "bytes": 1989
+    },
+    {
+      "name": "filter-pixelize.txt",
+      "sha256": "8d0763e34001d5ee5c1f7b6739d9d318033c088342d64c2a9b7ceb03f132204f",
+      "bytes": 3142
+    },
+    {
+      "name": "filter-pixscope.txt",
+      "sha256": "f8f33992c3983112a5fc0405257b4f1d6618f07d38b57718454fc1c52c189f2e",
+      "bytes": 2709
+    },
+    {
+      "name": "filter-pp.txt",
+      "sha256": "dcbb337fc51f442b0363dd6a2656b233697a54a5c2ef18ff01694b7182e67c6f",
+      "bytes": 2150
+    },
+    {
+      "name": "filter-pp7.txt",
+      "sha256": "1ae9570cec7e4f58aefcf415de97bdffa0b1e4445d3e35593130d82f25b3aff9",
+      "bytes": 2466
+    },
+    {
+      "name": "filter-premultiply.txt",
+      "sha256": "58658e970c4068653f08023f3a4529791ad35413b334fca3e4d3fead6c6fb5ef",
+      "bytes": 2325
+    },
+    {
+      "name": "filter-prewitt.txt",
+      "sha256": "4356fa06f1fcc720edfe51de9496e91c77aad7002c109459cde53f61a3731354",
+      "bytes": 2394
+    },
+    {
+      "name": "filter-prewitt_opencl.txt",
+      "sha256": "2c44d7bdcf1a2b7701b47fe0797af270a609ff22b531204d014154ebe4b076d4",
+      "bytes": 2283
+    },
+    {
+      "name": "filter-procamp_vaapi.txt",
+      "sha256": "a37b96e501009e30687567c5775e53051da8aa6a80c2e1dd5aaaf3c1520515f5",
+      "bytes": 2838
+    },
+    {
+      "name": "filter-program_opencl.txt",
+      "sha256": "1fe815bac45fa1dbdfc4d9cbcc3e48de6ccbcb706c52de23037cf2638444de40",
+      "bytes": 3409
+    },
+    {
+      "name": "filter-pseudocolor.txt",
+      "sha256": "6de1360e684632368e86249c189e4480f0275ed47d73af21c206f70f58141533",
+      "bytes": 4955
+    },
+    {
+      "name": "filter-psnr.txt",
+      "sha256": "a12331a79e550d33d9b288c26df8117c365334ccbd080c99ee8b1c3089f49f79",
+      "bytes": 3582
+    },
+    {
+      "name": "filter-pullup.txt",
+      "sha256": "1d545db69b752179b016e31bce1345e654304c940de88ba06b71e90de4e1e09e",
+      "bytes": 2735
+    },
+    {
+      "name": "filter-qp.txt",
+      "sha256": "ed4cfc0a7c8d81bfc58bbb68c821eb9eaf0c2bac11ef32eb41062c936a316ec8",
+      "bytes": 2132
+    },
+    {
+      "name": "filter-random.txt",
+      "sha256": "65b91ca7b55137e3de600925d13c73fdbcc6abd5280c772647ea5b1a3b5f70df",
+      "bytes": 2195
+    },
+    {
+      "name": "filter-readeia608.txt",
+      "sha256": "5a2852fef306d923a072034db55af804860c7fd3347516f44f8e7eeab2dd438e",
+      "bytes": 2706
+    },
+    {
+      "name": "filter-readvitc.txt",
+      "sha256": "ab168219718ec5c84e1fe82a13d397f5b59a25e4912787e2d1c9a5c1f2f11d52",
+      "bytes": 2355
+    },
+    {
+      "name": "filter-realtime.txt",
+      "sha256": "7c1deabfb389550ac6b7dd1aa7d0dbe2a5bcb34ff09cb29f39e676d14f4670fd",
+      "bytes": 2190
+    },
+    {
+      "name": "filter-remap.txt",
+      "sha256": "7ff345e28b4e953e1c65aba5ced86f29971b37e4b94dcb35a97243285db6c528",
+      "bytes": 2350
+    },
+    {
+      "name": "filter-remap_opencl.txt",
+      "sha256": "543acc99937d3c94f13ae3136de733cb17a00608fc58f7710f507760221a186d",
+      "bytes": 2353
+    },
+    {
+      "name": "filter-removegrain.txt",
+      "sha256": "88939acef2b0af93458302c78ee19b4190995795a7ce1f3c897b1c79d2a58115",
+      "bytes": 2476
+    },
+    {
+      "name": "filter-removelogo.txt",
+      "sha256": "6d56d442cc9a14fc4c68c67c9856d2d0f295125093e8d7a83aa298202f8887e0",
+      "bytes": 2218
+    },
+    {
+      "name": "filter-repeatfields.txt",
+      "sha256": "2aa7293f4e6a083eb71cce6cc38ecc00c149b5b6aeae6d6ea399db51b2309ddd",
+      "bytes": 2011
+    },
+    {
+      "name": "filter-replaygain.txt",
+      "sha256": "5ffbf06d62a3c276b9d0e4bd19eb54de85cb97c9ba12a32f011972ce2e2bbecb",
+      "bytes": 2197
+    },
+    {
+      "name": "filter-reverse.txt",
+      "sha256": "382f39a5dfe24902b452b4cd0dbc340c1fe0efe3199ea759a9d97dbd96534561",
+      "bytes": 1970
+    },
+    {
+      "name": "filter-rgbashift.txt",
+      "sha256": "87e35cb006af416099a1f4f49a10eac8fbde7e5435b98ffbe4821ee1c7c78cab",
+      "bytes": 3075
+    },
+    {
+      "name": "filter-rgbtestsrc.txt",
+      "sha256": "6656f89f25de1bc013f0d7be694d682fa3b0bbc231d2c850e29873c5b1527c14",
+      "bytes": 2771
+    },
+    {
+      "name": "filter-roberts.txt",
+      "sha256": "191ca9c6b6de00a7ee82187cbf73b58c0cd3843a45ed7897343305833fc9b562",
+      "bytes": 2400
+    },
+    {
+      "name": "filter-roberts_opencl.txt",
+      "sha256": "1356dd82316b7c69e1bd80415482cb2cbb5182e1a49ed24d18b58669026bac4a",
+      "bytes": 2283
+    },
+    {
+      "name": "filter-rotate.txt",
+      "sha256": "edca0c955d23a074b7fedeb94f2f92a33d526ac30c0fec6c5b9fb4210647d7cb",
+      "bytes": 2884
+    },
+    {
+      "name": "filter-rubberband.txt",
+      "sha256": "abcf9d7715517a600144b9e8c7a304edfc64734e4221a9c7b4b5e1ffe40e6835",
+      "bytes": 3912
+    },
+    {
+      "name": "filter-sab.txt",
+      "sha256": "1abd672e2af1df5e7814b9caf79b7339269ac8f27befdc50c5745b683b2472a4",
+      "bytes": 3247
+    },
+    {
+      "name": "filter-scale.txt",
+      "sha256": "5ce0ce18d3064c673cb147637ed8645c3879c52149e594923544d449687f73cd",
+      "bytes": 9324
+    },
+    {
+      "name": "filter-scale2ref.txt",
+      "sha256": "e2e198ce8ae352f28275aeee4bc3137565e81cca450739a4f0524e1af928aa65",
+      "bytes": 9397
+    },
+    {
+      "name": "filter-scale_cuda.txt",
+      "sha256": "65eae85bc3b5118b1f8eb70f24b42094fe1f9d47cb06bf8f93aa246a9b7e00ab",
+      "bytes": 3300
+    },
+    {
+      "name": "filter-scale_qsv.txt",
+      "sha256": "49ff5affc1ed32a14f6d677e2695e34e31171786bdaa8f100b59d2a645c6aeb4",
+      "bytes": 2824
+    },
+    {
+      "name": "filter-scale_vaapi.txt",
+      "sha256": "04caf6e7c0beb44f56bccd39654ea9262836a0f082462d923abdac1ed57a28b9",
+      "bytes": 3944
+    },
+    {
+      "name": "filter-scale_vulkan.txt",
+      "sha256": "dea2c56b2d4405414a175ad7d0366f573c094436e026aff2c3a8176502767460",
+      "bytes": 2988
+    },
+    {
+      "name": "filter-scdet.txt",
+      "sha256": "a096d1ab6e71722f4920a1048d6efc0a2322eb78d9605c0a28f3e700051cd086",
+      "bytes": 2420
+    },
+    {
+      "name": "filter-scharr.txt",
+      "sha256": "4e866736dee3609f3ebb913feb4aaf3e337c7b3e6dda87cfb2e64e3fd99d6c37",
+      "bytes": 2392
+    },
+    {
+      "name": "filter-scroll.txt",
+      "sha256": "417fe00c60a04e829b08584b31dd181cb3141e6f4991e9995a5ef6fd1a73e4de",
+      "bytes": 2722
+    },
+    {
+      "name": "filter-segment.txt",
+      "sha256": "a8410bf1fe0323d2fd39271f2e852e79790eaa01bc848b337dcb0362a4f182cd",
+      "bytes": 2179
+    },
+    {
+      "name": "filter-select.txt",
+      "sha256": "0e3d484b619493bd14233250777cd05d482d89f0b1fa9106bf27cfece03aa76f",
+      "bytes": 2447
+    },
+    {
+      "name": "filter-selectivecolor.txt",
+      "sha256": "34d76253f68b1c9444be9d7082bc4ccae89e945c26626969dc59c1cd11f273c4",
+      "bytes": 3018
+    },
+    {
+      "name": "filter-sendcmd.txt",
+      "sha256": "77a29b5ae459a82fa010316249001200eaeb1b64dc4c20b3865184cd167ae32c",
+      "bytes": 2249
+    },
+    {
+      "name": "filter-separatefields.txt",
+      "sha256": "fd3af068a53f10c876f8dca6c24a5064629383cbdf124627513eb582ecd6ce4b",
+      "bytes": 1999
+    },
+    {
+      "name": "filter-setdar.txt",
+      "sha256": "9c1da5d2989b6ec73e7751307c2e353a35ef37abc97c30dcf9688b75fd0c1ccd",
+      "bytes": 2399
+    },
+    {
+      "name": "filter-setfield.txt",
+      "sha256": "5af6d3a94db21a4dee2d8bc032a7b688a81fb8dd8f71ea5e809336c78cdd03bd",
+      "bytes": 2395
+    },
+    {
+      "name": "filter-setparams.txt",
+      "sha256": "6ed8bbc28ff23b70b628283a5928a9987060ed0d00d38e8b26b0a3bcd21dd3a3",
+      "bytes": 5494
+    },
+    {
+      "name": "filter-setpts.txt",
+      "sha256": "6ee9660cf7e904e5e709af83f1cd30718aed6081dfe14df8ac404e5495709351",
+      "bytes": 2113
+    },
+    {
+      "name": "filter-setrange.txt",
+      "sha256": "176ba27ccca4d33b2426d3fad306c8cc2bd4ab0cf4c64c3288b392e2037c7c18",
+      "bytes": 2557
+    },
+    {
+      "name": "filter-setsar.txt",
+      "sha256": "adfed75aa141604a742dbba54d8700bf290e70520330fc1b2d7fe474b442a429",
+      "bytes": 2419
+    },
+    {
+      "name": "filter-settb.txt",
+      "sha256": "bf00b1b82407058dfe7fc18d19661e8f6ab95e8e49d0c3e42fc0e491e0f89a10",
+      "bytes": 2230
+    },
+    {
+      "name": "filter-sharpness_vaapi.txt",
+      "sha256": "39cb38c28e0347a531273a18a7895fbc01fe2c72e7e0a787d1b0acce711dae59",
+      "bytes": 2104
+    },
+    {
+      "name": "filter-shear.txt",
+      "sha256": "f4c3c11bd1438330e645cc37c35d2990c704be0ee2d9ca7f660820279b38d63e",
+      "bytes": 2679
+    },
+    {
+      "name": "filter-showcqt.txt",
+      "sha256": "f1c9f67612940c3d52e58be109f7f8fbf54f5516dddb319ccac75546246e9457",
+      "bytes": 5539
+    },
+    {
+      "name": "filter-showcwt.txt",
+      "sha256": "ef7eb4c4792dd10ac98d41ccf5fff7f07936b4e39b539069cf80d6c462f860fb",
+      "bytes": 5108
+    },
+    {
+      "name": "filter-showfreqs.txt",
+      "sha256": "ed04cbe2114678abf73a1faf7438f1d8571750b5818c1e9d4eeaf309f80d572a",
+      "bytes": 5636
+    },
+    {
+      "name": "filter-showinfo.txt",
+      "sha256": "43a9f505ef437e29d7fda5fef36727bf229773cb9decb239b71809b46f1bc4cd",
+      "bytes": 2104
+    },
+    {
+      "name": "filter-showpalette.txt",
+      "sha256": "e37ab2563cee982a063114a175a89dd9b22b93f7e70f589589f30fb5f56db44c",
+      "bytes": 2099
+    },
+    {
+      "name": "filter-showspatial.txt",
+      "sha256": "48a60b7ddb34d82ed2306a649def663ad64cc083c00661373b0552516aa9e4a4",
+      "bytes": 3777
+    },
+    {
+      "name": "filter-showspectrum.txt",
+      "sha256": "8354069e47940be5ed99e4052cf91ee4bba38c2cfb9f00a5aa20e74e92ae988f",
+      "bytes": 7399
+    },
+    {
+      "name": "filter-showspectrumpic.txt",
+      "sha256": "a76854fe1ab53687d88e65f8032c6531099e84ec4932b4b261bc8a77d90a94ca",
+      "bytes": 6571
+    },
+    {
+      "name": "filter-showvolume.txt",
+      "sha256": "44aeeb2e4d73cd03eafce74d22236b5f8efda98c4ecfd67447ef4f6837bbd0e6",
+      "bytes": 3795
+    },
+    {
+      "name": "filter-showwaves.txt",
+      "sha256": "a41cccd49e672320ed42c27e7b261dc224068152f98253f5c549877a36470b8c",
+      "bytes": 3658
+    },
+    {
+      "name": "filter-showwavespic.txt",
+      "sha256": "c382c7c5e0f5e155dae311cdb699ad5a3ce4fa3d6cc69a46d44ef0b474f56d5e",
+      "bytes": 3221
+    },
+    {
+      "name": "filter-shuffleframes.txt",
+      "sha256": "9ad8663ba950765caa66ef050729309b7e65d2849e5d360e709569bbfdfd0f13",
+      "bytes": 2174
+    },
+    {
+      "name": "filter-shufflepixels.txt",
+      "sha256": "db3e8d11e53973ca838da8edc91883fcb47ac058183b597cb72af62f60dca3da",
+      "bytes": 3528
+    },
+    {
+      "name": "filter-shuffleplanes.txt",
+      "sha256": "a709a82641e28ee6d12fa8b2e1f8c2249697ca51971c55d7245c842d0c8dec66",
+      "bytes": 2616
+    },
+    {
+      "name": "filter-sidechaincompress.txt",
+      "sha256": "8247ad181f954487841303558f8c9ce10094f19b4f354b338c15016b440d5d44",
+      "bytes": 3414
+    },
+    {
+      "name": "filter-sidechaingate.txt",
+      "sha256": "4064a979b667fedb55795d626ed24bb5422257f92b2c6890c132f5c8dde42601",
+      "bytes": 3474
+    },
+    {
+      "name": "filter-sidedata.txt",
+      "sha256": "38612c7277eaff4cb044a718ce84e849bd102958bab1b383e272c89659703e25",
+      "bytes": 3418
+    },
+    {
+      "name": "filter-sierpinski.txt",
+      "sha256": "29415358c27c8ab75d0c929e39d5934b1f9f7661b3b937e29c39d0d6b021bde5",
+      "bytes": 2766
+    },
+    {
+      "name": "filter-signalstats.txt",
+      "sha256": "60fa398a62a4a7eecdf35e60dbeb0c2e3f67e7d8fb76e2bdef236e941ad4fbc1",
+      "bytes": 2962
+    },
+    {
+      "name": "filter-signature.txt",
+      "sha256": "18b5d2ad41be41ff85ef912390407e56648de40dcd4e7d7fe4d8e748f9746f7c",
+      "bytes": 3234
+    },
+    {
+      "name": "filter-silencedetect.txt",
+      "sha256": "59ab57cfd7502b410e6bef0ed74f129ff28db78aae99c851526f7fae21a4f01f",
+      "bytes": 2570
+    },
+    {
+      "name": "filter-silenceremove.txt",
+      "sha256": "05ca68f4b07dc74613e05881dd5177594fb89a7207bc0e1a61ebbb28cba14461",
+      "bytes": 4423
+    },
+    {
+      "name": "filter-sinc.txt",
+      "sha256": "f22a3f7a02f7640ad60b73080a52660f006a1f386b1e36bfe112ff1d9df84c57",
+      "bytes": 3346
+    },
+    {
+      "name": "filter-sine.txt",
+      "sha256": "480390ec751cd92d65bc468080cf5293e78040edbb879a2eca6ecfb68fa4f8c3",
+      "bytes": 2890
+    },
+    {
+      "name": "filter-siti.txt",
+      "sha256": "6b8e71219930a09546ce702daefdf23116db4dc199e09b1994d1719fde27087c",
+      "bytes": 2133
+    },
+    {
+      "name": "filter-smartblur.txt",
+      "sha256": "14e0ddfcf911b06d7699605bdbc1227b98a84828240059af2f6a101729de6077",
+      "bytes": 3223
+    },
+    {
+      "name": "filter-smptebars.txt",
+      "sha256": "10a114166f4237aec22492be80764c09dc57bcdec48ca4f12aae027b487141a7",
+      "bytes": 2605
+    },
+    {
+      "name": "filter-smptehdbars.txt",
+      "sha256": "a998b36e18912ca75ba0691094432340be84be4c764e478ce048d9c4418456a8",
+      "bytes": 2610
+    },
+    {
+      "name": "filter-sobel.txt",
+      "sha256": "0ebad8e2878aebbcf686e94c7be17ac5acdc15afb54bfeb96e36d34899c4d360",
+      "bytes": 2390
+    },
+    {
+      "name": "filter-sobel_opencl.txt",
+      "sha256": "e8fb38f9269fd4dab8f4ad60bfa9ef4dec0f738713a8201bb89b562f994ec997",
+      "bytes": 2277
+    },
+    {
+      "name": "filter-sofalizer.txt",
+      "sha256": "f3a65d987d3a3409d0a76c1acd14505d07fb69a90491d733d1a88e0bafe4bb53",
+      "bytes": 3406
+    },
+    {
+      "name": "filter-spectrumsynth.txt",
+      "sha256": "7e9c32a75a1b472d2e554a0971c6c750d7889d39370bb0aecc4be142db64c6b7",
+      "bytes": 4436
+    },
+    {
+      "name": "filter-speechnorm.txt",
+      "sha256": "f429b5e23a10c44d89e5b486815e79220f88ab225c8f54c173572860e7349711",
+      "bytes": 4001
+    },
+    {
+      "name": "filter-split.txt",
+      "sha256": "a29fae891237845625bea0947cb3cb439c51861f5f0b898c0bb0829c4f0faa0b",
+      "bytes": 2127
+    },
+    {
+      "name": "filter-spp.txt",
+      "sha256": "946cf63a46211caff0f71ea544ac317d6a8ffead4c6ab5321857235690d72091",
+      "bytes": 4330
+    },
+    {
+      "name": "filter-sr.txt",
+      "sha256": "fa50a4d1561e88ceacaf896c8e5f55709a1e380374deb2af61e41719c863de5d",
+      "bytes": 2512
+    },
+    {
+      "name": "filter-ssim.txt",
+      "sha256": "18d98d863ab7a4eaeb3e734ffec34520e751bb2a2abe7a74bf56272f84bab574",
+      "bytes": 3359
+    },
+    {
+      "name": "filter-ssim360.txt",
+      "sha256": "d84470e8983139aa5701a8904c31117d1df0c9f16d8bd7e9325ff7ee0e1e9b7a",
+      "bytes": 5999
+    },
+    {
+      "name": "filter-stereo3d.txt",
+      "sha256": "db5437fbfd2ff2fbdb4d5d01ca663b7dc093371c6262b6874f5aafbc44e61e4b",
+      "bytes": 6294
+    },
+    {
+      "name": "filter-stereotools.txt",
+      "sha256": "5304717b49b01cc8d783e4249d871fb0b0a23929c74eb8b877636a7f55370ceb",
+      "bytes": 4591
+    },
+    {
+      "name": "filter-stereowiden.txt",
+      "sha256": "18466fc0504ee89db27579270bd69b56376204ed06e0a80f9285cd8a726118c8",
+      "bytes": 2439
+    },
+    {
+      "name": "filter-streamselect.txt",
+      "sha256": "0fa29455cde32c2371435e9a5ee0064569efbff58ef899eafd1c7532e383e5ae",
+      "bytes": 2222
+    },
+    {
+      "name": "filter-subtitles.txt",
+      "sha256": "fc0cebcdf8a1be67a5bf70bb708b78a2728f8b56b31c744c3ac2b100b090418b",
+      "bytes": 2952
+    },
+    {
+      "name": "filter-super2xsai.txt",
+      "sha256": "ce40d292e2204b2ff718722233b0c5740648eb79ac47a1426726a18617d6b41b",
+      "bytes": 2051
+    },
+    {
+      "name": "filter-superequalizer.txt",
+      "sha256": "6b12eb9c22c52588cb6ec1919720820585e76b4ebc99898494d3c8f54d02f5b2",
+      "bytes": 3708
+    },
+    {
+      "name": "filter-surround.txt",
+      "sha256": "3c753386a317d5f84de30973f421afa6f950cc87e142361322867b8abf9ce7ec",
+      "bytes": 8620
+    },
+    {
+      "name": "filter-swaprect.txt",
+      "sha256": "3eee3cef7dcaf80e8f9aadcc7a324d4c9e84143c29f17538687e75fd7ceb401d",
+      "bytes": 2618
+    },
+    {
+      "name": "filter-swapuv.txt",
+      "sha256": "b20cdaaaf4ae5d35a0be9e61a034718c2d75aef9fc9f25f1a7b15d231fda7da6",
+      "bytes": 2063
+    },
+    {
+      "name": "filter-tblend.txt",
+      "sha256": "99b542fc07be105a00b230f70fcb63b24f9104d99d5f64ed71187e5784f06229",
+      "bytes": 13423
+    },
+    {
+      "name": "filter-telecine.txt",
+      "sha256": "e850167469cf6fa19760fd05c145f8400baa775b8029a54bcf1d13e3ebe97270",
+      "bytes": 2507
+    },
+    {
+      "name": "filter-testsrc.txt",
+      "sha256": "0e191f4b99793d97336766a6822f36696783e3b0b074e5c3c900fe4f4735b48b",
+      "bytes": 2801
+    },
+    {
+      "name": "filter-testsrc2.txt",
+      "sha256": "9de638d5cb25f4dd77ffab58babc9bc4399f3f9a3f64f03a34b7e66ae4d892e2",
+      "bytes": 2706
+    },
+    {
+      "name": "filter-thistogram.txt",
+      "sha256": "3870e2b0497722b940a210b82d52828d3b25739b89c0b66c478313315fec83be",
+      "bytes": 4197
+    },
+    {
+      "name": "filter-threshold.txt",
+      "sha256": "5519d5554f19203751c7841c76a7456cd7694919df220f0f7721e6e347ddf233",
+      "bytes": 2300
+    },
+    {
+      "name": "filter-thumbnail.txt",
+      "sha256": "dff4922cfa905297e8826604babb7f3bfef983eabbe7ce3ddf14961a554f2f69",
+      "bytes": 2576
+    },
+    {
+      "name": "filter-thumbnail_cuda.txt",
+      "sha256": "04b764e75648709521dc5df5146901319b344ce01dba1d00489c76fa6ab66cbb",
+      "bytes": 2174
+    },
+    {
+      "name": "filter-tile.txt",
+      "sha256": "caab3b921fc802601270e2dc631c9bbc52446a03a90df09a2995079040068789",
+      "bytes": 2759
+    },
+    {
+      "name": "filter-tiltshelf.txt",
+      "sha256": "4554e3870b61bdc44a8112e9a856c77c29f5877b0e06aad700ed999f231c52d5",
+      "bytes": 6197
+    },
+    {
+      "name": "filter-tinterlace.txt",
+      "sha256": "32fa153aac7914d77befd341165df2f56c1296d73d881b4ca169a0418b0fdf9f",
+      "bytes": 2709
+    },
+    {
+      "name": "filter-tlut2.txt",
+      "sha256": "b3c243e97a7a52f541f6b2b9c3655a9115ab8f41830caafc6cfaafa575530561",
+      "bytes": 2479
+    },
+    {
+      "name": "filter-tmedian.txt",
+      "sha256": "b5952717fe5b146757eaebcd93d1defd669732755961176910635b4566375fb6",
+      "bytes": 2396
+    },
+    {
+      "name": "filter-tmidequalizer.txt",
+      "sha256": "06fee493eef7f8d4f8ae7bd665a1bcfee9d6a8ededbe61147d504612b4400b3c",
+      "bytes": 2342
+    },
+    {
+      "name": "filter-tmix.txt",
+      "sha256": "6a81f12e9dabab27be164ee9d6de45c0bff868796e77143ab59d4494a08f7018",
+      "bytes": 2467
+    },
+    {
+      "name": "filter-tonemap.txt",
+      "sha256": "365e394bef9db9fe43a88fd0fe14c6b4ed255e9e10b74ee89153f68b25c004d2",
+      "bytes": 2777
+    },
+    {
+      "name": "filter-tonemap_opencl.txt",
+      "sha256": "280d07e66fe0d2b1b7e1350d63ec0a820a315d4e451f43ce94ea1d44fddca912",
+      "bytes": 4692
+    },
+    {
+      "name": "filter-tonemap_vaapi.txt",
+      "sha256": "4cb33ebb6b71c5a459ba64432245265f148f43a8117373f4d964c7407294e8ec",
+      "bytes": 2569
+    },
+    {
+      "name": "filter-tpad.txt",
+      "sha256": "6fc39ca6092442e2e9bca9a27d8bb3e3b2a7aac25665838c0aa984460cf86755",
+      "bytes": 3022
+    },
+    {
+      "name": "filter-transpose.txt",
+      "sha256": "1e47cd8cf5315b5b7290189aa9d2eed75a56e6895543df5a88b3d2f3fdac1ffa",
+      "bytes": 2815
+    },
+    {
+      "name": "filter-transpose_opencl.txt",
+      "sha256": "2f5ef644d71b0c68ebc044883019e15ee09d2eba6b80153ec3aa400d15c051bb",
+      "bytes": 2798
+    },
+    {
+      "name": "filter-transpose_vaapi.txt",
+      "sha256": "155d2068cad101ba3aa5fc3bdbf1b562c913d6ecfcb6fd63820fbc0f9a16b5b5",
+      "bytes": 2990
+    },
+    {
+      "name": "filter-transpose_vulkan.txt",
+      "sha256": "16de6f3c841c50443bafe6cae0985dc27640471cf449ab1f0ca89fb6d472c040",
+      "bytes": 2800
+    },
+    {
+      "name": "filter-treble.txt",
+      "sha256": "7fa240b3382bc9838fcecaf4449352fa9666abb487856a5ed267d8108c3048fb",
+      "bytes": 6199
+    },
+    {
+      "name": "filter-tremolo.txt",
+      "sha256": "f94039d6945e07571a6796834eee6fb2ed71a10564e641885190216beae91cf9",
+      "bytes": 2261
+    },
+    {
+      "name": "filter-trim.txt",
+      "sha256": "91d24610a000c9cbe62962a176b4dac5ead441efea7481576aa45f77e46b5cba",
+      "bytes": 3258
+    },
+    {
+      "name": "filter-unpremultiply.txt",
+      "sha256": "1782b3501d454d81c1eef2161f015310d8112d986cb65852ec23724deb1f8039",
+      "bytes": 2329
+    },
+    {
+      "name": "filter-unsharp.txt",
+      "sha256": "b9a11647123b05af79ba881d1162045f1d078e153f561f1f153dce6d13ce7fb5",
+      "bytes": 3957
+    },
+    {
+      "name": "filter-unsharp_opencl.txt",
+      "sha256": "729d754ea1da8c00726db19bf42d8b4921682dde7f32389f4db27e00dc2d7723",
+      "bytes": 3442
+    },
+    {
+      "name": "filter-untile.txt",
+      "sha256": "97ba6ade721d6f3e070cf0e9cc74f9e1e1acf71f51711a06ecca07d6b802851d",
+      "bytes": 2090
+    },
+    {
+      "name": "filter-uspp.txt",
+      "sha256": "962417b5b4e97b3dbb9bcc89f636f1efa27026867470ad7446c5970e5473eb54",
+      "bytes": 2461
+    },
+    {
+      "name": "filter-v360.txt",
+      "sha256": "6fe9eccb246bf3d932456d35d9e1cd04a24b3d4336ce52b62e82dd3772b2e284",
+      "bytes": 10332
+    },
+    {
+      "name": "filter-vaguedenoiser.txt",
+      "sha256": "9ef007d2610ad549235b3db3430a3aec84d066bcef4aaee5d17361feafe48295",
+      "bytes": 3006
+    },
+    {
+      "name": "filter-varblur.txt",
+      "sha256": "4c60f8c3c86de677feaa03d7694a76b968dfe5ae1e6190f92d6e63b2cf4e76a8",
+      "bytes": 3424
+    },
+    {
+      "name": "filter-vectorscope.txt",
+      "sha256": "e8976f91e572d155ea34bf12240f6714871815a77ecb378e8bf74fc6f9c36f7e",
+      "bytes": 6399
+    },
+    {
+      "name": "filter-vflip.txt",
+      "sha256": "a0bd8784420f63cc8ec826fe9e30f918ce56626855db1e84badc66481603db6b",
+      "bytes": 2069
+    },
+    {
+      "name": "filter-vflip_vulkan.txt",
+      "sha256": "440249927c87f891b60a5c717b41efd2188a5372607c5684670e1440263aafa8",
+      "bytes": 2026
+    },
+    {
+      "name": "filter-vfrdet.txt",
+      "sha256": "9703b9f700e25003cb8ef92307183db61ad18bb7be95e6374da99fb5f872b86c",
+      "bytes": 1988
+    },
+    {
+      "name": "filter-vibrance.txt",
+      "sha256": "e6f64a9a145c78ca7ccc4b9bb5fd8142487e461aeb9af0391132d693983eae48",
+      "bytes": 2912
+    },
+    {
+      "name": "filter-vibrato.txt",
+      "sha256": "cf4020176647e43fadb37e2f43d9e8d93706e2eac54226c45787fe799e099a65",
+      "bytes": 2261
+    },
+    {
+      "name": "filter-vidstabdetect.txt",
+      "sha256": "511fba06d0e41d454eac4a8af5cd66ff72263a6b9c2091184f952f2bc7132bb7",
+      "bytes": 3039
+    },
+    {
+      "name": "filter-vidstabtransform.txt",
+      "sha256": "95b9d8bf17add89522ef67215ff36be6e9d3cea0335679ffcdf54800ebea2fbf",
+      "bytes": 4279
+    },
+    {
+      "name": "filter-vif.txt",
+      "sha256": "fa54d4c77c8f403096f345e4e979516dbfb65aeac4f10defd3408d6b3fe75caf",
+      "bytes": 3150
+    },
+    {
+      "name": "filter-vignette.txt",
+      "sha256": "9a895dc3aff79dc3197c267d4901fc8bef206473d31df1aa1cf90251138c21b7",
+      "bytes": 3079
+    },
+    {
+      "name": "filter-virtualbass.txt",
+      "sha256": "0bbd6bc36c78114a18379c714efdb1df4e6051edd3f2d09b8fef5b84305cbeb6",
+      "bytes": 2270
+    },
+    {
+      "name": "filter-vmafmotion.txt",
+      "sha256": "730dcc08ea5910827c601aae077c45f052b65c334c185e5e05759e816b98413c",
+      "bytes": 2118
+    },
+    {
+      "name": "filter-volume.txt",
+      "sha256": "89011ff1b2374235965cebf4028cd8dada87bab2d6ec20999b657012921a45d8",
+      "bytes": 3365
+    },
+    {
+      "name": "filter-volumedetect.txt",
+      "sha256": "ba9c4ed7358be353211b6d367d73a0257a3da5f9c9af6435e4789f600eaa9ebe",
+      "bytes": 1980
+    },
+    {
+      "name": "filter-vpp_qsv.txt",
+      "sha256": "ebd63de814612c3fce25f60dadb4c9b8fa6d230d476f7d81f12fc7a4564ec7a7",
+      "bytes": 6504
+    },
+    {
+      "name": "filter-vstack.txt",
+      "sha256": "01edd453b365b223533f9df3fcc9e295886befa615644c28fd634ab32b2960e7",
+      "bytes": 2267
+    },
+    {
+      "name": "filter-vstack_qsv.txt",
+      "sha256": "41066d6c7f72bae998824384d826540a4b811fd9dc4d9420c42e9812ab51f86a",
+      "bytes": 2359
+    },
+    {
+      "name": "filter-vstack_vaapi.txt",
+      "sha256": "56ff69068d6acd6f15c03f2ce3358070bc2de5166954fbe8ceac221751b2cbbd",
+      "bytes": 2353
+    },
+    {
+      "name": "filter-w3fdif.txt",
+      "sha256": "4932f23daef5afce43efe0f5588b91bb845a8bad758ad592a55b73cda46b0b13",
+      "bytes": 3152
+    },
+    {
+      "name": "filter-waveform.txt",
+      "sha256": "9849caa31619edf47ee72fc18990f1e80ee2633c8d4a54b14ed03e4a38d06f6c",
+      "bytes": 7643
+    },
+    {
+      "name": "filter-weave.txt",
+      "sha256": "9a486d519bbb21fb1cf79551674d77a65ec43048ee4990c3425ceb0548ffd8e2",
+      "bytes": 2406
+    },
+    {
+      "name": "filter-xbr.txt",
+      "sha256": "10cc6ccfd8d1438600f1131e2fbb7293291b929de0d051539f154b7f5ca3671f",
+      "bytes": 2122
+    },
+    {
+      "name": "filter-xcorrelate.txt",
+      "sha256": "cab97f4204cdc20eb911a1608540c3ebb28a6f99ab7571c3adab94ba55032e05",
+      "bytes": 3561
+    },
+    {
+      "name": "filter-xfade.txt",
+      "sha256": "06e07ff920a6f1eadfcdc0aacd722a261d42e016709bb0740fd67aa599458760",
+      "bytes": 6368
+    },
+    {
+      "name": "filter-xfade_opencl.txt",
+      "sha256": "5d7e54dc0d1a612822faf8a520250c1bddfb3426c1696470ce833b1325bcf269",
+      "bytes": 3203
+    },
+    {
+      "name": "filter-xfade_vulkan.txt",
+      "sha256": "43522ae08037918daaa3e26018051056fad814b1b9b5513add5e5cc517cb80f7",
+      "bytes": 3502
+    },
+    {
+      "name": "filter-xmedian.txt",
+      "sha256": "896b6201bbef06af8dce23bc1bc2db0804fdbb8f929a10788922affb65fe6193",
+      "bytes": 3428
+    },
+    {
+      "name": "filter-xstack.txt",
+      "sha256": "dcee4efc43aec0a1ff1890c619904ff862912b23e9e40131177365b368556faa",
+      "bytes": 2503
+    },
+    {
+      "name": "filter-xstack_qsv.txt",
+      "sha256": "1357a8f41a46d44cf1d18d0888828526abfd20af05e234fb25a5c03c0522a5e7",
+      "bytes": 2541
+    },
+    {
+      "name": "filter-xstack_vaapi.txt",
+      "sha256": "593aad35345a764844136fe046b9f506be90190d155ed9949bbdf5f143126543",
+      "bytes": 2535
+    },
+    {
+      "name": "filter-yadif.txt",
+      "sha256": "c2c3585f1b9afd2c85f56727960747ca950f086aa99af3f0854e96f7027614c5",
+      "bytes": 3184
+    },
+    {
+      "name": "filter-yadif_cuda.txt",
+      "sha256": "e26faf463934482d8364e4b6bf743524794fe4d0a13efcd3ec212e1afb9537b2",
+      "bytes": 3159
+    },
+    {
+      "name": "filter-yaepblur.txt",
+      "sha256": "74badf1ca58476f4d817500675c8e66a68937d674ee0b6aa0a5358d55fe7ce2e",
+      "bytes": 2689
+    },
+    {
+      "name": "filter-yuvtestsrc.txt",
+      "sha256": "d71ff5e27f0bec6c8d72ea5fc6207e28595f06f5317876725271cc829b13f342",
+      "bytes": 2611
+    },
+    {
+      "name": "filter-zmq.txt",
+      "sha256": "2906082a278eecc436457399e4ab0fb3d9b132c13c5aae971dc38ee99f1a75a7",
+      "bytes": 2202
+    },
+    {
+      "name": "filter-zoneplate.txt",
+      "sha256": "2be7beeb1942509e48f7694a3fd915178a9436639ccdd926a559b504669dbd81",
+      "bytes": 4347
+    },
+    {
+      "name": "filter-zoompan.txt",
+      "sha256": "9b4c6be8dd8af0e40e94f1ad68cc0617f4a52820c6cb1e51f212f1144e44d3a6",
+      "bytes": 2594
+    },
+    {
+      "name": "filter-zscale.txt",
+      "sha256": "6826a8a47e9c615efab1a017b477e87b350070dde180a2f7e1cb09aa5dfc1bce",
+      "bytes": 20718
+    },
+    {
+      "name": "filters.txt",
+      "sha256": "b23c2ab5ef897c4cf1cee668836f370fd6bda09383c630b6f3670788739a8ed1",
+      "bytes": 42043
+    },
+    {
+      "name": "h-full.txt",
+      "sha256": "c3851200ab4e937c0bb2eafa9c73a01df42def14db7fdaf000376958d79093f2",
+      "bytes": 1167705
+    },
+    {
+      "name": "muxers.txt",
+      "sha256": "c13ff36d275d86c260f24e526f93ce5949625c033e2257d17e37ca8fab759e6d",
+      "bytes": 9619
+    },
+    {
+      "name": "version.txt",
+      "sha256": "5b320c97f515e79171f10a2147d875ffb6b14bd2b25681047b73c46fe0a527ee",
+      "bytes": 1838
+    }
+  ],
+  "total_chunks": null,
+  "index_generation": 1
+}
