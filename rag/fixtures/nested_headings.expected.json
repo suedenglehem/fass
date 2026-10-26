@@ -1,0 +1,60 @@
+{
+  "title": "FFmpeg Nested Test",
+  "sections": [
+    {
+      "anchor": "Alpha",
+      "number": "1",
+      "title": "Alpha chapter",
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "Alpha intro paragraph.",
+          "links": []
+        },
+        {
+          "kind": "list",
+          "items": [
+            "first item",
+            "second item with emphasis"
+          ]
+        }
+      ]
+    },
+    {
+      "anchor": "Beta",
+      "number": "1.1",
+      "title": "Beta section",
+      "level": 3,
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "See the gamma subsection for details.",
+          "links": [
+            "Gamma"
+          ]
+        }
+      ]
+    },
+    {
+      "anchor": "Gamma",
+      "number": "1.1.1",
+      "title": "Gamma subsection",
+      "level": 4,
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "Gamma text with & < > entities.",
+          "links": []
+        }
+      ]
+    },
+    {
+      "anchor": "Delta",
+      "number": "2",
+      "title": "Delta",
+      "level": 2,
+      "blocks": []
+    }
+  ]
+}

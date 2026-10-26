@@ -10,5 +10,6 @@ docker-data/
 # (recipe recorded in rag/corpus/BUILD-RECIPE.md)
 rag/corpus/*/docs/
 rag/corpus/*/_build/
+rag/corpus/*/chunks/
 rag/corpus/*/build-facts/*
 !rag/corpus/*/build-facts/manifest.json

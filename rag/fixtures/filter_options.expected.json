@@ -1,0 +1,83 @@
+{
+  "title": "FFmpeg Test Manual",
+  "sections": [
+    {
+      "anchor": "Description",
+      "number": "1",
+      "title": "Description",
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "This is a test manual for parser fixtures.",
+          "links": []
+        }
+      ]
+    },
+    {
+      "anchor": "Video-Filters",
+      "number": "2",
+      "title": "Video Filters",
+      "level": 2,
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "Test video filters live here.",
+          "links": []
+        }
+      ]
+    },
+    {
+      "anchor": "tflip",
+      "number": "2.1",
+      "title": "tflip",
+      "level": 3,
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "text": "Flip the input video vertically.",
+          "links": []
+        },
+        {
+          "kind": "paragraph",
+          "text": "For example, to flip the input video:",
+          "links": []
+        },
+        {
+          "kind": "example",
+          "text": "ffmpeg -i in.avi -vf \"tflip\" out.avi\n"
+        },
+        {
+          "kind": "deflist",
+          "entries": [
+            {
+              "term": "strength",
+              "desc": [
+                {
+                  "kind": "paragraph",
+                  "text": "Strength of the flip, between 0 and 1.",
+                  "links": []
+                }
+              ]
+            },
+            {
+              "term": "mirror",
+              "desc": [
+                {
+                  "kind": "paragraph",
+                  "text": "Also mirror the output. Default is no.",
+                  "links": []
+                },
+                {
+                  "kind": "paragraph",
+                  "text": "Second paragraph for mirror.",
+                  "links": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
