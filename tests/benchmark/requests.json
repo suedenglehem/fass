@@ -352,7 +352,7 @@
   {
     "id": "bench-068",
     "instruction": "Stabilize the footage",
-    "expected": {"status": "unsupported"}
+    "expected": {"status": "ready", "ops": ["stabilize"], "container": "mp4", "video_codec": "h264"}
   },
   {
     "id": "bench-069",

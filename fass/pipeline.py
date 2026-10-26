@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-from fass.builder import build_argv, render_posix
+from fass.builder import build_argv, build_argv_all, render_posix
 from fass.config import load_config
 from fass.execute import resolve_input_name
 from fass.explain import summarize
@@ -48,6 +48,10 @@ class GenerationResponse:
     plan: dict | None = None
     arguments: list[str] | None = None
     command: str | None = None
+    # M10.5: multi-pass plans (two-pass stabilization). One dict per pass,
+    # in execution order (the final pass last); top-level arguments/command
+    # always describe the FINAL pass — the one that produces the artifact.
+    steps: list[dict] | None = None
     summary: list[str] = field(default_factory=list)
     defaults: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -82,11 +86,15 @@ def _graph_names(graph: str) -> list[str]:
 
 def _used_filters(ep) -> list[str]:
     """Filter names the plan's graphs use — parsed from -vf, -af and
-    filter_complex, restricted to the registry's filter vocabulary, so the
-    preflight checks exactly the filters the command will run."""
+    filter_complex (of every pass in a multi-pass plan), restricted to the
+    registry's filter vocabulary, so the preflight checks exactly the
+    filters the command will run."""
     allowed = all_filter_names()
     used: list[str] = []
-    for graph in (ep.vf, ep.af, ep.filter_complex):
+    graphs: list[str | None] = []
+    for p in (ep.passes or [ep]):
+        graphs.extend((p.vf, p.af, p.filter_complex))
+    for graph in graphs:
         if not graph:
             continue
         for name in _graph_names(graph):
@@ -266,10 +274,17 @@ def generate(
         resp.errors = list(e.errors)
         return resp
 
-    argv = build_argv(ep)
+    argvs = build_argv_all(ep)
+    argv = argvs[-1]  # the final pass — the one that produces the artifact
     resp.status = "ready"
     resp.arguments = argv
     resp.command = render_posix(argv)
+    if len(argvs) > 1:
+        resp.steps = [
+            {"pass": i + 1, "purpose": p.purpose, "arguments": a,
+             "command": render_posix(a), "output": p.output_path}
+            for i, (p, a) in enumerate(zip(ep.passes, argvs))
+        ]
     resp.plan = edit.model_dump()
     resp.summary = summarize(edit, ep, media)
     resp.defaults.extend(ep.defaults)

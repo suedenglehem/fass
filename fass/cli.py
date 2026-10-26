@@ -159,10 +159,20 @@ def _generate_cli(argv: list[str]) -> int:
         _print_response(resp)
 
     if resp.status == "ready" and args.execute:
+        # M10.5: a multi-pass plan runs its steps in order (same working
+        # directory, the final output's); the first non-zero exit stops
+        # the sequence and is the command's exit code
+        argvs = [s["arguments"] for s in resp.steps] if resp.steps else [resp.arguments]
+        cmds = [s["command"] for s in resp.steps] if resp.steps else [resp.command]
         print("\nExecuting:", file=sys.stderr)
-        print("  " + resp.command, file=sys.stderr)
-        rc = subprocess.run(resp.arguments, shell=False).returncode
-        return rc if rc != 0 else 0
+        for i, c in enumerate(cmds, 1):
+            label = f"  (step {i}/{len(cmds)})" if len(cmds) > 1 else ""
+            print("  " + c + label, file=sys.stderr)
+        for a in argvs:
+            rc = subprocess.run(a, shell=False).returncode
+            if rc != 0:
+                return rc
+        return 0
     return EXIT_CODES.get(resp.status, 1)
 
 

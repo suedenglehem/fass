@@ -5,8 +5,47 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state:** M1–M9+BSF + M10.0–M10.4 shipped (M10.3+M10.4
-  uncommitted, dirty tree). **M10.4 comparison COMPLETE 2026-10-26**
+- **Last state:** M1–M9+BSF + M10.0–M10.5 shipped (M10.5 committed this
+  milestone). **M10.5 two-pass vidstab COMPLETE 2026-10-26** (on tr4):
+  `stabilize the shaky clip` / `remove the camera shake` / `get rid of the
+  shaky handheld look` → `StabilizeOp`; the planner builds a two-pass
+  execution — pass 1 `vidstabdetect=result=<trf>` + `-f null -` (stream
+  discarded), pass 2 `vidstabtransform=input=<trf>` prepended to the
+  re-encode vf chain; bare trf name `<output-stem>.vidstab.trf` next to the
+  output; both passes run in ONE cwd (the final output's) so no path
+  rewriting. `ExecutionPlan.passes: list[Pass]` + `intermediates`;
+  top-level fields mirror the FINAL pass; `build_argv_all()` returns every
+  argv (final last); `GenerationResponse.steps` (pass/purpose/arguments/
+  command/output). Executor: `RunRequest.steps` (max 8, `steps[-1] ==
+  arguments` enforced by a model validator), `start_run_sequence` runs
+  steps sequentially with a per-step timeout, one Run record (argv = final
+  step), `_ACTIVE[run_id]` = current step's proc so stop works. CLI
+  `--execute` runs the steps in order. Conflict matrix (planner PlanErrors,
+  the two passes need 1:1 frame correspondence): trim, speed, watermark,
+  audio_replace, subtitles, combine, any bitstream filter, any video-domain
+  filter, diagnostic filters, stream destination; ALLOWED: resize,
+  grayscale, crop, rotate, audio filters, audio_resample, codec options.
+  NLU bug fixed: stabilize now conflicts at NLU level with audio/subtitles
+  output modes (was silently dropped → a plain mp3 plan for "stabilize the
+  clip to mp3"). GPU consume rule (M10.5): `resize to 1080p on the gpu` →
+  `scale_cuda=w=-1:h=1080` + CPU encoder (note says the GPU mention applies
+  to the filter, not the encoder); `deinterlace on the gpu` → `yadif_cuda`
+  + CPU encoder; an explicit encoder word (nvenc anywhere, or gpu/nvidia/
+  hardware-accel within 40 chars of an encode word) re-enables nvenc; a
+  bare gpu mention without a CUDA filter keeps the M6 nvenc behavior.
+  denoise stays unsupported; "stabilize and denoise" reports the denoise
+  (the unsupported scan runs before detection — honest).
+  `tests/test_stabilize.py` 19 tests incl. a real-media two-pass E2E
+  (detect writes the .trf — header `VID.STAB 1` or `#` — transform consumes
+  it, output probed h264 320x240). bench-068 flipped unsupported→ready
+  (ops=[stabilize]); two M6 GPU tests retargeted to non-CUDA phrasings
+  (resize+gpu is now the scale_cuda case; revision toggle uses grayscale).
+  **Suite 910 passed, 1 skipped on tr4 host 6.1.1 (99 s)** — the skip is
+  the libvmaf E2E (no libvmaf in the 6.1.1 build, unchanged). 9.0.1
+  container verification delegated to the i7 dispatcher worker (job at the
+  M10.5 commit; recipe = the M10.4 one, expect 910 passed, 1 skipped).
+  M10.4 below remains as delivered.
+- **M10.4 comparison COMPLETE 2026-10-26** (on tr4, committed 99cbcab)
   (on tr4, uncommitted): `psnr`/`ssim`/`libvmaf` against a reference
   input as a standalone diagnostic analysis (null muxer, loglevel info,
   summary in the run log). Registry 2.4.0 (`diagnostic` +
@@ -58,21 +97,17 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (gate mini-run used bare `libvmaf`, which fails to init without a
   compiled-in model → now resolves the model via `vmaf_model_path()`
   exactly as the planner does).
-- **Next task:** **M10.5** — two-pass vidstab + GPU filters +
-  channelsplit-in-graph + anullsrc. Design open: two-pass vidstab needs
-  a plan shape beyond the single-argv ExecutionPlan (`start_run` is
-  argv-only) — decide steps/passes wrapper. NLU: "stabilize the video"/
-  "remove the hand shake" currently fall into UNSUPPORTED_PATTERNS
-  (rules.py:1851, bundled with denoise as "stabilization and denoising")
-  → split out stabilize; denoise stays unsupported. GPU: `_detect_gpu`
-  currently only sets the nvenc ENCODER flag; "deinterlace with the gpu"
-  should consume the mention for yadif_cuda (filter side).
-  channelsplit-in-graph: user filtergraph path already works — add
-  validation/diagnostic tests. anullsrc: works as lavfi source.
-  Registry entries for vidstabdetect/vidstabtransform/channelsplit/
-  anullsrc/scale_cuda/yadif_cuda already complete (M10.0). Then tests +
-  dual-build (host 6.1.1 + container 9.0.1) + docs → /savework →
-  M10.6 → M11 RAG. See §4 phases.
+- **Next task:** **M10.6** — verification & docs: per-category E2E battery
+  on `media/titan.mp4` (host 6.1.1 + i7 docker 9.0.1), full suite on both
+  builds, i7-host suite via dispatcher job, README/DEVELOPMENT/HANDOFF
+  updates. **M11 RAG per `ffmpeg-assistant-rag-prd.md`** (M11.0 pinned
+  corpora → M11.1 retrieval API → M11.2 fass integration → M11.3 authoring
+  pipeline → M11.4 ablation; advisory-evidence-only — the
+  registry/builder/argv gate remain sovereign). M11.0 (corpus foundation:
+  pinned 6.1.1 + 9.0.1 corpora, parser, chunks, manifest, ingestion CLI,
+  parser fixtures) is independent of fass code and was delegated to the
+  tr4-secondary dispatcher worker at the M10.5 commit (PRD §10.2: corpus
+  building is data-heavy → ideal dispatcher work).
 - **Planning 2026-10-25 (later session): joint PRD delivered** —
   `ffmpeg-assistant-rag-prd.md` merges the assistant scope with the
   documentation-RAG idea. Verdict: RAG is viable as an **advisory evidence
@@ -354,6 +389,7 @@ delegate to dispatcher where possible.
 - **M10.3** combiners (7): labeled graphs, xfade math, tests.
 - **M10.4** comparison (3): reference input, libvmaf model ship.
 - **M10.5** two-pass vidstab + GPU + channelsplit-in-graph + anullsrc.
+  DONE 2026-10-26 (header bullet; 910 passed host, 9.0.1 via i7 job).
 - **M10.6** verification & docs: local + i7 docker E2E battery per category on
   titan.mp4, full suite, i7-host suite via dispatcher job,
   README/DEVELOPMENT/HANDOFF.

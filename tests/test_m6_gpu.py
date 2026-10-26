@@ -20,7 +20,10 @@ def assets(input_path: str = "clip.mp4") -> dict:
 # ------------------------------------------------------------------- NLU
 
 def test_gpu_phrasing_sets_flag():
-    r = generate("resize to 480p and use the gpu", assets(),
+    # 'resize … on the gpu' is the M10.5 case: the GPU mention is consumed
+    # by scale_cuda and the encoder stays CPU (see test_stabilize.py).
+    # This test pins the bare-flag rule: an encode word + gpu mention.
+    r = generate("re-encode as h264 on the gpu", assets(),
                  media=make_media(), adapter_name="rules")
     assert r.status == "ready"
     assert r.plan["output"]["gpu"] is True
@@ -48,15 +51,18 @@ def test_gpu_alone_is_not_an_edit():
 
 
 def test_revision_toggles_gpu():
-    prev = generate("resize to 480p on gpu", assets(), media=make_media(),
-                    adapter_name="rules")
+    # the base edit is a grayscale — 'resize … on gpu' is the M10.5
+    # scale_cuda case (the gpu mention is consumed by the filter), so it
+    # cannot anchor the toggle
+    prev = generate("make it grayscale and re-encode on gpu", assets(),
+                    media=make_media(), adapter_name="rules")
     assert prev.status == "ready"
     on = EditPlan.model_validate(prev.plan)
     off = generate("no gpu", assets(), media=make_media(), previous_plan=on,
                    adapter_name="rules")
     assert off.status == "ready"
     assert off.plan["output"]["gpu"] is False
-    assert off.plan["operations"][0]["type"] == "resize"  # preserved
+    assert off.plan["operations"][0]["type"] == "grayscale"  # preserved
     back = generate("use gpu", assets(), media=make_media(),
                     previous_plan=EditPlan.model_validate(off.plan),
                     adapter_name="rules")

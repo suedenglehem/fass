@@ -72,6 +72,28 @@ class InputSpec:
 
 
 @dataclass
+class Pass:
+    """One ffmpeg invocation of a multi-pass execution (M10.5).
+
+    A two-pass plan (stabilization) runs the passes in order, in the same
+    working directory: the detect pass writes its side-file (the .trf) as
+    a bare name, and the transform pass reads it back — no path rewriting
+    between passes. The ExecutionPlan's top-level fields (vf/maps/...)
+    mirror the FINAL pass, so single-pass consumers (builder, summarize,
+    preflight) work unchanged."""
+
+    purpose: str  # e.g. "stabilize-detect" | "stabilize-transform"
+    inputs: list[InputSpec]
+    output_path: str
+    vf: str | None = None
+    filter_complex: str | None = None
+    af: str | None = None
+    maps: list[str] = field(default_factory=list)
+    output_opts: list[str] = field(default_factory=list)
+    loglevel: str = "error"
+
+
+@dataclass
 class ExecutionPlan:
     mode: str  # "copy" (remux) | "reencode" | "device"
     inputs: list[InputSpec]
@@ -84,6 +106,12 @@ class ExecutionPlan:
     loglevel: str = "error"  # builder's -loglevel; diagnostic plans raise it to info
     defaults: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # M10.5: multi-pass execution. None for single-pass plans; when set,
+    # the passes run in order and the top-level fields above mirror the
+    # final (transform+encode) pass.
+    passes: list[Pass] | None = None
+    # side-files a multi-pass plan writes next to the output (bare names)
+    intermediates: list[str] = field(default_factory=list)
 
 
 def _main_input(path: str) -> InputSpec:
@@ -1091,6 +1119,75 @@ def plan_execution(
                     "against the reference)")
                 break
 
+    # -- stabilization (M10.5): two-pass vidstab transform ------------------
+    # Pass 1 analyzes the motion (vidstabdetect -> a .trf side-file, the
+    # stream discarded through the null muxer); pass 2 re-encodes with
+    # vidstabtransform reading that side-file. Everything that breaks the
+    # 1:1 frame correspondence between the two passes, or that owns the
+    # video filter chain, conflicts. Allowed alongside: resize, grayscale,
+    # crop, codec options and the audio side (resample, audio filters).
+    if edit.ops_of("stabilize"):
+        if out.mode != "video":
+            errors.append(
+                "stabilization produces a video clip — it cannot target an "
+                f"{out.mode} output (export a video container, e.g. mp4)")
+        if edit.output_destination:
+            errors.append(
+                "stabilization is a two-pass transform — it writes an "
+                "intermediate transform file next to the output, which a "
+                "stream destination has no place for (stabilize to a file "
+                "first, then stream it)")
+        if edit.trim is not None:
+            errors.append(
+                "trimming cannot be combined with stabilization — the two "
+                "passes must analyze and transform the same frames (trim "
+                "the clip first, then stabilize)")
+        if edit.filtergraph:
+            errors.append(
+                "stabilization runs as its own two-pass transform — a "
+                "custom filtergraph is not compatible (use one or the "
+                "other)")
+        if combine is not None:
+            errors.append(
+                "stabilization cannot be combined with a multi-input filter "
+                "in one pass — combine the inputs first, then stabilize")
+        if wm_assets:
+            errors.append(
+                "a watermark cannot be added in the same pass as "
+                "stabilization — stabilize first, then add the watermark")
+        if ar_ops:
+            errors.append(
+                "replacing the audio cannot be combined with stabilization "
+                "in one pass — stabilize first, then replace the audio")
+        if sub_ops:
+            errors.append(
+                "subtitles cannot be combined with stabilization in one "
+                "pass — stabilize first, then add the subtitles")
+        if edit.ops_of("speed"):
+            errors.append(
+                "a speed change breaks the 1:1 frame correspondence the "
+                "stabilization passes rely on — set the speed first, then "
+                "stabilize")
+        for o in edit.bitstream_filters or []:
+            errors.append(
+                f"the bitstream filter '{o.name}' runs on the compressed "
+                "stream (stream copy) — stabilization re-encodes the "
+                "video, so the two are not compatible")
+            break
+        for o in filter_ops:
+            if o.domain == "video":
+                errors.append(
+                    f"the video filter '{o.expr}' is not compatible with "
+                    "stabilization — stabilization runs as its own "
+                    "two-pass transform (audio filters are fine)")
+                break
+        if any((filter_spec(n) or {}).get("diagnostic")
+               for o in filter_ops for n in _chain_filter_names(o.expr)):
+            errors.append(
+                "diagnostic filters (analysis only — no file written) "
+                "cannot be combined with stabilization — stabilize first, "
+                "then run the analysis on the result")
+
     # -- mode-specific operation restrictions --------------------------------
     if out.mode == "audio":
         for o in edit.operations:
@@ -1574,6 +1671,8 @@ def plan_execution(
             edit, in_path, wm_path, ar_path, sub_input, sub_exprs, sub_enc,
             out_path, defaults, warnings, combine=combine
         )
+        if edit.ops_of("stabilize"):
+            _attach_stabilize_passes(ep, out_path, defaults)
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
     if muxer:
@@ -2150,6 +2249,48 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         output_path=out_path,
         af=af,
     )
+
+
+def _attach_stabilize_passes(ep: ExecutionPlan, out_path: str,
+                             defaults: list[str]) -> None:
+    """M10.5: turn the re-encode plan into the two-pass vidstab execution.
+
+    The final pass's video chain becomes the transform pass:
+    vidstabtransform prepended (it reads the side-file), the remaining
+    chain (resize/grayscale/crop, ...) after it. The detect pass
+    re-decodes the same input with vidstabdetect and discards the stream
+    through the null muxer (the M10.2 diagnostic pattern) — only the .trf
+    side-file it writes survives. The side-file is a BARE name derived
+    from the output filename, and both passes run in the same working
+    directory (the output's), so nothing is rewritten between them."""
+    stem = os.path.splitext(os.path.basename(out_path))[0] or "output"
+    trf = f"{stem}.vidstab.trf"
+    stab = f"vidstabtransform=input={trf}"
+    ep.vf = stab if not ep.vf else stab + "," + ep.vf
+    detect = Pass(
+        purpose="stabilize-detect",
+        inputs=ep.inputs[:1],  # the main input, exactly as pass 2 feeds it
+        vf=f"vidstabdetect=result={trf}",
+        output_opts=["-f", "null"],
+        output_path="-",
+    )
+    transform = Pass(
+        purpose="stabilize-transform",
+        inputs=ep.inputs,
+        output_path=ep.output_path,
+        vf=ep.vf,
+        filter_complex=ep.filter_complex,
+        af=ep.af,
+        maps=list(ep.maps),
+        output_opts=list(ep.output_opts),
+        loglevel=ep.loglevel,
+    )
+    ep.passes = [detect, transform]
+    ep.intermediates = [trf]
+    defaults.append(
+        "two-pass stabilization: pass 1 analyzes the camera motion "
+        f"(vidstabdetect, stream discarded) and writes '{trf}' next to the "
+        "output; pass 2 re-encodes the stabilized clip (vidstabtransform)")
 
 
 def _build_audio_plan(edit: EditPlan, in_path: str, out_path: str,

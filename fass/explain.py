@@ -176,6 +176,15 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             if op.channels is not None:
                 bits.append({1: "mono", 2: "stereo", 6: "5.1 surround"}[op.channels])
             lines.append(f"Audio resample: to {', '.join(bits)} (codec re-encoded to match)")
+        elif op.type == "stabilize":
+            trf = ep.intermediates[0] if ep.intermediates else None
+            lines.append(
+                "Stabilize: two-pass vidstab transform — pass 1 analyzes the "
+                f"camera motion (stream discarded) and writes '{trf}' next to "
+                "the output; pass 2 re-encodes the stabilized clip"
+                if trf else
+                "Stabilize: two-pass vidstab transform (vidstabdetect + "
+                "vidstabtransform)")
 
     ar = next((o for o in edit.operations if o.type == "audio_replace"), None)
     if out.mode == "subtitles":

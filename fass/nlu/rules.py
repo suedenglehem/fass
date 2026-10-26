@@ -62,6 +62,7 @@ from fass.schema import (
     ParseStatus,
     ResizeOp,
     RotateOp,
+    StabilizeOp,
     SpeedOp,
     SubtitleOp,
     TrimSpec,
@@ -324,6 +325,28 @@ def _detect_crop(t: str):
     ), None, spans
 
 
+# ---------------------------------------------------------------- stabilize
+
+_STABILIZE_RX = re.compile(
+    r"\bstabil(?:is|iz)\w*\b"
+    r"|\b(?:remove|reduce|fix|get\s+rid\s+of)\s+(?:the\s+)?(?:hand\s*|camera\s*)?shak\w*\b"
+    r"|\bless\s+shaky\b"
+    r"|\bshaky\s+(?:footage|video|clip|handheld)\b",
+    re.I,
+)
+
+
+def _detect_stabilize(t: str) -> tuple[StabilizeOp | None, tuple[int, int] | None]:
+    """'stabilize the shaky clip' / 'remove the camera shake' -> StabilizeOp
+    (M10.5, two-pass vidstab transform; the planner builds the passes).
+    Returns (op, span) — the span is masked out in parse() so the trigger
+    words never re-read as a filter expression or an unsupported fragment."""
+    m = _STABILIZE_RX.search(t)
+    if m is None:
+        return None, None
+    return StabilizeOp(), (m.start(), m.end())
+
+
 # ---------------------------------------------------------------- speed
 
 _SPEED_NUM = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:x|×)\b", re.I)
@@ -537,6 +560,23 @@ def _detect_gpu(t: str) -> bool | None:
     if _GPU_ON.search(t):
         return True
     return None
+
+
+def _gpu_encoder_word(t: str) -> bool:
+    """Does the GPU mention refer to the ENCODER (M10.5)?
+
+    A bare 'gpu' mention next to a filter ('deinterlace on the gpu',
+    'resize to 1080p on the gpu') selects the CUDA filter — the encoder
+    stays CPU. It only selects nvenc when 'nvenc' is named, or when a
+    gpu/nvidia/hardware-acceleration word sits right next to an encode
+    word ('encode on the gpu', 'gpu-encoded', 'gpu encode')."""
+    if re.search(r"\bnvenc\b", t, re.I):
+        return True
+    m = re.search(r"\bgpu\b|\bnvidia\b|\bhardware\s+accelerat\w*", t, re.I)
+    if m is None:
+        return False
+    e = re.search(r"\bencod\w*\b", t, re.I)
+    return e is not None and abs(m.start() - e.start()) <= 40
 
 
 _QSV_ON = re.compile(r"\bqsv\b|\bquick\s?sync\b|\bintel\s+gpu\b|\bonevpl\b", re.I)
@@ -927,8 +967,11 @@ def _detect_filters(
         add("audio", "anull")
 
     # --- M10.1 video transform phrases --------------------------------------
+    # M10.5: a GPU mention turns the deinterlace filter into its CUDA
+    # variant (the encoder choice is resolved separately in parse() —
+    # see _gpu_encoder_word)
     if re.search(r"\bde[\s-]?interlac\w*\b", text, re.I):
-        add("video", "yadif")
+        add("video", "yadif_cuda" if _detect_gpu(text) is True else "yadif")
     if re.search(r"\bdecimate\b|\b(?:drop|remove)\s+(?:the\s+)?duplicate\s+frames?\b",
                  text, re.I):
         add("video", "decimate")
@@ -1848,7 +1891,9 @@ UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     # ('[0:v]split=2[a][b]') is a filtergraph, not a segment request
     (re.compile(r"\bsplit(?:ting)?\s+(?:the\s+)?(?:video|file|clip|it)\b|\bsplit\s+into\b", re.I), "splitting into segments"),
     (re.compile(r"\bsepia\b|\bvintage\b|\bretro\b", re.I), "additional color effects"),
-    (re.compile(r"\bdenois\w*\b|\bstabil(?:is|iz)\w*\b", re.I), "stabilization and denoising"),
+    # stabilization is supported (M10.5, two-pass vidstab — the detector
+    # runs in parse() and masks its span out of the unsupported scan)
+    (re.compile(r"\bdenois\w*\b", re.I), "denoising"),
     (re.compile(r"\bhdr\b|\btone[\s-]?map\w*\b", re.I), "HDR workflows"),
     # gpu/nvenc (M6) and qsv/quick sync (M8) are supported; the other
     # hardware-encoding stacks stay out
@@ -2041,6 +2086,12 @@ class RulesAdapter:
             _detect_compare(t_det, assets)
         for s0, s1 in cmp_spans:
             t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
+        # M10.5: stabilization claims its trigger words up front (the
+        # planner builds the two-pass vidstab execution for the op)
+        stabilize, stab_span = _detect_stabilize(t_det)
+        if stab_span is not None:
+            s0, s1 = stab_span
+            t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
         trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
         crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
         resize, resize_clar = _detect_resize(t_det, exclude=crop_spans)
@@ -2049,6 +2100,17 @@ class RulesAdapter:
         audio_resample, rs_clar, rs_frag = _detect_resample(t_det)
         pixel_format = _detect_pixel_format(t_det)
         gpu = _detect_gpu(t_det)
+        # M10.5: a GPU mention next to a resize selects the CUDA scale
+        # filter (a missing dimension stays auto, -1); the encoder only
+        # follows when the mention also refers to encoding (see the
+        # output-stage gate, _gpu_encoder_word)
+        resize_before_gpu = resize
+        if gpu is True and resize is not None:
+            w = resize.width if resize.width is not None else -1
+            h = resize.height if resize.height is not None else -1
+            resize = None
+            tf_ops.append(FilterOp(
+                domain="video", expr=f"scale_cuda=w={w}:h={h}"))
         qsv = _detect_qsv(t_det)
         video_codec_opts, audio_codec_opts = _detect_codec_options(t_det)
         # bitstream filters claimed their own option tokens (e.g. a 'level'
@@ -2129,6 +2191,11 @@ class RulesAdapter:
             _detect_filters(t_det, media.duration if media else None,
                             pre_seen={o.expr for o in tf_ops})
         filters = tf_ops + filters
+        # M10.5: a CUDA filter already consumed the GPU mention — the
+        # encoder gets it only if the mention also refers to encoding
+        gpu_consumed_by_filter = any(
+            f.expr == "yadif_cuda" or f.expr.startswith("scale_cuda=")
+            for f in filters)
         if unsupported_container:
             unsupported.append(UnsupportedPart(fragment=unsupported_container,
                                                 reason="not in the MVP support set"))
@@ -2172,7 +2239,9 @@ class RulesAdapter:
                 defaults=[trim_note] if trim_note else [],
             )
 
-        ambiguous = _scan_ambiguous(t_det, resize, filters)
+        # the pre-GPU resize keeps a vague-size question honest when the
+        # GPU mention turned it into a scale_cuda filter (M10.5)
+        ambiguous = _scan_ambiguous(t_det, resize_before_gpu, filters)
 
         # 3. revision: keep the previous watermark's image when the follow-up
         #    only repositions it (the new text may not name the file again)
@@ -2213,16 +2282,19 @@ class RulesAdapter:
         if mode == "audio" and (audio == "remove" or resize is not None
                                 or crop is not None or rotate is not None
                                 or watermark is not None or grayscale
+                                or stabilize is not None
                                 or filtergraph or video_filters):
             mode_conflict = Clarification(
                 question=("an audio-only output cannot carry video edits "
-                          "(resize, crop, rotation, effects) or a removed audio "
-                          "track — did you mean a video export with those audio "
-                          "settings, or a plain audio extraction?"))
+                          "(resize, crop, rotation, stabilization, effects) "
+                          "or a removed audio track — did you mean a video "
+                          "export with those audio settings, or a plain audio "
+                          "extraction?"))
         elif mode == "subtitles" and (audio in ("remove", "keep")
                                       or resize is not None or crop is not None
                                       or rotate is not None or watermark is not None
                                       or grayscale or speed is not None
+                                      or stabilize is not None
                                       or audio_resample is not None
                                       or audio_replace is not None
                                       or filters or filtergraph):
@@ -2374,6 +2446,10 @@ class RulesAdapter:
                 # position is cosmetic — the planner builds the comparison
                 # graph (reference as pad 1, metric against the null muxer)
                 ops.append(compare)
+            if stabilize is not None:
+                # position is cosmetic — the planner builds the two-pass
+                # vidstab execution (detect pass + transform pass)
+                ops.append(stabilize)
             if audio_replace is not None:
                 ops.append(audio_replace)
             if audio_resample is not None:
@@ -2424,7 +2500,7 @@ class RulesAdapter:
         if previous_plan is None:
             if trim is None and resize is None and crop is None and speed is None \
                     and rotate is None and audio_resample is None and watermark is None \
-                    and combine is None and compare is None \
+                    and combine is None and compare is None and stabilize is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
                     and audio != "remove" and audio_replace is None and subtitle is None \
@@ -2556,8 +2632,17 @@ class RulesAdapter:
                         f"targeting a {video_bitrate / 1000:g} Mbps video bitrate (CBR-style target)"
                     )
                 if gpu:
-                    plan.output.gpu = True
-                    notes.append("encoding on GPU (NVIDIA nvenc)")
+                    # M10.5: a CUDA filter (yadif_cuda / scale_cuda) already
+                    # consumed the GPU mention — the encoder keeps its CPU
+                    # encoder unless the mention also refers to encoding
+                    # ('encode on the gpu', 'nvenc')
+                    if not (gpu_consumed_by_filter and not _gpu_encoder_word(t_det)):
+                        plan.output.gpu = True
+                        notes.append("encoding on GPU (NVIDIA nvenc)")
+                    else:
+                        notes.append(
+                            "the GPU mention applies to the filter, not the "
+                            "encoder — CPU encoding kept")
                 if qsv:
                     plan.output.qsv = True
                     notes.append("encoding on Intel QSV (Quick Sync)")

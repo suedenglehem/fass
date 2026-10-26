@@ -64,7 +64,9 @@ def test_needs_clarification_is_structured_200():
 
 
 def test_unsupported_is_structured_200_with_no_partial_plan():
-    r = post("stabilize the video", {"main": "clip.mp4"})
+    # M10.5: 'stabilize' is supported (two-pass vidstab) — a sepia request
+    # still exercises the unsupported path
+    r = post("make it look sepia", {"main": "clip.mp4"})
     assert r.status_code == 200
     d = r.json()
     assert d["status"] == "unsupported"

@@ -545,11 +545,28 @@ class CompareOp(BaseModel):
         return self
 
 
+class StabilizeOp(BaseModel):
+    """Stabilize shaky handheld footage with the two-pass vidstab
+    transform (registry filters vidstabdetect + vidstabtransform).
+
+    The planner builds a two-pass execution: pass 1 analyzes the camera
+    motion (vidstabdetect, stream discarded through the null muxer) and
+    writes a transform side-file; pass 2 re-encodes the clip with
+    vidstabtransform reading that side-file. The side-file name is derived
+    from the output filename (a bare name, written next to the output).
+    M10.5 takes the filters' built-in defaults; per-filter options
+    (shakiness, smoothing, ...) are not exposed yet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["stabilize"] = "stabilize"
+
+
 Operation = Annotated[
     Union[
         ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, SubtitleOp,
         CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp, CombinerOp,
-        CompareOp,
+        CompareOp, StabilizeOp,
     ],
     Field(discriminator="type"),
 ]
@@ -612,7 +629,7 @@ class EditPlan(BaseModel):
     def _at_most_one_watermark(self) -> "EditPlan":
         for op_type in ("watermark", "audio_replace", "subtitles", "crop",
                         "speed", "rotate", "audio_resample", "combine",
-                        "compare"):
+                        "compare", "stabilize"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:
                 raise ValueError(f"the MVP supports at most one {op_type} operation")
         return self

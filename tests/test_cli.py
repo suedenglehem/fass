@@ -51,7 +51,9 @@ def test_clarification_exit_code():
 
 
 def test_unsupported_exit_code():
-    r = run_cli("stabilize the video", "clip.mp4", "--adapter", "rules", "--json")
+    # M10.5: 'stabilize' is supported (two-pass vidstab) — a sepia request
+    # still exercises the unsupported path
+    r = run_cli("make it look sepia", "clip.mp4", "--adapter", "rules", "--json")
     assert r.returncode == 4
     data = json.loads(r.stdout)
     assert data["status"] == "unsupported"

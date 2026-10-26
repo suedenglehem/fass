@@ -459,13 +459,17 @@ class Run:
     output: str | None = None
     notes: list[str] = field(default_factory=list)
     log: str = ""  # log filename
+    # M10.5: multi-pass runs (two-pass stabilization) hold every step's
+    # argv, in execution order (the final pass last); argv/command above
+    # always describe the FINAL pass — the one that produces the artifact.
+    steps: list[list[str]] | None = None
 
     def to_dict(self) -> dict:
         return {
             "id": self.id, "argv": self.argv, "command": self.command,
             "started": self.started, "status": self.status,
             "exit_code": self.exit_code, "output": self.output,
-            "notes": self.notes,
+            "notes": self.notes, "steps": self.steps,
         }
 
 
@@ -556,6 +560,106 @@ def start_run(argv: list[str], timeout: float | None = None) -> Run:
         target=_watch, args=(run_id, proc, logf, timeout), daemon=True
     ).start()
     return run
+
+
+def start_run_sequence(argvs: list[list[str]],
+                       timeout: float | None = None) -> Run:
+    """Validate and start a MULTI-PASS run (M10.5, two-pass vidstab).
+
+    The steps run one at a time, in order, in the SAME working directory
+    (the final output's): the detect pass writes its side-file (the .trf)
+    as a bare name and the transform pass reads it back, so nothing is
+    rewritten between the steps. The first non-zero exit — or a timeout,
+    or a stop — finalizes the run; a step's timeout applies per step.
+    One Run record: argv/command describe the FINAL step (the artifact
+    producer), steps every step, notes and the log the whole sequence."""
+    if not execution_enabled():
+        raise PermissionError(
+            "execution is disabled on this deployment "
+            f"(set {ALLOW_EXECUTE_ENV}=1 to enable it)"
+        )
+    if len(argvs) < 2:
+        raise ValueError("a run sequence needs at least two steps")
+    from fass.builder import render_posix
+
+    resolved: list[list[str]] = []
+    notes: list[str] = []
+    for i, argv in enumerate(argvs, 1):
+        problems = validate_argv(argv)
+        if problems:
+            raise ValueError(
+                f"refusing to run — step {i} argv failed validation: "
+                + "; ".join(problems))
+        argv, step_notes = resolve_paths(argv)
+        resolved.append(argv)
+        for n in step_notes:
+            notes.append(f"step {i}: {n}")
+
+    run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    final_argv = resolved[-1]
+    out_name = final_argv[-1]
+    run = Run(
+        id=run_id, argv=final_argv, command=render_posix(final_argv),
+        started=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        status="running",
+        output=None if (stream_scheme(out_name) or out_name == "-") else out_name,
+        notes=notes, log=f"{run_id}.log", steps=resolved,
+    )
+    out_dir = _output_dir()
+    cwd = (
+        str(Path(out_dir).resolve())
+        if out_dir and not stream_scheme(out_name)
+        else None
+    )
+    with _LOCK:
+        logf = open(_log_file(run_id), "wb")
+    _save(run)
+    threading.Thread(
+        target=_watch_sequence,
+        args=(run_id, resolved, cwd, timeout, logf, notes),
+        daemon=True,
+    ).start()
+    return run
+
+
+def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
+                    timeout: float | None, logf, notes: list[str]) -> None:
+    """Run the steps one at a time into the shared log; the first
+    non-zero exit (or a timeout, or a stop) finalizes the run. _ACTIVE
+    holds the CURRENT step's process, so stop_run kills whichever step
+    is running; the timeout is per step."""
+    progress: list[str] = []
+    status: str | None = None
+    rc: int | None = 0
+    try:
+        for i, argv in enumerate(steps, 1):
+            with _LOCK:
+                proc = subprocess.Popen(
+                    argv, stdout=logf, stderr=subprocess.STDOUT,
+                    shell=False, start_new_session=True, cwd=cwd,
+                )
+                _ACTIVE[run_id] = proc
+            try:
+                rc = proc.wait(timeout=timeout) if timeout else proc.wait()
+            except subprocess.TimeoutExpired:
+                _kill(proc)
+                status, rc = "stopped", None
+                break
+            progress.append(f"step {i}/{len(steps)} finished (exit {rc})")
+            if rc != 0:
+                status = "error"
+                break
+        if status is None and run_id in _STOPPING:
+            status = "stopped"
+            rc = None
+        if status is None:
+            status = "success"
+    finally:
+        _update(run_id, status=status, exit_code=rc, notes=notes + progress)
+        logf.close()
+        with _LOCK:
+            _ACTIVE.pop(run_id, None)
+            _STOPPING.discard(run_id)
 
 
 def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None) -> None:

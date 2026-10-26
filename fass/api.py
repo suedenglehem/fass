@@ -28,7 +28,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fass import dockerctl, execute
 from fass.config import FassConfig, LLMConfig, config_path, load_config, save_config
@@ -92,16 +92,36 @@ class CommandRequest(BaseModel):
 
 class RunRequest(BaseModel):
     """POST /v1/runs body (M6): the argv ARRAY from a ready command —
-    never a shell string."""
+    never a shell string. M10.5: a multi-pass plan posts its steps
+    (every pass's argv, in execution order, the final pass last) and
+    arguments stays the FINAL step's argv."""
 
     model_config = ConfigDict(extra="forbid")
 
     arguments: list[str] = Field(min_length=2, max_length=256)
+    steps: list[list[str]] = Field(
+        default_factory=list, max_length=8,
+        description="optional: every argv of a multi-pass plan, in "
+                    "execution order (the final pass last) — the run "
+                    "executes them sequentially in one working directory",
+    )
     timeout: float | None = Field(
         default=None, gt=0, le=86400,
         description="optional wall-clock limit in seconds (file outputs "
-                    "finish on their own; streams run until stopped)",
+                    "finish on their own; streams run until stopped; "
+                    "with steps the limit applies per step)",
     )
+
+    @model_validator(mode="after")
+    def _steps_consistent(self) -> "RunRequest":
+        for i, step in enumerate(self.steps, 1):
+            if len(step) < 2:
+                raise ValueError(f"steps[{i - 1}] needs at least two elements")
+        if self.steps and self.steps[-1] != self.arguments:
+            raise ValueError(
+                "arguments must be the final step's argv "
+                "(steps[-1] == arguments)")
+        return self
 
 
 class LLMTestRequest(BaseModel):
@@ -413,7 +433,11 @@ def create_app() -> FastAPI:
     @app.post("/v1/runs")
     def start_run(body: RunRequest):
         try:
-            run = execute.start_run(body.arguments, timeout=body.timeout)
+            if body.steps:
+                run = execute.start_run_sequence(
+                    body.steps, timeout=body.timeout)
+            else:
+                run = execute.start_run(body.arguments, timeout=body.timeout)
         except PermissionError as e:
             raise HTTPException(403, str(e))
         except ValueError as e:

@@ -17,7 +17,73 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M10.4 — comparison metrics, DUAL-BUILD VERIFIED: 6.1.1 host + 9.0.1 container)
+## Current state (2026-10-26, M10.5 — two-pass vidstab, GPU consume rule; host-verified, 9.0.1 via i7 job)
+**M10.5 — `stabilize` (two-pass vidstab) + GPU filter-consume rule +
+channelsplit-in-graph + anullsrc source spec.** Stabilization needs the
+detect pass to see the SAME frames the transform pass emits (trim/speed
+would break frame correspondence), so the plan shape changed: an
+ExecutionPlan can now carry multiple passes.
+
+**What shipped (uncommitted):**
+- **Plan schema:** `passes: list[Pass]` (purpose, inputs, vf, output_path,
+  output_opts) + `intermediates: list[str]` on ExecutionPlan; top-level
+  fields mirror the FINAL pass (backward-compatible single-pass plans
+  unchanged). `StabilizeOp` in the Operation union.
+- **Planner (`_attach_stabilize_passes`):** detect pass =
+  `-vf vidstabdetect=result=<trf>` with `-f null -` (inputs[:1] only);
+  transform pass = `vidstabtransform=input=<trf>` prepended to the vf
+  chain. The .trf is a BARE name (`<output-stem>.vidstab.trf`) — both
+  passes run in one cwd (the final output's dir). Conflict matrix (all
+  PlanError): trim ("same frames"), speed ("frame correspondence"),
+  video-domain filters ("not compatible with stabilization"),
+  audio_replace ("cannot be combined with stabilization"), watermark with
+  asset ("cannot be added in the same pass"), bsf ("compressed stream"),
+  combine with probeable video ("multi-input filter"), stream destination
+  ("intermediate transform file"). ALLOWED: resize, grayscale, rotate,
+  audio filters, audio_resample.
+- **Builder:** `build_argv()` = final pass (single-plan contract
+  unchanged); `build_argv_all()` returns every argv (final last).
+- **NLU (rules):** `_STABILIZE_RX` phrases (stabilize/remove camera
+  shake/handheld/hand shake); denoise + sepia stay unsupported and the
+  denoise claim wins the report in "stabilize and denoise"; mode conflicts
+  now surface (bugfix: stabilize→mp3 and →subtitles used to drop the op
+  silently; now NEEDS_CLARIFICATION). **GPU consume rule:** a CUDA filter
+  (scale_cuda from "resize … on the gpu", yadif_cuda from "deinterlace on
+  the gpu") ABSORBS the GPU mention → encoder stays CPU (gpu=False,
+  "not the encoder" note in defaults); an explicit encoder word (nvenc,
+  or gpu/nvidia/hw-acc within 40 chars of an encode word) re-enables
+  nvenc; a bare mention without a CUDA filter keeps M6 nvenc.
+- **Pipeline/API/execute/CLI:** `GenerationResponse.steps`;
+  `RunRequest.steps` (max 8, validator `steps[-1] == arguments`);
+  `start_run_sequence` (per-step timeout, one Run record, `_ACTIVE` =
+  current step's proc); CLI `--execute` runs all steps.
+- **Registry:** `channelsplit` in user filtergraphs (multi-OUTPUT filter —
+  `filtergraph_problems` accepts labeled outputs; unknown filters still
+  rejected); `anullsrc`/`lavfi:` source specs pass through bare
+  (`sources.input.lavfi`, `-f lavfi` before `-i`).
+- **Tests:** `tests/test_stabilize.py` (19: NLU phrasing/neighbours/
+  mode-conflicts/GPU-consume at parse level; plan shape, both argvs,
+  trf-follows-output-stem, resize-lands-in-transform-only, all 8 conflict
+  rejections, 5 allowed combos, pipeline steps, lavfi spec,
+  channelsplit-in-graph; REAL-MEDIA two-pass E2E on a synthetic clip —
+  detect writes the .trf, transform consumes it, output probed
+  h264 320x240). `bench-068` flipped (stabilize is now ready); two M6 GPU
+  tests retargeted to the bare-flag rule ("re-encode as h264 on the gpu";
+  grayscale base for the toggle).
+- **Suite:** **910 passed, 1 skipped on tr4 host ffmpeg 6.1.1 (99 s)**
+  (skip = libvmaf E2E — no libvmaf in 6.1.1).
+
+**Dual-build status:** ⏳ 6.1.1 host ✅ / 9.0.1 container — delegated to
+the i7 dispatcher worker at the M10.5 commit (image recipe = the M10.4
+one; expect 910 passed, 1 skipped = node JS check; the libvmaf E2E must
+RUN and pass there).
+
+**Next:** M10.6 — per-category E2E verification battery + README /
+DEVELOPMENT docs → M11 RAG per `ffmpeg-assistant-rag-prd.md` (M11.0
+corpus foundation delegated to the tr4-secondary dispatcher worker at the
+M10.5 commit — PRD §10.2: data-heavy, independent of fass code).
+
+## Previous state (2026-10-26, M10.4 — comparison metrics, DUAL-BUILD VERIFIED: 6.1.1 host + 9.0.1 container)
 **M10.4 — quality comparison: `psnr`/`ssim`/`libvmaf` against a reference
 input.** A comparison is a standalone diagnostic analysis: the reference
 clip is the second input (pad 1), the metric compares the two video streams
@@ -991,6 +1057,17 @@ venv has pydantic 2.14.1, pytest 9.1.1, fastapi+uvicorn, httpx 0.28.1
 run tests from repo root.
 
 ## Next steps
+**M10.5 COMPLETE (2026-10-26), host-verified; closing out.**
+910 passed, 1 skipped on tr4 host 6.1.1. Commit on main (Co-Authored-By;
+no push unless asked). Two dispatcher jobs submitted at that commit:
+i7 = 9.0.1 container verification (expect 910/1, libvmaf E2E runs),
+tr4-secondary = RAG M11.0 corpus foundation per the PRD (root-level
+`rag/` package, pinned 6.1.1/9.0.1 corpora). Then /savework.
+**After:** M10.6 (per-category E2E battery on titan.mp4 + docs) → M11
+RAG phases M11.1–M11.4. Pending user decisions (do not block):
+channelsplit multi-output defer-vs-implement; orphaned i7 worktrees;
+i7 redeploy to M10.5+ (verification-only for now).
+
 **M8 COMPLETE + DUAL-BUILD VERIFIED (2026-10-25).** Committed 133a189.
 j_69d3f78ec0 (i7/9.0.1) and j_c7320e8dfe (tr4-secondary/6.1.1) both
 succeeded, all acceptance criteria met, neither committed anything → no
