@@ -154,3 +154,23 @@ def test_no_demand_flag(tmp_path):
     report = json.loads(out.read_text())
     assert report["demand"] == {"clusters": {}, "count": 0,
                                 "auto_added": []}
+
+
+def test_type_compatible_mapping():
+    from rag.gaps import type_compatible
+    assert type_compatible("int", "int")          # exact
+    assert type_compatible("number", "float")
+    assert type_compatible("number", "double")
+    assert type_compatible("number", "rational")
+    assert type_compatible("int", "int64")
+    assert type_compatible("bool", "boolean")
+    assert type_compatible("bool", "int")
+    assert type_compatible("choice", "flags")
+    assert type_compatible("choice", "int")
+    assert type_compatible("string", "color")
+    assert type_compatible("string", "image_size")
+    assert type_compatible("string", "duration")
+    assert type_compatible("flagset", "flags")
+    assert not type_compatible("int", "double")
+    assert not type_compatible("number", "string")
+    assert not type_compatible("string", "int")

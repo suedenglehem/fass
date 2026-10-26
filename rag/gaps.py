@@ -68,16 +68,24 @@ def registry_default(option: dict):
     return m.group(1) if m else None
 
 
+_TYPE_COMPAT = {
+    "int": {"int", "int64"},
+    "number": {"int", "int64", "float", "double", "rational"},
+    "bool": {"boolean", "int", "flags"},
+    "choice": {"int", "flags", "string"},
+    "string": {"string", "color", "image_size", "duration", "video_rate",
+               "channel_layout", "pix_fmt"},
+    "flagset": {"flags", "int"},
+}
+
+
 def type_compatible(reg_kind: str, build_type: str) -> bool:
     """Registry 'kind' vs build-help '<type>'. Enum options are <int>/<flags>
-    in build help; image sizes are string-syntax."""
+    in build help; numeric options may surface as <float>/<double>/<rational>
+    (or <int>/<int64>); textual options as <color>/<image_size>/<duration>/..."""
     if reg_kind == build_type:
         return True
-    if reg_kind == "choice" and build_type in ("int", "flags"):
-        return True
-    if reg_kind == "string" and build_type == "image_size":
-        return True
-    return False
+    return build_type in _TYPE_COMPAT.get(reg_kind, ())
 
 
 def compute_coverage(corpus_root: Path, corpora: list[str],

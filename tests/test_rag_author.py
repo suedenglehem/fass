@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -76,6 +77,50 @@ def test_ebur128_fixture_defaults(tmp_path):
     assert builds["meter"]["max"] == "18"
     assert builds["panlaw"]["default"] == "-3.0103"
     assert builds["size"]["type"] == "image_size"
+
+
+# --------------------------------------------------------------------------
+# real-fixture edge cases: grouped <dt>s (signalstats), prose form (blackframe)
+# --------------------------------------------------------------------------
+
+def test_signalstats_grouped_dts(tmp_path):
+    out = tmp_path / "signalstats.json"
+    r = run_author("filter:signalstats", CORPORA, FIXTURES, out)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(out.read_text())
+    assert d["classification"] == "verified_both"
+    for c in CORPORA:
+        opts = d["docs"][c]["options"]
+        # the two <dt>s before one combined <dd> both survive, and the
+        # alias group <dt> "color, c" splits into both names
+        assert set(opts) == {"stat", "out", "color", "c"}, c
+        assert opts["stat"]["description"] == opts["out"]["description"]
+        assert opts["stat"]["default"] is None
+        assert opts["color"]["description"] == opts["c"]["description"]
+        assert set(d["builds"][c]["options"]) == {"stat", "out", "c", "color"}
+    # docs and builds line up 1:1 (alias group included) -> no diffs
+    assert d["option_diffs"] == []
+    assert d["provenance"]["verified_builds"] == ["6.1.1", "9.0.1"]
+
+
+def test_blackframe_prose_options(tmp_path):
+    out = tmp_path / "blackframe.json"
+    r = run_author("filter:blackframe", CORPORA, FIXTURES, out)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(out.read_text())
+    assert d["classification"] == "verified_both"
+    for c in CORPORA:
+        # anchor has no -1 suffix
+        assert d["docs"][c]["anchor"] == "blackframe", c
+        opts = d["docs"][c]["options"]
+        # prose: amount + the in-prose alias pair threshold/thresh
+        assert set(opts) == {"amount", "threshold", "thresh"}, c
+        assert opts["amount"]["default"] == "98"
+        assert opts["threshold"]["default"] == "32"
+        assert opts["thresh"]["default"] == "32"
+    # prose defaults match the build defaults exactly
+    assert d["option_diffs"] == []
+    assert any("PROSE" in n for n in d["review"]["notes"])
 
 
 # --------------------------------------------------------------------------
@@ -218,6 +263,28 @@ Exiting with exit code 0
     assert kinds == {(c, "meter", "default_conflict") for c in CORPORA}
     assert d["review"]["ready_for_registry"] is False
     assert any("conflict" in n.lower() for n in d["review"]["notes"])
+
+
+def test_marker_without_dl(tmp_path):
+    # form (b) marker present but its <dl> is missing: no options, no crash
+    html = re.sub(r"<dl.*?</dl>", "", FORM_B_HTML, flags=re.S)
+    build = """Filter metered
+metered AVOptions:
+   meter             <int>        ..FV....... set the meter (default 9)
+
+Exiting with exit code 0
+"""
+    root = tmp_path / "corpus-root"
+    for c in CORPORA:
+        make_corpus(root, c, html, build, name="metered")
+    out = tmp_path / "draft.json"
+    r = run_author("filter:metered", CORPORA, root, out)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(out.read_text())
+    for c in CORPORA:
+        assert d["docs"][c]["options"] == {}, c
+    kinds = {(x["corpus"], x["option"], x["kind"]) for x in d["option_diffs"]}
+    assert kinds == {(c, "meter", "undocumented_option") for c in CORPORA}
 
 
 # --------------------------------------------------------------------------

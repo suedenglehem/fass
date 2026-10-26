@@ -83,14 +83,17 @@ def heading_anchor(heading_html: str) -> str | None:
 
 def parse_dl(html: str, start: int):
     """Top-level <dt>/<dd> pairs of the <dl> at `start`; nested <dl>
-    (enum sub-lists) are skipped; stops at the outer </dl>."""
+    (enum sub-lists) are skipped; stops at the outer </dl>. A run of
+    consecutive <dt>s followed by ONE <dd> (grouped options, e.g.
+    signalstats' stat/out) yields one (name, shared description) pair
+    per <dt>."""
     items: list[tuple[str | None, str]] = []
     open_end = html.find(">", start) + 1
     depth = 1  # inside the outer <dl>
     mode = None  # 'dt' | 'dd' at top level
     chunk_start = None
     chunks: list[str] = []
-    name = None
+    pending: list[str] = []
     for m in re.finditer(r"<(/?)(dl|dt|dd)\b[^>]*>", html[open_end:]):
         closing = m.group(1) == "/"
         tag = m.group(2)
@@ -115,7 +118,7 @@ def parse_dl(html: str, start: int):
                     mode = "dt"
                     chunk_start = tok_end
                 else:
-                    name = clean_text(html[chunk_start:tok_start])
+                    pending.append(clean_text(html[chunk_start:tok_start]))
                     mode = None
             else:  # dd
                 if not closing:
@@ -124,16 +127,25 @@ def parse_dl(html: str, start: int):
                     chunks = []
                 else:
                     chunks.append(html[chunk_start:tok_start])
-                    items.append((name, clean_text(" ".join(chunks))))
-                    name = None
+                    desc = clean_text(" ".join(chunks))
+                    for n in (pending or [None]):
+                        items.append((n, desc))
+                    pending = []
                     mode = None
     return items
 
 
-def parse_doc_options(body: str) -> dict:
-    """The ONE options <dl> of a section body, form (a) <h4>Options</h4>
-    + <dl> or (b) paragraph ending 'The filter accepts the following
-    options:' + <dl>."""
+PROSE_MARKER = re.compile(r"accepts the following parameters:", re.I)
+PROSE_OPTION = re.compile(
+    r"(\w+)(?:\s*,\s*(\w+))?\s+(.+?)it defaults to\s*([\w.]+)\s*\.", re.S)
+
+
+def parse_doc_options(body: str) -> tuple[dict, str | None]:
+    """The ONE options list of a section body. Forms:
+    (a) <h4>Options</h4> + <dl>,
+    (b) paragraph ending 'The filter accepts the following options:' + <dl>,
+    (c) prose '...accepts the following parameters: ...' (no dl).
+    Returns (options, form) where form is 'options_dl' | 'prose' | None."""
     dl_start = None
     m = re.search(r"The filter accepts the following options:\s*</p>", body)
     if m:
@@ -144,18 +156,34 @@ def parse_doc_options(body: str) -> dict:
                             clean_text(hm.group(1))):
                 dl_start = body.find("<dl", hm.end())
                 break
-    if dl_start is None:
-        return {}
-    options = {}
-    for name, desc in parse_dl(body, dl_start):
-        if not name:
-            continue
-        dm = re.search(r"Default is\s+(.+?)\.", desc)
-        options[name] = {
-            "description": desc,
-            "default": dm.group(1).strip() if dm else None,
-        }
-    return options
+    if dl_start is not None and dl_start >= 0:
+        options = {}
+        for name, desc in parse_dl(body, dl_start):
+            if not name:
+                continue
+            dm = re.search(r"Default is\s+(.+?)\.", desc)
+            default = dm.group(1).strip() if dm else None
+            # alias groups arrive as one <dt> ("color, c") — split on commas
+            for n in (p.strip() for p in name.split(",")):
+                if n:
+                    options[n] = {"description": desc, "default": default}
+        return options, "options_dl"
+    # form (c) — prose only (intro paragraph, before any <h4> subsection)
+    h4 = re.search(r"<h4\b", body)
+    intro = body[:h4.start()] if h4 else body
+    text = clean_text(intro)
+    pm = PROSE_MARKER.search(text)
+    if pm:
+        options = {}
+        for opt in PROSE_OPTION.finditer(text[pm.end():]):
+            name, alias, desc, default = (g or "" for g in opt.groups())
+            name, alias, default = name.strip(), alias.strip(), default.strip()
+            desc = desc.strip(" .;,")
+            for n in (name, alias) if alias else (name,):
+                options[n] = {"description": desc, "default": default}
+        if options:
+            return options, "prose"
+    return {}, None
 
 
 # --------------------------------------------------------------------------
@@ -254,6 +282,7 @@ def author_filter(name: str, corpora: list[str], corpus_root: Path) -> dict:
     corpora = sorted(set(corpora), key=corpus_version_key)
     docs: dict = {}
     builds: dict = {}
+    prose_corpora: list[str] = []
     for corpus in corpora:
         html_path = corpus_root / corpus / "docs" / DOC_FILENAME
         if html_path.is_file():
@@ -261,10 +290,13 @@ def author_filter(name: str, corpora: list[str], corpus_root: Path) -> dict:
                                                    errors="replace"), name)
             if sec is not None:
                 heading_html, body = sec
+                opts, form = parse_doc_options(body)
                 docs[corpus] = {
                     "anchor": heading_anchor(heading_html),
-                    "options": parse_doc_options(body),
+                    "options": opts,
                 }
+                if form == "prose":
+                    prose_corpora.append(corpus)
         bf = corpus_root / corpus / "build-facts" / f"filter-{name}.txt"
         if bf.is_file():
             opts = parse_build_facts(bf.read_text(encoding="utf-8",
@@ -309,6 +341,10 @@ def author_filter(name: str, corpora: list[str], corpus_root: Path) -> dict:
     if classification == "conflict":
         notes.append("human TODO: resolve default/range conflicts before "
                      "registry merge")
+    if prose_corpora:
+        notes.append("human TODO: options parsed from PROSE form "
+                     f"({', '.join(sorted(prose_corpora))}) — best-effort, "
+                     "verify names/defaults against the manual")
     for diff in option_diffs:
         notes.append(f"human TODO: {diff['kind']} for option "
                      f"{diff['option']} in {diff['corpus']}")
