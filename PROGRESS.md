@@ -5,8 +5,9 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state:** M1–M9+BSF + M10.0–M10.5 shipped (M10.5 committed this
-  milestone). **M10.5 two-pass vidstab COMPLETE 2026-10-26** (on tr4):
+- **Last state:** M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5
+  dual-build verified, M11.0 committed this milestone). **M10.5 two-pass
+  vidstab COMPLETE 2026-10-26** (on tr4):
   `stabilize the shaky clip` / `remove the camera shake` / `get rid of the
   shaky handheld look` → `StabilizeOp`; the planner builds a two-pass
   execution — pass 1 `vidstabdetect=result=<trf>` + `-f null -` (stream
@@ -41,10 +42,48 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (ops=[stabilize]); two M6 GPU tests retargeted to non-CUDA phrasings
   (resize+gpu is now the scale_cuda case; revision toggle uses grayscale).
   **Suite 910 passed, 1 skipped on tr4 host 6.1.1 (99 s)** — the skip is
-  the libvmaf E2E (no libvmaf in the 6.1.1 build, unchanged). 9.0.1
-  container verification delegated to the i7 dispatcher worker (job at the
-  M10.5 commit; recipe = the M10.4 one, expect 910 passed, 1 skipped).
-  M10.4 below remains as delivered.
+  the libvmaf E2E (no libvmaf in the 6.1.1 build, unchanged). **9.0.1
+  container verification COMPLETE (i7 job j_b55343a9be at commit aa0e534,
+  image fass:m105-verify efc5f125149a): 910 passed, 1 skipped in 103.19 s**
+  — the sole skip is the node JS syntax check (tests/test_api.py:311),
+  the libvmaf E2E RAN and passed (16.53 s, vendored model
+  /opt/vmaf-models) → **M10.5 DUAL-BUILD VERIFIED** (evidence:
+  /home/andrei/.local/share/local-dispatcher/artifacts/j_b55343a9be/
+  attempt-1/pytest_full.log). M10.4 below remains as delivered.
+- **M11.0 pinned corpora COMPLETE 2026-10-26** (commits e1ff741
+  acquisition manifests + BUILD-RECIPE.md, cherry-picked from the
+  tr4-secondary worker job; c9e4f55 parser/chunker/ingest/fixtures/tests;
+  0081cd3 manifest refresh): RAG corpus foundation per PRD §10.3.
+  6.1.1 docs from the Ubuntu deb ffmpeg-doc 6.1.1-3ubuntu5; 9.0.1 from
+  the official tarball via `make doc` (texinfo 7.1 toolchain;
+  libtext-unidecode-perl REQUIRED — makeinfo dies without it).
+  **Reproducibility proven:** document sha256 lists byte-identical across
+  TWO independent builds (tr4 primary + tr4-secondary worktree, different
+  machines). **Parser 1.1** (`rag/parser.py`): makeinfo HTML →
+  Document/Block tree; stacked deflist pairing fixes the table idioms —
+  shared `<dd>` (w/h → one entry per name), continuation `<dd>` (multi-
+  paragraph desc merges into the last entry), nested `<dl>` value tables
+  become the entry's description (eof_action → repeat/endall/pass), bare
+  `<dt>` kept with empty desc; TOC div excluded; canonical
+  `document_to_dict` for fixture round-trips. **Chunker**
+  (`rag/chunker.py`): structure-first; TOKEN_MIN 350 / TOKEN_MAX 700;
+  heading paths repeated on child chunks; option units "term: desc" with
+  nested value tables rendered inline; examples stay with their
+  introducing paragraph; oversized blocks → own flagged chunk, never cut;
+  build_help per-filter text files. **Ingest CLI** (`rag/ingest.py`):
+  sha256 drift gate + missing-document gate; re-ingest writes a NEW
+  immutable generation (explicit collision → ValueError "immutable");
+  atomic generations.json with history; previous gen kept on disk for
+  rollback; dedup on (source_url, content_hash); manifest refresh
+  (parser_version, total_chunks). Final corpus state: 9.0.1 manual
+  gen 3 active = 1820 chunks, build_help gen 2 = 836 (516 docs); 6.1.1
+  manual gen 2 = 1687, build_help gen 2 = 849 (562 docs); the
+  parser-1.0 gens (9.0.1 manual 1665 chunks) preserved on disk.
+  **2 parser fixtures round-trip byte-identical** (filter_options,
+  nested_headings); **36 RAG tests** (parser 14 + chunker 12 + ingest 9)
+  → **full host suite 946 passed, 1 skipped** (skip = node JS check on
+  the tr4 host). **Exit gate met:** both corpora built and reproducible;
+  fixtures pass.
 - **M10.4 comparison COMPLETE 2026-10-26** (on tr4, committed 99cbcab)
   (on tr4, uncommitted): `psnr`/`ssim`/`libvmaf` against a reference
   input as a standalone diagnostic analysis (null muxer, loglevel info,
@@ -100,14 +139,13 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 - **Next task:** **M10.6** — verification & docs: per-category E2E battery
   on `media/titan.mp4` (host 6.1.1 + i7 docker 9.0.1), full suite on both
   builds, i7-host suite via dispatcher job, README/DEVELOPMENT/HANDOFF
-  updates. **M11 RAG per `ffmpeg-assistant-rag-prd.md`** (M11.0 pinned
-  corpora → M11.1 retrieval API → M11.2 fass integration → M11.3 authoring
-  pipeline → M11.4 ablation; advisory-evidence-only — the
-  registry/builder/argv gate remain sovereign). M11.0 (corpus foundation:
-  pinned 6.1.1 + 9.0.1 corpora, parser, chunks, manifest, ingestion CLI,
-  parser fixtures) is independent of fass code and was delegated to the
-  tr4-secondary dispatcher worker at the M10.5 commit (PRD §10.2: corpus
-  building is data-heavy → ideal dispatcher work).
+  updates. **M11 RAG per `ffmpeg-assistant-rag-prd.md`** — M11.0 pinned
+  corpora COMPLETE (above); next = **M11.1 retrieval API** (embed +
+  retrieve + rank over the chunk store, retrieval benchmark, re-measure
+  the token heuristic against the real embedding tokenizer) → M11.2 fass
+  integration (advisory evidence only — the registry/builder/argv gate
+  remain sovereign) → M11.3 authoring pipeline → M11.4 ablation kill
+  criterion.
 - **Planning 2026-10-25 (later session): joint PRD delivered** —
   `ffmpeg-assistant-rag-prd.md` merges the assistant scope with the
   documentation-RAG idea. Verdict: RAG is viable as an **advisory evidence
@@ -389,10 +427,15 @@ delegate to dispatcher where possible.
 - **M10.3** combiners (7): labeled graphs, xfade math, tests.
 - **M10.4** comparison (3): reference input, libvmaf model ship.
 - **M10.5** two-pass vidstab + GPU + channelsplit-in-graph + anullsrc.
-  DONE 2026-10-26 (header bullet; 910 passed host, 9.0.1 via i7 job).
+  DONE 2026-10-26, DUAL-BUILD VERIFIED (910 passed / 1 skipped on both
+  host 6.1.1 and i7 9.0.1 container).
 - **M10.6** verification & docs: local + i7 docker E2E battery per category on
   titan.mp4, full suite, i7-host suite via dispatcher job,
   README/DEVELOPMENT/HANDOFF.
+- **M11.0** RAG corpus foundation (PRD §10.3): pinned 6.1.1 + 9.0.1 corpora,
+  parser 1.1, chunker, ingest CLI, fixtures, tests. DONE 2026-10-26
+  (header bullet; 946 passed host; corpora reproducible across two
+  independent builds).
 
 ### Acceptance (standing rules)
 Suite green locally (6.1.1) and via i7 host job; live E2E on i7 docker

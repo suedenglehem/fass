@@ -17,14 +17,51 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M10.5 — two-pass vidstab, GPU consume rule; host-verified, 9.0.1 via i7 job)
+## Current state (2026-10-26, M11.0 — RAG corpus foundation, COMPLETE; M10.5 DUAL-BUILD VERIFIED)
+**M11.0 — pinned corpora + parser 1.1 + chunker + ingest CLI** (PRD
+§10.3; committed e1ff741 + c9e4f55 + 0081cd3). RAG corpus foundation for
+`ffmpeg-assistant-rag-prd.md` — advisory evidence layer only, no fass
+code touched.
+- **Corpora:** 6.1.1 docs from the Ubuntu deb ffmpeg-doc 6.1.1-3ubuntu5;
+  9.0.1 from the official tarball via `make doc` (texinfo 7.1;
+  libtext-unidecode-perl REQUIRED). Reproducibility proven: document
+  sha256 lists byte-identical across TWO independent builds (tr4 primary
+  + tr4-secondary worktree, different machines). Recipe + rebuild
+  commands: `rag/corpus/BUILD-RECIPE.md`.
+- **Parser 1.1** (`rag/parser.py`): makeinfo HTML → Document/Block tree.
+  Stacked deflist pairing for the table idioms: shared `<dd>` (w/h → one
+  entry per name), continuation `<dd>` (desc merges into last entry),
+  nested `<dl>` value tables become the entry's description
+  (eof_action → repeat/endall/pass), bare `<dt>` kept. TOC div excluded.
+  Canonical `document_to_dict` → fixture round-trips.
+- **Chunker** (`rag/chunker.py`): structure-first; TOKEN_MIN 350 /
+  TOKEN_MAX 700; heading paths; option units "term: desc" (nested tables
+  inline); examples stay with their introducing paragraph; oversized →
+  own flagged chunk, never cut.
+- **Ingest CLI** (`rag/ingest.py`): sha256 drift gate; re-ingest = NEW
+  immutable generation (explicit collision → ValueError), atomic
+  generations.json + history, previous gen kept for rollback; dedup on
+  (source_url, content_hash).
+- **Final state:** 9.0.1 manual gen 3 = 1820 chunks, build_help gen 2 =
+  836 (516 docs); 6.1.1 manual gen 2 = 1687, build_help gen 2 = 849
+  (562 docs); parser-1.0 gens preserved on disk.
+- **Tests:** 2 parser fixtures round-trip byte-identical; 36 RAG tests
+  (14 parser + 12 chunker + 9 ingest) → **full host suite 946 passed, 1
+  skipped** (skip = node JS check on the tr4 host). Exit gate met.
+
+**Next:** M10.6 — per-category E2E verification battery + README /
+DEVELOPMENT docs, then **M11.1 retrieval API** (embed + retrieve + rank
+over the chunk store, benchmark, re-measure the token heuristic against
+the real embedding tokenizer).
+
+## Previous state (2026-10-26, M10.5 — two-pass vidstab, GPU consume rule, DUAL-BUILD VERIFIED: 6.1.1 host + 9.0.1 container)
 **M10.5 — `stabilize` (two-pass vidstab) + GPU filter-consume rule +
 channelsplit-in-graph + anullsrc source spec.** Stabilization needs the
 detect pass to see the SAME frames the transform pass emits (trim/speed
 would break frame correspondence), so the plan shape changed: an
 ExecutionPlan can now carry multiple passes.
 
-**What shipped (uncommitted):**
+**What shipped (committed aa0e534):**
 - **Plan schema:** `passes: list[Pass]` (purpose, inputs, vf, output_path,
   output_opts) + `intermediates: list[str]` on ExecutionPlan; top-level
   fields mirror the FINAL pass (backward-compatible single-pass plans
@@ -73,15 +110,17 @@ ExecutionPlan can now carry multiple passes.
 - **Suite:** **910 passed, 1 skipped on tr4 host ffmpeg 6.1.1 (99 s)**
   (skip = libvmaf E2E — no libvmaf in 6.1.1).
 
-**Dual-build status:** ⏳ 6.1.1 host ✅ / 9.0.1 container — delegated to
-the i7 dispatcher worker at the M10.5 commit (image recipe = the M10.4
-one; expect 910 passed, 1 skipped = node JS check; the libvmaf E2E must
-RUN and pass there).
+**Dual-build status:** ✅ 6.1.1 host / ✅ 9.0.1 container (i7 job
+j_b55343a9be at commit aa0e534, image fass:m105-verify efc5f125149a):
+910 passed, 1 skipped in 103.19 s; the sole skip is the node JS syntax
+check (tests/test_api.py:311) and the libvmaf E2E RAN and passed (16.53
+s, vendored model /opt/vmaf-models). **DUAL-BUILD VERIFIED** (evidence:
+/home/andrei/.local/share/local-dispatcher/artifacts/j_b55343a9be/
+attempt-1/pytest_full.log).
 
 **Next:** M10.6 — per-category E2E verification battery + README /
-DEVELOPMENT docs → M11 RAG per `ffmpeg-assistant-rag-prd.md` (M11.0
-corpus foundation delegated to the tr4-secondary dispatcher worker at the
-M10.5 commit — PRD §10.2: data-heavy, independent of fass code).
+DEVELOPMENT docs; then M11 RAG continues at M11.1 (retrieval API) — see
+the Current state section above.
 
 ## Previous state (2026-10-26, M10.4 — comparison metrics, DUAL-BUILD VERIFIED: 6.1.1 host + 9.0.1 container)
 **M10.4 — quality comparison: `psnr`/`ssim`/`libvmaf` against a reference
