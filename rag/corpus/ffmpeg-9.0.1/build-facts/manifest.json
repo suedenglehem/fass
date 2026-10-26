@@ -11,14 +11,14 @@
     "doc_toolchain": {
       "makeinfo": "texi2any (GNU texinfo) 7.1",
       "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
-      "perl": "REF(0x579ae36a7280)"
+      "perl": "REF(0x622b53387d70)"
     },
     "configure_flags": "--disable-autodetect",
-    "fetched_at": "2026-10-26T02:31:07Z",
+    "fetched_at": "2026-10-26T02:30:42Z",
     "build_identity": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers"
   },
-  "built_at": "2026-10-26T02:31:20Z",
-  "parser_version": null,
+  "built_at": "2026-10-26T02:30:53Z",
+  "parser_version": "1.1",
   "documents": [
     {
       "name": "bsfs.txt",
@@ -2601,6 +2601,6 @@
       "bytes": 1744
     }
   ],
-  "total_chunks": null,
+  "total_chunks": 836,
   "index_generation": 1
 }

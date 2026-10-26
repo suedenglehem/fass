@@ -9,11 +9,11 @@
     "filename": "ffmpeg-doc_7%3a6.1.1-3ubuntu5_all.deb",
     "sha256": "7f5f0ed49880be05860b8ba82b49e1fdd9423b6a88a8b436f686f82995ceb4e1",
     "apt_source": "ubuntu noble (universe)",
-    "fetched_at": "2026-10-26T02:29:03Z",
+    "fetched_at": "2026-10-26T02:28:41Z",
     "build_identity": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers"
   },
-  "built_at": "2026-10-26T02:29:50Z",
-  "parser_version": null,
+  "built_at": "2026-10-26T02:29:33Z",
+  "parser_version": "1.1",
   "documents": [
     {
       "name": "bsfs.txt",
@@ -2826,6 +2826,6 @@
       "bytes": 1838
     }
   ],
-  "total_chunks": null,
+  "total_chunks": 849,
   "index_generation": 1
 }
