@@ -17,7 +17,154 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-25, M10.0 — filter library foundation, dual-build VERIFIED)
+## Current state (2026-10-26, M10.4 — comparison metrics, DUAL-BUILD VERIFIED: 6.1.1 host + 9.0.1 container)
+**M10.4 — quality comparison: `psnr`/`ssim`/`libvmaf` against a reference
+input.** A comparison is a standalone diagnostic analysis: the reference
+clip is the second input (pad 1), the metric compares the two video streams
+frame by frame, the summary lands in the run log — nothing is written
+(the plan runs through the M10.2 diagnostic path: null muxer, loglevel
+info).
+
+**What shipped (uncommitted, with M10.3):**
+- **Registry 2.4.0:** `psnr`/`ssim`/`libvmaf` carry `diagnostic: true` +
+  `needs_reference: true`; libvmaf `min_version: "7.0"`.
+  `comparison_filters()` loader accessor (the `needs_reference` table).
+- **Plan schema:** `CompareOp` (type "compare", metric, reference asset
+  id, options validated against the registry option schema) in the
+  Operation union; at most one per plan; compare + filtergraph rejected
+  at schema level.
+- **NLU (rules):** triggers — compare/comparison/comparing verb,
+  "quality loss/difference/degradation/drop/impact", or a bare metric
+  word; metric-less → PSNR-vs-SSIM clarification (VMAF never offered
+  unless named); reference binding reuses the combiner binder (named
+  file, sole-candidate fallback, multi-candidate → which-file
+  clarification, audio-only other asset → unsupported fragment, no
+  candidate → bind hint); compare + ANY other edit → standalone-analysis
+  clarification (planner enforces the same for API-built plans);
+  compare into a non-video output → unsupported fragment; revision
+  "instead measure ssim" replaces the previous compare op;
+  length-preserving span blanking; SUPPORTED_SUMMARY clause.
+- **Planner:** reference resolution (must differ from main, be a bound
+  local VIDEO/SOURCE asset, probeable, have video) → probe both inputs;
+  conflicts are plan errors (trim, watermark, audio_replace, subtitles,
+  ANY other op, non-video output mode); a needs_reference metric on the
+  plain `-vf` chain is an error (no reference pad); `_comparison_segments`
+  builds the labeled graph — reference scaled to the main's size only on
+  dimension mismatch (`[1:v]scale=W:H[c1];[0:v][c1]metric[cmp]`),
+  fps/pix_fmt mismatches are WARNINGS only (converting would distort the
+  measured signal); the labeled `[cmp]` pad is explicitly `-map`ped
+  (filtergraph outputs are not auto-mapped — found by the E2E).
+- **libvmaf model:** the filter's `model` option is a SPEC
+  (`version=…`/`path=…`) — a bare path is rejected by the filter; the
+  planner emits `model=path=<file>` from `$FASS_VMAF_MODEL` (full path)
+  or `$FASS_VMAF_MODEL_DIR/vmaf_v0.6.1.pkl`. The 9.0.1 base image links
+  libvmaf but ships NO model (verified: "could not load libvmaf model");
+  `docker/models/vmaf_v0.6.1.json` vendored (official Netflix/vmaf model,
+  19 KB SVM-over-6-features; JSON loads fine in libvmaf 3.0) + Dockerfile
+  `COPY docker/models/ /opt/vmaf-models/` + `ENV
+  FASS_VMAF_MODEL=/opt/vmaf-models/vmaf_v0.6.1.json`.
+- **Tests:** `tests/test_comparison.py` (47: registry flags, CompareOp
+  schema, plan shape/scale/fps/pix warnings/model env/conflicts/argv
+  gate, NLU phrasings/clarifications/conflicts/revision, E2E psnr +
+  ssim executed on lavfi clips asserting the metric line in stderr + no
+  file written; libvmaf E2E gated on filter+model presence — skips on
+  6.1.1, runs in the 9.0.1 image). `test_m101_transforms`
+  presence-warning test now uses `blackdetect_vulkan` (libvmaf can no
+  longer be a bare -vf filter).
+- **Suite:** **891 passed, 1 skipped on BOTH builds** (845 baseline + 47
+  new): host 6.1.1 (skip = libvmaf E2E — no filter in 6.1.1) and 9.0.1
+  container (skip = node JS syntax check — no node in the image; the
+  libvmaf E2E RAN and passed via the vendored model). The container run
+  mounts the working tree at /host, so it double-verifies M10.3 AND
+  M10.4 on 9.0.1.
+
+**Dual-build status:** ✅ VERIFIED 2026-10-26 — host 6.1.1 891/1,
+`fass:m104-verify` 9.0.1 891/1 (the image venv needs `pip install
+pytest httpx` for suite runs; the nvidia base has QSV-absent, no node).
+First container attempts failed on venv setup only (no pytest / no
+httpx), which exposed two build-ASSUMING tests, now fixed build-agnostically:
+`test_env_reports_qsv_coders` (asserted `present is True` — user-confirmed
+tr4 = AMD CPU, so QSV is registered-but-unusable there; the 9.0.1 nvidia
+image is built without QSV → `present` now cross-checked against a raw
+`ffmpeg -encoders` parse) and `test_filters::test_presence_probe_covers_new_filters`
+(asserted libvmaf+blackdetect_vulkan absent — real matrix: 6.1.1 lacks
+both, 9.0.1 nvidia HAS libvmaf but NO vulkan at all → both cross-checked
+against a raw `ffmpeg -filters` parse; probe set == raw set on both
+builds). Also fixed `_libvmaf_works()` (the E2E gate's mini-run used bare
+`libvmaf`, which fails to init without a compiled-in model — it now
+resolves the model exactly as the planner does via `vmaf_model_path()`).
+The i7 9.0.1 battery stays blocked (i7 offline since 2026-10-26); tr4
+substitutes with `docker run` verification images.
+
+**Next:** M10.5 — two-pass vidstab (design: ExecutionPlan is single-argv;
+`start_run` is argv-only → a steps/passes plan shape), GPU filters
+(yadif_cuda/scale_cuda phrasings; "with the gpu" currently only sets the
+nvenc encoder flag), channelsplit-in-graph, anullsrc → M10.6 verification
++ docs → M11 RAG per `ffmpeg-assistant-rag-prd.md`.
+
+## Previous state (2026-10-26, M10.3 — combiners)
+**M10.3 — combiner filters: labeled `-filter_complex` graphs.** Nine
+combiners are planned from natural language: video `xfade`, `concat`,
+`hstack`, `vstack`, `overlay`; audio `acrossfade`, `amix`, `amerge`,
+`join`.
+
+**What shipped:**
+- **Registry 2.3.0:** `concat` + `hstack` added (video 48→50, audio 36)
+  with option schemas; all nine combiners carry the `multi_input` marker
+  (2 = exactly two inputs, 0 = variadic); `overlay` gained its option
+  schema (x/y/eof_action/eval/shortest/format).
+- **Plan schema:** `combine` operation (op + inputs) in the EditPlan
+  operations union; exactly one combiner per plan; conflicts with
+  `filtergraph`/`filter` ops rejected at schema level; a new combiner
+  revision replaces the previous one.
+- **NLU (rules):** two-input phrasings — "crossfade A with B", "stack
+  side by side / one above the other", "stitch/merge/concatenate",
+  "overlay logo on top", "mix audio"; asset binding (name the second
+  asset, or the only other bound asset; clarify when no candidate);
+  per-combiner duration parsing (xfade transition length, acrossfade
+  `d`); the main input is never a candidate for "the other input".
+- **Planner:** extra inputs probed with `probe_media(require_video=False)`
+  (ffprobe gained the kwarg — audio-only files are now probeable; default
+  behavior unchanged). `_combiner_segments` builds the labeled graph:
+  - **xfade:** `offset` = main duration − transition duration (computed
+    from the probe, never asked); both pads normalized to the main's
+    `fps=…,format=…,settb=AVTB` (6.x `fps` has no `format` option —
+    separate `format` filter); size mismatch → extra scaled to the main's
+    exact WxH + warning.
+  - **concat:** pads in per-input order `[0:v][0:a][1:v][1:a]` (NOT
+    all-videos-then-audios — empirically verified on host); extras scaled
+    to the main's WxH on mismatch; audio streams dropped when no input
+    has one, and the reencode chain adds an explicit `-an` then.
+  - **hstack/vstack:** extras auto-scaled to the main's height/width
+    (existing pattern, aspect preserved) + warning; **overlay:**
+    `[0:v][1:v]overlay[…out]`; **acrossfade:** `acrossfade=d=…`;
+    **amix:** `amix=inputs=N:duration=…`; **amerge/join:** multi-input
+    merge with matching channel layout. Output maps pick up the graph
+    labels (cv/ca); a combiner without audio maps no audio stream.
+- **Tests:** `tests/test_combiners.py` (62: schema conflicts, NLU
+  phrasing/binding/clarification, xfade offset math + normalization argv,
+  concat pad order, hstack/vstack scaling, E2E execution on five
+  generated fixtures — a.mp4 1920x1080@15 10s, b.mp4 1280x720 8s,
+  c.mp4 1280x720 6s silent, portrait.mp4 720x1280 10s, tone.wav 5s —
+  probing output duration/size/streams). `tests/test_filters.py`
+  updated (combiner marker + 50/36 counts); `tests/benchmark/requests.json`
+  bench-064 "Concatenate two clips": `unsupported` →
+  `needs_clarification` (the correct new behavior — it now binds the
+  second asset or clarifies).
+- **Suite:** **845 passed** on tr4 host 6.1.1 (93 s; 783 baseline + 62).
+
+**Dual-build status:** host 6.1.1 ✅. The i7 docker 9.0.1 E2E battery is
+blocked — i7 (192.168.0.33) unreachable (no route to host; dispatcher
+backend offline) as of 2026-10-26. Equivalent verification running on
+tr4: same `Dockerfile` (base `jrottenberg/ffmpeg:9.0-nvidia2404`) built
+as `fass:m103-verify`, full suite to run inside the 9.0.1 container.
+
+**Next (M10.4):** comparison filters — `psnr`/`ssim`/`libvmaf` with a
+reference input (plan-level second media), libvmaf model shipped into the
+docker image; then M10.5 two-pass vidstab / GPU / anullsrc; M10.6
+verification + docs; then M11 RAG per `ffmpeg-assistant-rag-prd.md`.
+
+## Previous state (2026-10-25, M10.0 — filter library foundation, dual-build VERIFIED)
 **M10.0 — registry-driven filter option schemas + presence probe + validation
 wiring** (the M10.0 phase of the M10 filter-library plan in PROGRESS.md §4).
 
