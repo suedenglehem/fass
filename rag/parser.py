@@ -30,6 +30,17 @@ Preserved (RAG PRD 6, ingestion requirements):
 
 Dropped: the table-of-contents div (duplicates every heading) and the
 per-heading anchor/TOC spans. Stdlib only (html.parser).
+
+Two makeinfo generations of this markup appear in the corpora:
+- texinfo >= 7 (9.0.1 tarball build): the anchor is a bare
+  `<a name="...">` before the heading; the permalink is a
+  `<span class="pull-right">` inside the heading (skipped wholesale)
+- texinfo 6.x (6.1.1 Ubuntu deb build): the heading text is wrapped in
+  a plain `<span>` and the permalink is an
+  `<a class="copiable-link" href="#name"> &para;</a>` INSIDE the heading
+  with no `<a name>` before it — the link's target is the section
+  anchor and its text (a pilcrow permalink) must not leak into the
+  heading title
 """
 
 from __future__ import annotations
@@ -145,6 +156,15 @@ class _ManualParser(HTMLParser):
                 self._pending_anchor = a["name"]
             elif a.get("href", "").startswith("#"):
                 target = a["href"][1:]
+                if self._heading_pieces is not None:
+                    # texinfo 6.x copiable-link: the target is the section
+                    # anchor (no <a name> precedes the heading) and the
+                    # link text is a pilcrow permalink — skip it so it
+                    # cannot leak into the heading title
+                    if not self._pending_anchor:
+                        self._pending_anchor = target
+                    self._skip_tag, self._skip_depth = "a", 0
+                    return
                 if self._para is not None and target not in self._para_links:
                     self._para_links.append(target)
             return

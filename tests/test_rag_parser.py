@@ -170,3 +170,38 @@ def test_pull_right_span_dropped_from_heading():
     assert s.heading.title == "Y"
     assert s.heading.anchor == "Y"
     assert s.blocks[0].text == "y text"
+
+
+def test_copiable_link_markup_from_6_1_1_deb():
+    # texinfo 6.x (6.1.1 Ubuntu deb): the heading text is wrapped in a
+    # plain <span>, there is NO <a name> before the heading, and the
+    # permalink is a copiable link INSIDE the heading whose text is a
+    # pilcrow (" &para;") — the link target must become the section
+    # anchor and the pilcrow must not leak into the title
+    doc = parse_html(
+        '<body>'
+        '<h2 class="chapter"><span>8 Audio Filters'
+        '<a class="copiable-link" href="#Audio-Filters"> &para;</a></span></h2>'
+        '<p>intro</p>'
+        '<h3 class="section"><span>8.1 acompressor'
+        '<a class="copiable-link" href="#acompressor"> &para;</a></span></h3>'
+        '<p>compressor text</p>'
+        '</body>', source="inline.html")
+    chap, sec = doc.sections
+    assert chap.heading.title == "Audio Filters"
+    assert chap.heading.anchor == "Audio-Filters"
+    assert sec.heading.title == "acompressor"
+    assert sec.heading.anchor == "acompressor"
+    assert sec.blocks[0].text == "compressor text"
+
+
+def test_copiable_link_does_not_override_name_anchor():
+    # an explicit <a name> before the heading wins over the in-heading
+    # copiable link target
+    doc = _parse_body(
+        '<a name="Explicit"></a><h3>1.1 Z'
+        '<a class="copiable-link" href="#implicit"> &para;</a></h3>'
+        '<p>z text</p>')
+    s = doc.sections[-1]
+    assert s.heading.anchor == "Explicit"
+    assert s.heading.title == "Z"
