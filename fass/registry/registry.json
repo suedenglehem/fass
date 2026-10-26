@@ -3192,7 +3192,7 @@
               0.015625,
               64
             ],
-            "description": "set sidechain gain (default 1; shared AVOptions block with sidechaincompress, undocumented under acompressor)"
+            "description": "set sidechain gain (default 1) — the AVOptions block is shared with sidechaincompress; undocumented under acompressor in the manual"
           },
           "mix": {
             "kind": "number",

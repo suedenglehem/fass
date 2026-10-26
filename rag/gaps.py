@@ -29,7 +29,8 @@ import sys
 from pathlib import Path
 
 from .author import (DOC_FILENAME, clean_text, corpus_version_key,
-                     heading_names, iter_sections, parse_build_facts)
+                     defaults_equal, heading_names, iter_sections,
+                     parse_build_facts)
 
 
 def registry_filter_names(registry: dict) -> list[str]:
@@ -64,9 +65,24 @@ def corpus_sections(corpus_root: Path, corpus: str) -> dict:
 
 
 def registry_default(option: dict):
+    """The '(default X)' value, with X captured by balanced-paren scan —
+    X itself may contain ')' (showvolume's c default is the expression
+    'PEAK*255+floor((1-PEAK)*255)*256+0xff000000')."""
     desc = option.get("description", "")
-    m = re.search(r"\(default ([^)]*)\)", desc)
-    return m.group(1) if m else None
+    i = desc.find("(default ")
+    if i < 0:
+        return None
+    start = i + len("(default ")
+    depth, j = 1, start
+    while j < len(desc) and depth:
+        if desc[j] == "(":
+            depth += 1
+        elif desc[j] == ")":
+            depth -= 1
+        j += 1
+    if depth:
+        return None
+    return desc[start:j - 1]
 
 
 _TYPE_COMPAT = {
@@ -152,7 +168,11 @@ def compute_drift(corpus_root: Path, corpora: list[str],
                 rd = registry_default(reg)
                 bd = b.get("default")
                 rd_n, bd_n = _norm(rd), _norm(bd)
-                if rd_n is not None and bd_n is not None and rd_n != bd_n:
+                # defaults_equal carries the authoring-diff rules ('all'
+                # vs the build's expanded flag sum, e.g. aspectralstats
+                # measure) so drift and the draft review agree
+                if rd_n is not None and bd_n is not None \
+                        and not defaults_equal(rd_n, bd_n):
                     drift.append(base | {"kind": "default",
                                           "registry": rd, "build": bd})
     return drift

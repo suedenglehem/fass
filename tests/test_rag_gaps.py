@@ -197,3 +197,53 @@ def test_type_compatible_mapping():
     assert not type_compatible("int", "double")
     assert not type_compatible("number", "string")
     assert not type_compatible("string", "int")
+
+
+# ------------------------------------------------- drift default extraction
+
+def test_registry_default_nested_parens():
+    # M11.4: showvolume's c default is an EXPRESSION that itself contains
+    # ')' — a first-paren stop truncated it and fabricated drift rows
+    from rag.gaps import registry_default
+    assert registry_default(
+        {"description": ("set volume color expression; may use VOLUME, PEAK "
+                         "and CHANNEL "
+                         "(default PEAK*255+floor((1-PEAK)*255)*256+0xff000000)"
+                         )}) == "PEAK*255+floor((1-PEAK)*255)*256+0xff000000"
+    # a note AFTER the default parens (acompressor level_sc style) must not
+    # leak into the captured value
+    assert registry_default(
+        {"description": ("set sidechain gain (default 1) — the AVOptions "
+                         "block is shared with sidechaincompress")}) == "1"
+    assert registry_default({"description": "set q"}) is None
+    # the real registry entry survives the extraction end-to-end
+    from fass.registry import REGISTRY
+    c = REGISTRY["filters"]["audio"]["showvolume"]["options"]["c"]
+    assert registry_default(c) == \
+        "PEAK*255+floor((1-PEAK)*255)*256+0xff000000"
+
+
+def test_drift_all_equals_expanded_flag_sum(tmp_path):
+    # M11.4: the registry documents a flagset default as 'all' while the
+    # build help prints the expanded flag sum — same value, not drift
+    from rag.gaps import compute_drift
+    root = tmp_path / "corpus-root"
+    bf = root / "ffmpeg-9.0.1" / "build-facts"
+    bf.mkdir(parents=True)
+    (bf / "filter-aspectralstats.txt").write_text(
+        "Filter aspectralstats\n"
+        "aspectralstats AVOptions:\n"
+        "   measure             <int>          ..A.... "
+        "select the parameters which are measured "
+        "(default all+mean+variance+centroid)\n"
+        "Exiting with exit code 0\n", encoding="utf-8")
+    entries = {"aspectralstats": {"options": {
+        "measure": {"kind": "flagset", "values": ["mean", "variance"],
+                    "description": "select the parameters (default all)"}}}}
+    assert compute_drift(root, ["ffmpeg-9.0.1"], entries) == []
+    # a NARROWER registry default is real drift
+    entries["aspectralstats"]["options"]["measure"]["description"] = \
+        "select the parameters (default mean)"
+    drift = compute_drift(root, ["ffmpeg-9.0.1"], entries)
+    assert [(d["kind"], d["option"]) for d in drift] == \
+        [("default", "measure")]
