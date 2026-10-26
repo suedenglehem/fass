@@ -159,10 +159,12 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   **Next (post-reboot 2026-10-27):** (1) i7 docker 9.0.1 battery
   half of §9.4 — sync STAGED: bundle
   /dd2/andrei/fass-m11-arc.bundle (4ff3393..00c9120, 50 commits;
-  i7 main 4ff3393 = verified ancestor) → scp to i7; on i7: cp
-  PROGRESS.md ~/PROGRESS.md.i7-local-backup && rm PROGRESS.md
-  (untracked local copy blocks merge — arc adds tracked PROGRESS.md),
-  then git fetch <bundle> main && git merge --ff-only FETCH_HEAD
+  i7 main 4ff3393 = verified ancestor) → scp to i7; on i7:
+  mkdir ~/i7-pre-m11-backup && cp PROGRESS.md
+  ffmpeg-assistant-rag-prd.md ~/i7-pre-m11-backup/ && rm PROGRESS.md
+  ffmpeg-assistant-rag-prd.md (BOTH untracked on i7 but tracked on
+  main → block the ff-merge; local copies preserved in backup), then
+  git fetch <bundle> main && git merge --ff-only FETCH_HEAD
   (docker/compose.yaml untouched — unchanged across the arc, local
   opt-ins stay); then scripts/m10_battery.sh docker on
   media/titan.mp4 per filter category. (2) Push decision — 50 local
@@ -908,7 +910,8 @@ overall p95 73–82 s NOT met by local qwen3.8-27b, recorded per PRD
 /dd2/andrei/fass-m11-arc.bundle (4ff3393..00c9120, 50 commits; i7
 main 4ff3393 = verified ancestor; origin/main still aa0e534, push =
 user decision) → scp + fetch + ff-only merge on i7 (back up i7's
-untracked PROGRESS.md first; docker/compose.yaml untouched), then
+untracked PROGRESS.md + ffmpeg-assistant-rag-prd.md first;
+docker/compose.yaml untouched), then
 scripts/m10_battery.sh docker on media/titan.mp4 per filter
 category. Artifacts reboot-proof at /dd2/andrei/{ablation-run1,
 rag-budgets}/ + /dd2/andrei/m114_gonogo.py; rag service live pid
