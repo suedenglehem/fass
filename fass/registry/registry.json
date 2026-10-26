@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.4.0",
+  "registry_version": "2.5.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -665,22 +665,22 @@
   "filters": {
     "description": "Allowlisted FFmpeg filters (https://ffmpeg.org/ffmpeg-filters.html). The NLU may name these (FilterOp expr / plan.filtergraph); every filter instance in a graph is validated against this table — name, domain, argument characters and (for entries with an 'options' schema, the M10 table) every key=value option against its kind/range/choices — before a process is spawned. Entry flags: diagnostic (log-only output), multi_input: N (needs N inputs in a labeled filtergraph), needs_reference (2nd input is the comparison reference), gpu (GPU/platform build gated), min_version. Filters that open files or devices beyond the plan's own inputs (movie=, avfilter sources, …) are deliberately absent from the allowlist.",
     "video": {
-      "scale": { "description": "resize: 'scale=-2:480', 'scale=1280:-2', 'scale=1280:720'" },
-      "crop": { "description": "crop: 'crop=w:h', 'crop=w:h:x:y' (centered by default)" },
-      "pad": { "description": "pad/letterbox: 'pad=1280:720:(ow-iw)/2:(oh-ih)/2'" },
-      "transpose": { "description": "rotate 90°: 'transpose=1' (CW), 'transpose=2' (CCW), 'transpose=3'" },
-      "hflip": { "description": "flip horizontally (no arguments)" },
-      "vflip": { "description": "flip vertically (no arguments)" },
-      "setpts": { "description": "rescale video timestamps: 'setpts=PTS/2' (2x faster), 'setpts=2*PTS'" },
-      "settb": { "description": "set the frame time base: 'settb=AVTB' (common base — the planner emits it when normalizing xfade inputs)" },
-      "hue": { "description": "hue/saturation: 'hue=s=0' (grayscale), 'hue=h=90', 'hue=r=0.5'" },
-      "format": { "description": "pixel format: 'format=yuv420p'" },
-      "eq": { "description": "brightness/contrast/saturation/gamma: 'eq=brightness=0.1:contrast=1.2:saturation=1.1'" },
-      "fade": { "description": "fade in/out: 'fade=t=in:st=0:d=1', 'fade=t=out:st=9:d=1.5'" },
-      "drawtext": { "description": "burn in text: 'drawtext=text=hi:x=10:y=10:fontsize=24:fontcolor=white'; 'drawtext=timestamp=localtime:x=10:y=10' for a timecode" },
-      "boxblur": { "description": "Gaussian blur: 'boxblur=2:2'" },
-      "unsharp": { "description": "sharpen: 'unsharp=5:5:1.0'" },
-      "split": { "description": "split the stream into N copies (graph filter): 'split=2'" },
+      "scale": { "description": "resize: 'scale=-2:480', 'scale=1280:-2', 'scale=1280:720'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Options-2", "anchor": "Options-2", "title": "Video Filters > scale > Options"}, "aliases": ["resize", "720p", "1280x720", "full hd", "4k", "upscale", "downscale", "change the resolution"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "crop": { "description": "crop: 'crop=w:h', 'crop=w:h:x:y' (centered by default)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-60", "anchor": "Examples-60", "title": "Video Filters > crop > Examples"}, "aliases": ["crop", "crop to 1280x720", "crop out", "crop the edges"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "pad": { "description": "pad/letterbox: 'pad=1280:720:(ow-iw)/2:(oh-ih)/2'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-106", "anchor": "Examples-106", "title": "Video Filters > pad > Examples"}, "aliases": ["pad", "add padding", "pad/letterbox", "expand the frame"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "transpose": { "description": "rotate 90°: 'transpose=1' (CW), 'transpose=2' (CCW), 'transpose=3'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#transpose-1", "anchor": "transpose-1", "title": "Video Filters > transpose"}, "aliases": ["rotate 90 degrees", "rotate 90", "rotate clockwise", "rotate counter-clockwise"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "hflip": { "description": "flip horizontally (no arguments)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#hflip", "anchor": "hflip", "title": "Video Filters > hflip"}, "aliases": ["flip horizontally", "horizontal flip", "mirror", "flip"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "vflip": { "description": "flip vertically (no arguments)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#vflip", "anchor": "vflip", "title": "Video Filters > vflip"}, "aliases": ["flip vertically", "vertical flip"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "setpts": { "description": "rescale video timestamps: 'setpts=PTS/2' (2x faster), 'setpts=2*PTS'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#setpts", "anchor": "setpts", "title": "setpts"}, "aliases": ["speed up the video", "slow down the video", "change the video speed", "time-lapse"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "settb": { "description": "set the frame time base: 'settb=AVTB' (common base — the planner emits it when normalizing xfade inputs)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#settb", "anchor": "settb", "title": "settb"}, "aliases": ["settb", "set the frame time base"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "hue": { "description": "hue/saturation: 'hue=s=0' (grayscale), 'hue=h=90', 'hue=r=0.5'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-88", "anchor": "Examples-88", "title": "Video Filters > hue > Examples"}, "aliases": ["grayscale", "black and white", "b&w", "desaturate", "monochrome", "hue", "saturation"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "format": { "description": "pixel format: 'format=yuv420p'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-80", "anchor": "Examples-80", "title": "Video Filters > format > Examples"}, "aliases": ["pixel format", "yuv420p", "10-bit", "4:4:4", "convert the pixel format"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "eq": { "description": "brightness/contrast/saturation/gamma: 'eq=brightness=0.1:contrast=1.2:saturation=1.1'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-89", "anchor": "Commands-89", "title": "Video Filters > eq > Commands"}, "aliases": ["eq", "brightness", "contrast", "saturation", "gamma"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "fade": { "description": "fade in/out: 'fade=t=in:st=0:d=1', 'fade=t=out:st=9:d=1.5'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-75", "anchor": "Examples-75", "title": "Video Filters > fade > Examples"}, "aliases": ["fade in", "fade out", "fade to black"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "drawtext": { "description": "burn in text: 'drawtext=text=hi:x=10:y=10:fontsize=24:fontcolor=white'; 'drawtext=timestamp=localtime:x=10:y=10' for a timecode", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Syntax", "anchor": "Syntax", "title": "Video Filters > drawtext > Syntax"}, "aliases": ["add text", "text overlay", "burn in text", "superimpose text", "timecode overlay"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "boxblur": { "description": "Gaussian blur: 'boxblur=2:2'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-50", "anchor": "Examples-50", "title": "Video Filters > boxblur > Examples"}, "aliases": ["blur", "gaussian blur"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "unsharp": { "description": "sharpen: 'unsharp=5:5:1.0'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-133", "anchor": "Examples-133", "title": "Video Filters > unsharp > Examples"}, "aliases": ["sharpen", "unsharp"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "split": { "description": "split the stream into N copies (graph filter): 'split=2'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#split", "anchor": "split", "title": "split"}, "aliases": ["split", "split the stream", "split=2"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "overlay": {
         "description": "overlay a second input on top of the main: 'overlay=x:y' (graph filter)",
         "options": {
@@ -716,10 +716,13 @@
             "values": ["straight", "premultiplied"]
           }
         },
-        "multi_input": 2
+        "multi_input": 2,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-128", "anchor": "Commands-128", "title": "Video Filters > overlay > Commands"},
+        "aliases": ["overlay", "picture in picture", "on top of", "watermark", "logo"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
-      "subtitles": { "description": "burn in a subtitle file: 'subtitles=file.srt' (path needs filter escaping)" },
-      "ass": { "description": "burn in an ass/ssa file: 'ass=file.ass'" },
+      "subtitles": { "description": "burn in a subtitle file: 'subtitles=file.srt' (path needs filter escaping)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#subtitles-1", "anchor": "subtitles-1", "title": "Video Filters > subtitles"}, "aliases": ["subtitles", "captions", "burn in subtitles", "hard subtitles", "add subtitles from subs.srt"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "ass": { "description": "burn in an ass/ssa file: 'ass=file.ass'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#ass", "anchor": "ass", "title": "Video Filters > ass"}, "aliases": ["ass subtitles", "ssa subtitles", "ass file", "ssa file"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "bbox": {
         "description": "Compute bounding box for each frame.",
         "options": {
@@ -732,7 +735,10 @@
             "description": "set minimum luminance value for bounding box (default 16)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-58", "anchor": "Commands-58", "title": "Video Filters > bbox > Commands"},
+        "aliases": ["bounding box", "detect bounding box", "content bounding box"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "blackdetect": {
         "description": "Detect video intervals that are (almost) black.",
@@ -778,7 +784,10 @@
             "description": "set the pixel black threshold (default 0.1)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#blackdetect", "anchor": "blackdetect", "title": "Video Filters > blackdetect"},
+        "aliases": ["detect black frames", "black frame detection", "black intervals", "where are the black frames"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "blackdetect_vulkan": {
         "description": "Detect video intervals that are black (Vulkan GPU; FFmpeg 7.1+, absent from both tested builds).",
@@ -882,7 +891,10 @@
             ],
             "description": "pixels per block <int> default 64"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#blackdetect_vulkan", "anchor": "blackdetect_vulkan", "title": "blackdetect_vulkan"},
+        "aliases": ["gpu black frame detection", "vulkan blackdetect"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "chromakey": {
         "description": "Turns a certain color into transparency. Operates on YUV colors.",
@@ -911,7 +923,10 @@
             "kind": "bool",
             "description": "color parameter is in yuv instead of rgb (default false)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-63", "anchor": "Commands-63", "title": "Video Filters > chromakey > Commands"},
+        "aliases": ["green screen", "chroma key", "remove the green", "key out the green"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "colormatrix": {
         "description": "Convert color matrix.",
@@ -944,7 +959,10 @@
               "bt2020"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#colormatrix", "anchor": "colormatrix", "title": "Video Filters > colormatrix"},
+        "aliases": ["color matrix", "colormatrix", "convert color matrix"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "colorspace": {
         "description": "Convert between colorspaces.",
@@ -1139,7 +1157,10 @@
               "bt2020-12"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#colorspace", "anchor": "colorspace", "title": "Video Filters > colorspace"},
+        "aliases": ["color space", "colorspace", "bt709", "bt601", "bt2020", "smpte170m"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "cropdetect": {
         "description": "Auto-detect crop size.",
@@ -1225,7 +1246,10 @@
             "description": "motion vector threshold when estimating video window size (default 8)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-61", "anchor": "Examples-61", "title": "Video Filters > cropdetect > Examples"},
+        "aliases": ["black bars", "letterbox bars", "pillarbox bars", "detect black bars", "auto-detect crop"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "decimate": {
         "description": "Decimate frames (post field matching filter).",
@@ -1282,7 +1306,10 @@
             "kind": "bool",
             "description": "set whether or not the input only partially contains content to be decimated (default false)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#decimate-1", "anchor": "decimate-1", "title": "Video Filters > decimate"},
+        "aliases": ["decimate", "drop duplicate frames", "remove duplicate frames"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "drawbox": {
         "description": "Draw a colored box on the input video.",
@@ -1335,7 +1362,10 @@
             "kind": "string",
             "description": "use datas from bounding box in side data"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-69", "anchor": "Examples-69", "title": "Video Filters > drawbox > Examples"},
+        "aliases": ["draw box", "draw a box", "colored box", "rectangle overlay"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "fps": {
         "description": "Force constant framerate.",
@@ -1367,7 +1397,10 @@
               "pass"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-81", "anchor": "Examples-81", "title": "Video Filters > fps > Examples"},
+        "aliases": ["fps", "frames per second", "set the frame rate", "force constant framerate"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "framerate": {
         "description": "Upsamples or downsamples progressive source between specified frame rates.",
@@ -1408,7 +1441,10 @@
               "scd"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#framerate", "anchor": "framerate", "title": "Video Filters > framerate"},
+        "aliases": ["framerate", "frame rate conversion", "upsample the frame rate", "downsample the frame rate"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "freezedetect": {
         "description": "Detects frozen video input.",
@@ -1430,7 +1466,10 @@
             "description": "set minimum duration in seconds (default 2)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#freezedetect", "anchor": "freezedetect", "title": "Video Filters > freezedetect"},
+        "aliases": ["detect frozen frames", "frozen frames", "freeze detection"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "idet": {
         "description": "Interlace detect Filter.",
@@ -1464,7 +1503,10 @@
             "description": "set number of frames to use to determine if the interlace flag is accurate (default 0)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-89", "anchor": "Examples-89", "title": "Video Filters > idet > Examples"},
+        "aliases": ["interlaced detection", "detect interlacing", "is this interlaced"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "libvmaf": {
         "description": "Compute VMAF quality metric vs a reference input (needs libvmaf model files; present in 9.0.1, absent from 6.1.1).",
@@ -1522,7 +1564,10 @@
             ],
             "description": "force CPU feature level <int> default -1"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-93", "anchor": "Examples-93", "title": "Video Filters > libvmaf > Examples"},
+        "aliases": ["libvmaf", "vmaf", "vmaf quality score"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "loop": {
         "description": "Loop video frames.",
@@ -1551,7 +1596,10 @@
             "kind": "number",
             "description": "set the loop start time (default INT64_MAX)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-95", "anchor": "Examples-95", "title": "Video Filters > loop > Examples"},
+        "aliases": ["loop", "loop video frames", "repeat the frames"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "psnr": {
         "description": "Calculate the PSNR between two video streams.",
@@ -1603,7 +1651,10 @@
             ]
           }
         },
-        "needs_reference": true
+        "needs_reference": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-110", "anchor": "Examples-110", "title": "Video Filters > psnr > Examples"},
+        "aliases": ["psnr", "signal-to-noise ratio", "quality loss", "compare against the original"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "rotate": {
         "description": "Rotate the input image.",
@@ -1644,7 +1695,10 @@
             "kind": "bool",
             "description": "use bilinear interpolation (default true)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-116", "anchor": "Examples-116", "title": "Video Filters > rotate > Examples"},
+        "aliases": ["rotate 15 degrees", "rotate by an angle", "arbitrary rotation", "rotate the image"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "scale_cuda": {
         "description": "GPU accelerated video resizer",
@@ -1697,7 +1751,10 @@
             "description": "enforce that the output resolution is divisible by a defined integer when force_original_aspect_ratio is used (default 1)"
           }
         },
-        "gpu": true
+        "gpu": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-148", "anchor": "Examples-148", "title": "CUDA Video Filters > scale_cuda > Examples"},
+        "aliases": ["gpu scale", "cuda scale", "scale on the gpu", "gpu resizer"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "setdar": {
         "description": "Set the frame display aspect ratio.",
@@ -1722,7 +1779,10 @@
             ],
             "description": "set max value for nominator or denominator in the ratio (default 100)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#setdar", "anchor": "setdar", "title": "setdar"},
+        "aliases": ["set display aspect ratio", "setdar", "display aspect ratio"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "setparams": {
         "description": "Force field, or color property for the output video frame.",
@@ -1817,7 +1877,10 @@
               "ictcp"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#setparams-1", "anchor": "setparams-1", "title": "Video Filters > setparams"},
+        "aliases": ["setparams", "set the field order", "set the color property"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "setsar": {
         "description": "Set the pixel sample aspect ratio.",
@@ -1842,7 +1905,10 @@
             ],
             "description": "set max value for nominator or denominator in the ratio (default 100)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#setsar", "anchor": "setsar", "title": "setsar"},
+        "aliases": ["set sample aspect ratio", "setsar", "sample aspect ratio", "pixel aspect ratio"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "showinfo": {
         "description": "Show textual information for each video frame.",
@@ -1852,7 +1918,10 @@
             "description": "calculate checksums (default true)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#showinfo", "anchor": "showinfo", "title": "Video Filters > showinfo"},
+        "aliases": ["frame info", "show frame info", "info about frames"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "ssim": {
         "description": "Calculate the SSIM between two video streams.",
@@ -1892,7 +1961,10 @@
             ]
           }
         },
-        "needs_reference": true
+        "needs_reference": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-126", "anchor": "Examples-126", "title": "Video Filters > ssim > Examples"},
+        "aliases": ["ssim", "structural similarity", "quality loss", "compare against the original"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "trim": {
         "description": "Pick one continuous section from the input, drop the rest.",
@@ -1937,7 +2009,10 @@
             "kind": "int",
             "description": "Number of the first frame that should be dropped again (default I64_MAX)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#trim", "anchor": "trim", "title": "Video Filters > trim"},
+        "aliases": ["trim", "cut from 00:10 to 00:30", "the first 20 seconds", "cut out the middle"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "vidstabdetect": {
         "description": "Extract relative transformations, pass 1 of 2 for stabilization (see vidstabtransform for pass 2).",
@@ -1994,7 +2069,10 @@
             ],
             "description": "virtual tripod mode (if >0): motion is compared to a reference reference frame (frame # is the value) (default 0)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-136", "anchor": "Examples-136", "title": "Video Filters > vidstabdetect > Examples"},
+        "aliases": ["stabilize", "remove camera shake", "fix shaky footage", "detect camera shake"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "vidstabtransform": {
         "description": "Transform the frames, pass 2 of 2 for stabilization (see vidstabdetect for pass 1).",
@@ -2102,7 +2180,10 @@
             "kind": "bool",
             "description": "enable debug mode and writer global motions information to file (default false)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Options-4", "anchor": "Options-4", "title": "Video Filters > vidstabtransform > Options"},
+        "aliases": ["stabilize", "remove camera shake", "fix shaky footage", "apply stabilization"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "concat": {
         "description": "Concatenate video and/or audio streams end to end: '[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1'.",
@@ -2127,7 +2208,10 @@
             "description": "enable unsafe mode (default false)"
           }
         },
-        "multi_input": 0
+        "multi_input": 0,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#concat", "anchor": "concat", "title": "concat"},
+        "aliases": ["concatenate", "end to end", "one after the other", "back to back", "append", "stitch"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "hstack": {
         "description": "Stack video inputs horizontally.",
@@ -2142,7 +2226,10 @@
             "description": "force termination when the shortest input terminates (default false)"
           }
         },
-        "multi_input": 0
+        "multi_input": 0,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#hstack-1", "anchor": "hstack-1", "title": "Video Filters > hstack"},
+        "aliases": ["stack side by side", "horizontal stack", "stack horizontally", "next to each other"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "vstack": {
         "description": "Stack video inputs vertically.",
@@ -2160,7 +2247,10 @@
             "description": "force termination when the shortest input terminates (default false)"
           }
         },
-        "multi_input": 0
+        "multi_input": 0,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#vstack-1", "anchor": "vstack-1", "title": "Video Filters > vstack"},
+        "aliases": ["stack vertically", "one above the other", "vertical stack"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "xfade": {
         "description": "Cross fade one video with another video.",
@@ -2243,7 +2333,10 @@
             "description": "set expression for custom transition"
           }
         },
-        "multi_input": 2
+        "multi_input": 2,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-141", "anchor": "Examples-141", "title": "Video Filters > xfade > Examples"},
+        "aliases": ["crossfade", "crossfade the clips", "video crossfade", "cross fade"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "yadif": {
         "description": "Deinterlace the input image.",
@@ -2275,7 +2368,10 @@
               "interlaced"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#yadif-1", "anchor": "yadif-1", "title": "Video Filters > yadif"},
+        "aliases": ["deinterlace", "de-interlace"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "yadif_cuda": {
         "description": "Deinterlace CUDA frames",
@@ -2308,26 +2404,29 @@
             ]
           }
         },
-        "gpu": true
+        "gpu": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#yadif_005fcuda", "anchor": "yadif_005fcuda", "title": "CUDA Video Filters > yadif_cuda"},
+        "aliases": ["deinterlace on the gpu", "gpu deinterlace", "cuda deinterlace"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       }
     },
     "audio": {
-      "volume": { "description": "gain: 'volume=2' (x2), 'volume=-6dB', 'volume=0.5'" },
-      "afade": { "description": "audio fade: 'afade=t=in:st=0:d=1'" },
-      "atempo": { "description": "playback speed 0.5-2.0 per instance (chain for more)" },
-      "aresample": { "description": "resample: 'aresample=44100', 'aresample=44100:ocl=mono'" },
-      "aformat": { "description": "sample format/rate/channels: 'aformat=sample_rates=44100:sample_fmts=s16'" },
-      "anull": { "description": "pass audio through unchanged (no arguments)" },
-      "loudnorm": { "description": "EBU R128 loudness normalization: 'loudnorm' or 'loudnorm=I=-16:LRA=11:TP=-1.5'" },
-      "lowpass": { "description": "cut high frequencies: 'lowpass=f=3000'" },
-      "highpass": { "description": "cut low frequencies: 'highpass=f=200'" },
-      "bass": { "description": "bass boost/cut: 'bass=g=4:f=100:w=0.5'" },
-      "treble": { "description": "treble boost/cut: 'treble=g=-3:f=4000'" },
-      "aecho": { "description": "echo: 'aecho=0.8:0.88:60:0.4'" },
-      "alimiter": { "description": "limit peak loudness: 'alimiter=limit=0.95'" },
-      "adelay": { "description": "delay in ms: 'adelay=500', 'adelay=delays=500|0'" },
-      "apad": { "description": "pad with silence: 'apad=pad_dur=2'" },
-      "atrim": { "description": "trim audio: 'atrim=start=5:end=20'" },
+      "volume": { "description": "gain: 'volume=2' (x2), 'volume=-6dB', 'volume=0.5'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-53", "anchor": "Commands-53", "title": "Audio Filters > volume > Commands"}, "aliases": ["volume", "louder", "quieter", "set the volume to 200%", "volume up", "volume down", "softer"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "afade": { "description": "audio fade: 'afade=t=in:st=0:d=1'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-8", "anchor": "Commands-8", "title": "Audio Filters > afade > Commands"}, "aliases": ["fade in the audio", "fade out the audio", "audio fade"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "atempo": { "description": "playback speed 0.5-2.0 per instance (chain for more)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-18", "anchor": "Examples-18", "title": "Audio Filters > atempo > Examples"}, "aliases": ["speed up the audio", "slow down the audio", "2x faster", "half speed", "change the audio speed"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "aresample": { "description": "resample: 'aresample=44100', 'aresample=44100:ocl=mono'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-16", "anchor": "Examples-16", "title": "Audio Filters > aresample > Examples"}, "aliases": ["resample", "resample the audio", "sample rate", "44.1k", "44100 hz"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "aformat": { "description": "sample format/rate/channels: 'aformat=sample_rates=44100:sample_fmts=s16'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#aformat-1", "anchor": "aformat-1", "title": "Audio Filters > aformat"}, "aliases": ["audio format", "sample format", "convert the audio format"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "anull": { "description": "pass audio through unchanged (no arguments)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#anull", "anchor": "anull", "title": "Audio Filters > anull"}, "aliases": ["mute", "silence the audio", "mute the audio", "audio off"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "loudnorm": { "description": "EBU R128 loudness normalization: 'loudnorm' or 'loudnorm=I=-16:LRA=11:TP=-1.5'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#loudnorm", "anchor": "loudnorm", "title": "Audio Filters > loudnorm"}, "aliases": ["loudness normalization", "normalize the audio", "loudnorm", "loudness"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "lowpass": { "description": "cut high frequencies: 'lowpass=f=3000'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-28", "anchor": "Examples-28", "title": "Audio Filters > lowpass > Examples"}, "aliases": ["low-pass filter", "lowpass", "cut the high frequencies", "reduce the treble"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "highpass": { "description": "cut low frequencies: 'highpass=f=200'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-40", "anchor": "Commands-40", "title": "Audio Filters > highpass > Commands"}, "aliases": ["high-pass filter", "highpass", "cut the low frequencies", "reduce the bass"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "bass": { "description": "bass boost/cut: 'bass=g=4:f=100:w=0.5'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#bass", "anchor": "bass", "title": "bass"}, "aliases": ["bass", "bass boost", "boost the bass", "bass cut"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "treble": { "description": "treble boost/cut: 'treble=g=-3:f=4000'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#treble", "anchor": "treble", "title": "treble"}, "aliases": ["treble", "treble boost", "boost the treble", "treble cut"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "aecho": { "description": "echo: 'aecho=0.8:0.88:60:0.4'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-4", "anchor": "Examples-4", "title": "Audio Filters > aecho > Examples"}, "aliases": ["echo", "add echo", "echo effect"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "alimiter": { "description": "limit peak loudness: 'alimiter=limit=0.95'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#alimiter", "anchor": "alimiter", "title": "Audio Filters > alimiter"}, "aliases": ["limiter", "alimiter", "peak limiter", "prevent clipping", "limit peak loudness"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "adelay": { "description": "delay in ms: 'adelay=500', 'adelay=delays=500|0'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-2", "anchor": "Examples-2", "title": "Audio Filters > adelay > Examples"}, "aliases": ["delay the audio", "audio delay", "shift the audio", "delay in ms"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "apad": { "description": "pad with silence: 'apad=pad_dur=2'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-15", "anchor": "Examples-15", "title": "Audio Filters > apad > Examples"}, "aliases": ["pad the audio", "apad", "pad with silence", "extend with silence"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "atrim": { "description": "trim audio: 'atrim=start=5:end=20'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#atrim", "anchor": "atrim", "title": "Audio Filters > atrim"}, "aliases": ["trim the audio", "audio trim", "cut the audio from"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "acompressor": {
         "description": "Audio compressor: 'acompressor=level=3:ratio=8' (present in both tested builds).",
         "options": {
@@ -2403,7 +2502,10 @@
             ],
             "description": "compression threshold in dB <double> default 0"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands", "anchor": "Commands", "title": "Audio Filters > acompressor > Commands"},
+        "aliases": ["compress the audio", "compressor", "audio compression", "compress the dynamic range"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "acrossfade": {
         "description": "Cross fade two input audio streams.",
@@ -2561,7 +2663,10 @@
             ]
           }
         },
-        "multi_input": 2
+        "multi_input": 2,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples", "anchor": "Examples", "title": "Audio Filters > acrossfade > Examples"},
+        "aliases": ["crossfade the audio", "audio crossfade", "crossfade the tracks"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "adeclick": {
         "description": "Remove impulsive noise from input audio.",
@@ -2666,7 +2771,10 @@
               "s"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#adeclick", "anchor": "adeclick", "title": "Audio Filters > adeclick"},
+        "aliases": ["declick", "clicks and pops", "remove the clicks", "impulsive noise"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "adrc": {
         "description": "Audio Spectral Dynamic Range Controller.",
@@ -2695,7 +2803,10 @@
             "kind": "string",
             "description": "set channels to filter (default \"all\")"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-3", "anchor": "Commands-3", "title": "Audio Filters > adrc > Commands"},
+        "aliases": ["dynamic range control", "adrc"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "adynamicequalizer": {
         "description": "Apply Dynamic Equalization of input audio.",
@@ -2834,7 +2945,10 @@
               "double"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-4", "anchor": "Commands-4", "title": "Audio Filters > adynamicequalizer > Commands"},
+        "aliases": ["dynamic equalizer", "adynamicequalizer"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "amerge": {
         "description": "Merge two or more audio streams into a single multi-channel stream.",
@@ -2848,7 +2962,10 @@
             "description": "specify the number of inputs (default 2)"
           }
         },
-        "multi_input": 0
+        "multi_input": 0,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-11", "anchor": "Examples-11", "title": "Audio Filters > amerge > Examples"},
+        "aliases": ["merge the audio tracks", "merge audio", "amerge"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "amix": {
         "description": "Audio mixing.",
@@ -2887,7 +3004,10 @@
             "description": "Scale inputs (default true)"
           }
         },
-        "multi_input": 0
+        "multi_input": 0,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-12", "anchor": "Examples-12", "title": "Audio Filters > amix > Examples"},
+        "aliases": ["mix the audio", "blend the audio", "amix", "audio mixing"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "anullsrc": {
         "description": "Null audio source, return empty audio frames.",
@@ -2932,7 +3052,10 @@
             "kind": "number",
             "description": "set the audio duration (default -0.000001)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#anullsrc", "anchor": "anullsrc", "title": "anullsrc"},
+        "aliases": ["silence source", "anullsrc", "generate silence", "silent audio source"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "build_help", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "asetrate": {
         "description": "Change the sample rate without altering the data.",
@@ -2953,12 +3076,18 @@
             ],
             "description": "set the sample rate (default 44100)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#asetrate", "anchor": "asetrate", "title": "Audio Filters > asetrate"},
+        "aliases": ["asetrate", "change the sample rate metadata", "pitch shift", "change the pitch"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "ashowinfo": {
         "description": "Show textual information for each audio frame.",
         "options": {},
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#ashowinfo", "anchor": "ashowinfo", "title": "Audio Filters > ashowinfo"},
+        "aliases": ["audio frame info", "info about audio frames"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "astats": {
         "description": "Show time domain statistics about audio frames.",
@@ -3052,7 +3181,10 @@
             ]
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#astats-1", "anchor": "astats-1", "title": "Audio Filters > astats"},
+        "aliases": ["audio stats", "audio statistics"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "channelsplit": {
         "description": "Split audio into per-channel streams.",
@@ -3065,7 +3197,10 @@
             "kind": "string",
             "description": "Channels to extract. (default \"all\")"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-21", "anchor": "Examples-21", "title": "Audio Filters > channelsplit > Examples"},
+        "aliases": ["channel split", "split the channels", "channelsplit"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "compand": {
         "description": "Compress or expand audio dynamic range.",
@@ -3114,7 +3249,10 @@
             ],
             "description": "set delay for samples before sending them to volume adjuster (default 0)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-23", "anchor": "Examples-23", "title": "Audio Filters > compand > Examples"},
+        "aliases": ["compand", "compress or expand the dynamic range"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "dynaudnorm": {
         "description": "Dynamic Audio Normalizer.",
@@ -3287,7 +3425,10 @@
             "kind": "string",
             "description": "set the custom peak mapping curve"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-37", "anchor": "Commands-37", "title": "Audio Filters > dynaudnorm > Commands"},
+        "aliases": ["dynamic audio normalization", "normalize the audio dynamically", "dynaudnorm"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "equalizer": {
         "description": "Apply two-pole peaking equalization (EQ) filter.",
@@ -3458,7 +3599,10 @@
             ],
             "description": "set the block size (default 0)"
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-24", "anchor": "Examples-24", "title": "Audio Filters > equalizer > Examples"},
+        "aliases": ["equalizer", "graphic equalizer", "parametric equalizer", "peaking equalization"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "hdcd": {
         "description": "Apply High Definition Compatible Digital (HDCD) decoding.",
@@ -3503,7 +3647,10 @@
               "24"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#hdcd", "anchor": "hdcd", "title": "Audio Filters > hdcd"},
+        "aliases": ["hdcd", "dc offset", "remove the dc offset"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "join": {
         "description": "Join multiple audio streams into multi-channel output.",
@@ -3525,7 +3672,10 @@
             "description": "A comma-separated list of channels maps in the format 'input_stream.input_channel-output_channel."
           }
         },
-        "multi_input": 0
+        "multi_input": 0,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#join", "anchor": "join", "title": "Audio Filters > join"},
+        "aliases": ["join the audio tracks", "join to 5.1", "join to stereo", "channel join"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "silencedetect": {
         "description": "Detect silence.",
@@ -3555,7 +3705,10 @@
             "description": "check each channel separately (default false)"
           }
         },
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-31", "anchor": "Examples-31", "title": "Audio Filters > silencedetect > Examples"},
+        "aliases": ["detect silences", "where are the silences", "how much silence", "silence detection"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "silenceremove": {
         "description": "Remove silence.",
@@ -3640,12 +3793,18 @@
               "copy"
             ]
           }
-        }
+        },
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-32", "anchor": "Examples-32", "title": "Audio Filters > silenceremove > Examples"},
+        "aliases": ["remove the silences", "remove silence", "strip the silences", "cut out the silences"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "volumedetect": {
         "description": "Detect audio volume.",
         "options": {},
-        "diagnostic": true
+        "diagnostic": true,
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-37", "anchor": "Examples-37", "title": "Audio Filters > volumedetect > Examples"},
+        "aliases": ["detect the volume", "volume levels", "how loud", "peak volume", "max volume"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       }
     }
   },

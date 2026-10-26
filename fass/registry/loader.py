@@ -753,6 +753,34 @@ def filter_spec(name: str) -> dict | None:
     return filter_specs().get(name)
 
 
+# ------------------------------------------------- filter docs (M11.2)
+
+def doc_ref(name: str) -> dict | None:
+    """The pinned-corpus documentation reference for a filter —
+    {url, anchor, title} — video domain first, then audio; None when the
+    filter is not in the allowlist (or carries no doc_ref)."""
+    for domain in ("video", "audio"):
+        spec = REGISTRY["filters"].get(domain, {}).get(name)
+        if spec is not None:
+            return spec.get("doc_ref")
+    return None
+
+
+def filter_aliases(name: str) -> list[str]:
+    """Reviewed natural-language phrases naming this filter (registry
+    'aliases'); [] when the filter is unknown or has none."""
+    spec = filter_spec(name)
+    if spec is None:
+        return []
+    return list(spec.get("aliases", []))
+
+
+def doc_ref_map() -> dict[str, dict]:
+    """{name: doc_ref} for every allowlisted filter that carries one."""
+    return {name: spec["doc_ref"] for name, spec in filter_specs().items()
+            if spec.get("doc_ref")}
+
+
 def combiner_filters() -> dict[str, dict]:
     """Multi-input filters (registry 'multi_input' flag) — the filters that
     join the main input with one or more additional inputs: xfade, acrossfade,
