@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M10.6 — host 6.1.1 21/21 with validation gate; i7 9.0.1 final re-verification running at the fix commit)
+## Current state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; web-UI job delegated (j_dc6d73d9dd); VMAF model provenance verified; RAG M11.1 in flight)
 **M10.6 — per-category E2E verification battery + docs.** The battery
 (`scripts/m10_battery.sh local|docker` → `scripts/m10_battery.py`) has
 21 cases across every M10 category (resize/crop/rotate/speed/trim/
@@ -66,10 +66,46 @@ scale_cuda) expect a preflight warning + skip on 6.1.1 and RUN on 9.0.1.
   executing (both modes share acceptance semantics); 2 regression
   tests. Host re-run: battery 21/21 with the gate ACTIVE, suite
   953/1 skipped.
-- **Final i7 21/21 re-verification RUNNING** — job j_0a7359da46 at
-  this commit (image fass:m106c, serve port 18107); expect suite
-  953/1 skipped + battery 21/21 with fdk_vbr4/libvmaf/scale_cuda
-  executing.
+- **Final 9.0.1 re-verification COMPLETE on tr4 — i7 was DOWN** (worker
+  died ~06:11, daemon flagged 12:40; job j_0a7359da46 =
+  restart_no_result/exit_unknown → CANCELLED, worktree retained at
+  c866f64). User directive 2026-10-26: when i7 is down, validate ALL
+  ffmpeg against the tr4 SYSTEM ffmpeg 6.1.1 (not docker); the 9.0.1
+  half ran docker-ON-tr4 (image fass:m106c, b4a880e9e507 — i7 was only
+  the LLM backend). Results, 2026-10-26: container suite **953 passed /
+  1 skipped** (skip = node JS check); docker battery **21/21** —
+  fdk_vbr4, libvmaf, scale_cuda ALL EXECUTED (tr4 has 3 NVIDIA GPUs —
+  "tr4 is AMD, no CUDA" was right about QSV, wrong about GPUs; the
+  container ran --gpus all); fresh host 6.1.1 official record: suite
+  **953 passed / 1 skipped** (skip = libvmaf E2E — the distro build
+  lacks the filter) + local battery **21/21** with the gate.
+  **M10.6 = dual-build verified, DONE.** Serve container
+  fass-m106c-serve removed after the battery.
+- **NEW task (user, 2026-10-26) — web-UI "mediainfo/log" tab — DELEGATED**
+  to tr4-secondary as job **j_dc6d73d9dd** (base 88cd63b; scope
+  fass/api.py, fass/ui.py, fass/execute.py, fass/pipeline.py, tests/):
+  (1) new Info/Log tab showing EITHER media info of the INPUT or the
+  OUTPUT file (the mediainfo binary is unavailable — ffprobe JSON
+  serves; ALL mediainfo controls live on THIS tab — the user first said
+  main-page button, then corrected to tab consolidation, which wins)
+  OR the processing log of a CLI run, selector-toggled; logs >10000
+  lines are served as the last 1000 + banner (user add); (2) MAIN-page
+  "verbose log" checkbox → -loglevel verbose in EVERY pass argv, run log
+  → {FASS_OUTPUT_DIR}/log/{run_id}.log, browsable on the tab. New
+  endpoints /v1/mediainfo, /v1/logs, /v1/logs/{name}; verbose field on
+  CommandRequest/RunRequest (extra='forbid' — must be declared). On
+  landing: review diff, full suite, merge.
+- **VMAF model (user, 2026-10-26) — FOUND + VERIFIED:** the official
+  Netflix/vmaf model (raw.githubusercontent.com/Netflix/vmaf/master/
+  model/vmaf_v0.6.1.json) is BYTE-IDENTICAL to
+  docker/models/vmaf_v0.6.1.json (sha256 5950d61f…, 19101 B; the
+  official v0.6.1 distribution is JSON-only — no .pkl). Provenance
+  note: docker/models/README.md. The host 6.1.1 libvmaf skip is
+  FILTER-ABSENCE (the Ubuntu build has no --enable-libvmaf, only
+  vmafmotion), NOT model absence — no download changes that; the 9.0.1
+  container half covers libvmaf (battery libvmaf EXECUTED clean).
+  `vmaf_model_path()` now also resolves vmaf_v0.6.1.json under
+  FASS_VMAF_MODEL_DIR (+ regression test).
 - **M11.1 part A SUCCEEDED** on tr4-secondary (job j_7dea91b80b,
   branch dispatch/j_7dea91b80b, base b989e31): `rag/retrieval.py`
   FTS5 lexical core + `rag/server.py` fass-rag FastAPI service (PRD
@@ -77,10 +113,14 @@ scale_cuda) expect a preflight warning + skip on 6.1.1 and RUN on 9.0.1.
   dispatch_integrate). Part B = §9.1 benchmark + gates +
   lexical-vs-hybrid decision (dataset under rag/benchmark/).
 
-**Next:** i7 21/21 → real container numbers in README/DEVELOPMENT/
-HANDOFF evidence lines + commit → M11.1 integration (part A branch) +
-part B (benchmark dataset: 84 exact + 50 option-level + 60 NL + 10
-version-mismatch + 5 insufficient).
+**Next:** (1) integrate web-UI job j_dc6d73d9dd when it lands (review
+diff, full suite, merge); (2) M11.1 part A integration (branch
+dispatch/j_7dea91b80b, base b989e31 — review, full suite on branch,
+merge --no-ff, dispatch_integrate) + part B (benchmark dataset 84
+exact + 50 option-level + 60 NL + 10 version-mismatch + 5 insufficient,
+§9.1 gates, lexical-vs-hybrid decision) — RAG work continues while the
+web-UI job runs; (3) /savework once the ffmpeg-filter side is fully
+wrapped (M10.6 is DONE).
 
 ## Previous state (2026-10-26, M11.0 — RAG corpus foundation, COMPLETE; M10.5 DUAL-BUILD VERIFIED)
 **M11.0 — pinned corpora + parser 1.1 + chunker + ingest CLI** (PRD

@@ -351,7 +351,13 @@ host 6.1.1 21/21 with the gate active (gated cases skip on the host);
 i7 9.0.1: 17/21 (planner probe bug, fixed in b989e31) → 19/21 (settb
 missing from the filter allowlist + the validator's two-input-label
 limit on the 4-pad concat graph — both build-independent, fixed at
-M10.6); final 21/21 container run in progress.
+M10.6) → 21/21 — the final container run made on tr4 in the fass:m106c
+image (same 9.0.1 build) after the i7 machine went down: fdk_aac /
+libvmaf / scale_cuda all EXECUTED (tr4 has NVIDIA GPUs; the container
+runs with --gpus all). Full suite on both builds: 953 passed / 1
+skipped (host skips the libvmaf E2E — the distro ffmpeg lacks the
+filter; container skips the node JS check). VMAF model provenance:
+docker/models/README.md.
 
 ## Roadmap
 

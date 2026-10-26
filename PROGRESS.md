@@ -136,7 +136,7 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (gate mini-run used bare `libvmaf`, which fails to init without a
   compiled-in model → now resolves the model via `vmaf_model_path()`
   exactly as the planner does).
-- **M10.6 verification IN PROGRESS 2026-10-26** (host half DONE):
+- **M10.6 verification COMPLETE 2026-10-26 (dual-build verified):**
   per-category E2E battery `scripts/m10_battery.sh local|docker` →
   `scripts/m10_battery.py`, 21 cases across all M10 categories
   trim/resize/grayscale/watermark/speed/prores/opus/fdk_vbr4/rotate/
@@ -189,18 +189,41 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   ACTIVE, suite 953 passed / 1 skipped.** Final i7 21/21
   re-verification resubmitted at this commit as **job j_0a7359da46**
   (i7, image fass:m106c, serve port 18107, suite expected 953/1);
-  docs evidence lines then get the real container numbers.
-- **Next task:** **M10.6** — final i7 21/21 re-verification running at
-  the fix commit (expect suite 953/1 skipped, battery 21/21 with
-  fdk_vbr4/libvmaf/scale_cuda executing); on success: DEVELOPMENT
-  Testing evidence line + README/HANDOFF i7 numbers + commit, then
-  **M11.1 retrieval API** per the PRD — part A = FTS5
-  lexical core + fass-rag service, DISPATCHED to tr4-secondary (job
-  j_7dea91b80b at b989e31); part B = §9.1 benchmark (84 exact + 50
-  option-level + 60 NL + 10 version-mismatch + 5 insufficient) + gates
-  + lexical-vs-hybrid decision recorded → M11.2 fass integration
-  (advisory evidence only — the registry/builder/argv gate remain
-  sovereign) → M11.3 authoring pipeline → M11.4 ablation kill criterion.
+  docs evidence lines then get the real container numbers. **i7 machine
+  WENT DOWN** (worker died ~06:11, daemon flagged 12:40, job
+  j_0a7359da46 = restart_no_result/exit_unknown → CANCELLED, worktree
+  retained at c866f64): partial evidence was battery 12/21 ALL PASS
+  incl fdk_vbr4 RUN+clean + an incomplete pytest log (30%). User
+  directive 2026-10-26: when i7 is down, validate ALL ffmpeg against
+  the tr4 SYSTEM ffmpeg 6.1.1 (not docker). **Takeover on tr4 COMPLETE,
+  2026-10-26:** container suite in the worktree @ c866f64 (image
+  fass:m106c, b4a880e9e507) **953 passed / 1 skipped** (skip = node JS
+  check); docker battery **21/21** with fdk_vbr4, libvmaf, scale_cuda
+  ALL EXECUTED (tr4 has 3 NVIDIA GPUs — "tr4 is AMD, no CUDA" was right
+  about QSV and wrong about GPUs; the container ran --gpus all); fresh
+  host 6.1.1 official record: suite **953 passed / 1 skipped** (skip =
+  libvmaf E2E — the distro build lacks the filter) + local battery
+  **21/21** with the gate. VMAF provenance: the official Netflix/vmaf
+  v0.6.1 model is byte-identical to docker/models/vmaf_v0.6.1.json
+  (JSON-only distribution; note in docker/models/README.md) and
+  `vmaf_model_path()` now resolves .json under FASS_VMAF_MODEL_DIR
+  (+ test). **M10.6 = dual-build verified. DONE.**
+- **Next task:** **web-UI "mediainfo/log" tab + "verbose log" toggle
+  (user, 2026-10-26) — DELEGATED as job j_dc6d73d9dd on tr4-secondary**
+  (base 88cd63b): Info/Log tab (media info of the input-or-output file
+  via ffprobe JSON, OR a CLI run's log, selector-toggled; ALL
+  mediainfo controls on the tab; logs >10000 lines served as the last
+  1000 + banner) + MAIN-page "verbose log" checkbox (-loglevel verbose
+  in every pass, run log → {FASS_OUTPUT_DIR}/log/{run_id}.log) +
+  endpoints /v1/mediainfo, /v1/logs, /v1/logs/{name}; on landing:
+  review diff, full suite, merge. Then **M11.1** —
+  part A = FTS5 lexical core + fass-rag service (DISPATCHED to
+  tr4-secondary, job j_7dea91b80b at b989e31, integration pending);
+  part B = §9.1 benchmark (84 exact + 50 option-level + 60 NL + 10
+  version-mismatch + 5 insufficient) + gates + lexical-vs-hybrid
+  decision → M11.2 fass integration (advisory evidence only — registry/
+  builder/argv gate remain sovereign) → M11.3 authoring → M11.4
+  ablation kill criterion.
 - **Planning 2026-10-25 (later session): joint PRD delivered** —
   `ffmpeg-assistant-rag-prd.md` merges the assistant scope with the
   documentation-RAG idea. Verdict: RAG is viable as an **advisory evidence
