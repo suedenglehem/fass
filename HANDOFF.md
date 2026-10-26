@@ -17,7 +17,25 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, **M11.3 COMPLETE** — rag/author + rag/gaps integrated (d47f96e, job j_5c845355c5), parser rounds 1+2 on real-corpus findings (10b1fe5, 0116554), 3 real-corpus drafts verified_both / 0 option_diffs merged to **registry 2.6.0** (b122e36: ebur128 audio + signalstats + blackframe video); main suite **1209 passed / 1 skipped**. M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) + **Files tab (38ce046, from j_2d6b4287ee: /v1/files, /v1/files/inspect ffprobe|mediainfo, /v1/files/frame 360px JPEG, right-click menu + popup)** merged. M11.4 IN FLIGHT — ablation run 1 = **880 arms (220 entries × 4 arms, requests.json 91 + ablation_heldout.json 129 in ONE run — a separate run 2 was absorbed)**, pid 1186350 in background (waiter b7icgf4vl), 475/880 at 22:02, ETA ~00:45 CET. §9.4 warm budgets + determinism PASS; cold first-query budget owed after run 1 (rag restart then).)
+## Current state (2026-10-27 00:40, **M11.4 COMPLETE — §9.2 verdict: NO-GO, ship arm 3** — registry 2.7.0 (5c34d01), no-audio-container planner fix (4a6a891), gaps drift 31→25 (2ce5e95); main suite **1218 passed / 1 skipped**; ablation 880/880 done + report computed; rag restarted (new pid 1918855); host 6.1.1 battery 21/21. The 2026-10-26 state is demoted to the next "Previous state" section.)
+**§9.2 go/no-go (COMPUTED from /tmp/ablation-run1/report.json via /dd2/andrei/m114_gonogo.py — pre-registered rule: arm 4 beats arm 3 by +5 pp parameter accuracy on HELD-OUT paraphrase, no regression, else ship arm 3 + static doc_ref citations):**
+**VERDICT: NO-GO → ship arm 3 (llm_schemas) + static doc_ref citations. No code change needed: `RagConfig.enabled` defaults False (RAG is opt-in), the LLM path already uses the schemas block, and citations already derive from static registry `doc_ref` (`derive_citations`) — RAG evidence augmentation stays an opt-in experiment. Arm 1 (rules) stays the default either way.**
+- Held-out paraphrase (n=79): param_acc arm 3 = 1.0, arm 4 = 1.0 → **delta 0.0 < +0.05** (all arms' READY plans are param-exact; the differentiation is in status/ops, where arm 4 does lead).
+- No regression (arm 4 ≥ arm 3 on every held-out axis): status 0.814 vs 0.798, ops 0.971 vs 0.971, clarif 0.85 vs 0.75, unsupported 0.9048 both; errors 3 vs 7; p95 66.2 s vs 135.3 s.
+- Full held-out (n=129): rules 0.465/0.956/1.0/clarif 0.95/unsup 0.857; llm 0.806/0.971/1.0/0.85/0.905; llm_schemas 0.798/0.971/1.0/0.75/0.905; evidence 0.814/0.971/1.0/0.85/0.905. In-domain requests.json (n=91): rules 1.0 across; llm 0.956/1.0/0.971; schemas 0.923/1.0/1.0; evidence 0.956/1.0/0.99 (citation_precision 0.55 over 200 evidence entries).
+- Error rows (19): 7× 180 s LLM timeouts (bench-013, bench-045, abl-018, abl-039, abl-061 llm_schemas; abl-081, bench-063 llm_schemas_evidence) + 7× plan validation (abl-009 ×3 pixel format 'yuva…', abl-048 ×3 filter, abl-072 video-output-needs-encoder) + abl-028/abl-090 (malformed LLM JSON) + abl-038/abl-040/abl-113 (rules-arm errors, ≤0.2 s).
+**§9.5 performance budgets (ALL MEASURED):** retrieval warm p95 **27 ms** (≤300 PASS; earlier warm run 29 ms) · cold first-query **33 ms** (≤1000 PASS) · evidence **4000 ch + 263 wrapper** (≤4000 PASS) · RAG generation overhead arm 4 − arm 3 = **−3.10 s mean / −69.11 s p95** (≤400 ms PASS — negative: vLLM latency variance dominates, retrieval itself ~25 ms) · overall generation p95 **rules 3 ms PASS** (default path); LLM arms 73–82 s — NOT met by the local qwen3.8-27b @ tr4 vLLM (dual-model 3090 serving) — recorded per the PRD's "now measured" note; the 8 s target governs the deployed endpoint, and the default (rules) path passes by 3 orders of magnitude · RAG memory **70 MB** (≤4 GB PASS).
+**§9.4 e2e gates:** full suite **1218/1** (host 6.1.1) PASS · **battery host 6.1.1 = 21/21** (18 executed clean + 3 feature-skips fdk_vbr4/libvmaf/scale_cuda — host build lacks them, same as M10.6 baseline) · i7 docker 9.0.1 half **DEFERRED** — i7's repo mirror sits at 5354cc7 (the whole M11 arc is unpushed; push waits for the user's explicit ask) and tr4 has no fass 9.0.1 docker container (only vllm + facecat-db run) · "turn RAG off" determinism already proven (91/91 byte-identical, M11.2 §9.3).
+**Rag service:** old pid 959120 verified rag.server → killed by exact pid → relaunched `FASS_RAG_DATA=rag/corpus nohup .venv/bin/python -u -m rag.server > /tmp/fass-rag-serve.log 2>&1 &` → **new pid 1918855** (:8100, healthz ok, cold budget green).
+**Reboot-proofing (user reboots tr4 2026-10-27 ~00:50):** /tmp/ablation-run1 (results.jsonl + report.md + report.json) and /tmp/rag-budgets (warm.json + cold.json) copied to **/dd2/andrei/ablation-run1/** and **/dd2/andrei/rag-budgets/**; analysis script at **/dd2/andrei/m114_gonogo.py**. Post-reboot resume: start docker (vllm-qwen38-27b-dual-max auto-restarts if configured; else `docker start vllm-qwen38-27b-dual-max`) + rag (`FASS_RAG_DATA=rag/corpus nohup .venv/bin/python -u -m rag.server > /tmp/fass-rag-serve.log 2>&1 &`); re-copy the ablation dir back if /tmp was wiped (`cp -a /dd2/andrei/ablation-run1 /tmp/`); a re-run of `scripts/m11_ablation.py --out-dir /tmp/ablation-run1` would resume from the JSONL cache (same cfg fingerprint).
+**What closed out this segment:**
+- **Registry 2.7.0 (5c34d01) — 100 filters (60 video / 40 audio).** The 10 M11.4 review-merge filters landed (video: edgedetect, freezeframes, thistogram, histogram, blockdetect, blurdetect, tinterlace; audio: ahistogram, aspectralstats, showvolume); acompressor refreshed in place to the 12 modern options (level_in number [0.015625,64] default 1; level_sc = the shared acompressor/sidechaincompress AVOptions block, review note kept OUTSIDE the "(default 1)" group). freezeframes is a genuine two-input combiner (multi_input 2, documented in BOTH corpora) planned by the planner's existing generic combine machinery — zero planner changes; it is now the 10th combiner in the test_combiners/test_filters invariants. Merge decisions: histogram registers long names only (the 6 undocumented 1-letter aliases b/c/d/f/l/m stay in the gaps backlog — open question); tinterlace registers `mode` only (docs-only `flags` noted docs-ahead-of-build); blockdetect/blurdetect `planes` registered as build "1" with the docs "first only" phrasing noted.
+- **4a6a891 — no-audio containers (e.g. GIF) drop the input track with -an** (carries_audio gating + -an emission + plan_execution PlanErrors + None-safe warning + clear ValueError for audio_codec_options on no-audio containers) AND the ablation `run_rules` crash→ArmResult(error) wrapper — ablation run 1 (pid 1186350) died on a rules-arm exception; that wrapper is what run 2 needed to resume.
+- **2ce5e95 — gaps drift 31→25: three detector artifacts, no data change.** (1) gaps `registry_default` now does a balanced-paren scan — showvolume c's default is an expression containing ')': 'PEAK*255+floor((1-PEAK)*255)*256+0xff000000'; (2) drift compares defaults via author.`defaults_equal` ('all' ≡ the build's expanded flag sum, e.g. aspectralstats measure); (3) the registry level_sc note relocated. Remaining 25 rows are all known/expected: 16 freezedetect/silencedetect string-modeling rows (intentional — builds report <double> but accept -30dB) + 9 9.0.1-only evolution rows (adynamicequalizer, anullsrc, libvmaf, overlay). Two regression tests added (nested-paren extraction incl. the real showvolume entry; all-vs-expanded flag sum).
+**Ablation COMPLETE 880/880 (~00:28):** run 1 (pid 1186350) crashed at abl-121's rules arm; run 2 (pid 1774958) resumed appending from the JSONL cache (log /tmp/ablation-run2.log) and finished. 880 arm-rows; report.md + report.json written; error rows tallied above (19: 7 timeouts + 7 validation + 2 JSON + 3 rules). Artifacts at /tmp/ablation-run1/ and (persistent) /dd2/andrei/ablation-run1/.
+**Next (post-reboot):** (1) **i7 docker 9.0.1 battery half of §9.4** — needs the M11 arc on i7 first: either the user authorizes a push (origin/main is still aa0e534, the whole M11 arc unpushed) or a manual file sync; then `scripts/m10_battery.sh docker` on i7 per filter category on media/titan.mp4. (2) **Push decision** — 20+ local commits (M11.0 → M11.4) sit on tr4/i7 only. (3) Open merge questions from 2.7.0: histogram 1-letter aliases (register or not), tinterlace docs-only `flags`, blockdetect/blurdetect `planes` phrasing. (4) PRD-deferred scope still out: multiple watermarks, HDR workflows, batch processing. Standing: advisory evidence only — registry/builder/argv gate stays sovereign; treat evidence_status 'supported' with skepticism (M11.1 calibration note). RAG evidence augmentation is now an OPT-IN experiment that measured NO-GO on the pre-registered +5 pp paraphrase-param gate (it leads on every other held-out axis — revisit if the gate ever becomes status/ops-based).
+
+## Previous state (2026-10-26, **M11.3 COMPLETE incl. parser round 3 (f2a1dd8)** — rag/author + rag/gaps integrated (d47f96e, job j_5c845355c5), parser rounds 1+2 on real-corpus findings (10b1fe5, 0116554), 3 real-corpus drafts verified_both / 0 option_diffs merged to **registry 2.6.0** (b122e36: ebur128 audio + signalstats + blackframe video); main suite **1213 passed / 1 skipped**. **10 diagnostic drafts triaged after round 3: 6 verified_both 0-diff ready to merge (edgedetect, freezeframes, thistogram, ahistogram, aspectralstats, showvolume), 4 genuine docs↔build differences documented (histogram 12 undocumented 1-letter alias rows, tinterlace docs-only `flags`, blockdetect/blurdetect `planes` "first only" vs "1"). 31 drift rows triaged (16 intentional string-modeling, 6 → acompressor refresh, 9 genuine 9.x evolution). Merge package /tmp/m114_registry_merge.py ready + DRY-RUN VERIFIED on a scratch copy (registry 2.6.0 → 2.7.0: +6 filters + acompressor refreshed to the 12 modern options) — runs ONLY after ablation (registry live-read by the running arms).** M11.2 UI COMPLETE — Sources panel (bb9bcc0) + RAG tab (15a0baa) + **Files tab (38ce046, from j_2d6b4287ee: /v1/files, /v1/files/inspect ffprobe|mediainfo, /v1/files/frame 360px JPEG, right-click menu + popup)** merged. M11.4 IN FLIGHT — ablation run 1 = **880 arms (220 entries × 4 arms, requests.json 91 + ablation_heldout.json 129 in ONE run — a separate run 2 was absorbed)**, pid 1186350 in background (waiter b7icgf4vl), **641/880 at 23:01, ETA ~00:45 CET**. §9.4 warm budgets + determinism PASS; cold first-query budget owed after run 1 (rag restart then).)
 **M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
 FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
 aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
@@ -144,7 +162,7 @@ the former separate run 2 was absorbed — the §9.2 go/no-go is computed
 from the held-out subset of this report)** against tr4 vLLM
 qwen3.8-27b fp8 :8091 (shares the endpoint with this session — pace
 ~2.5 LLM calls/min). Live progress = line count of
-/tmp/ablation-run1/results.jsonl (475/880 at 22:02; ETA ~00:45 CET).
+/tmp/ablation-run1/results.jsonl (641/880 at 23:01; ETA ~00:45 CET).
 Out: /tmp/ablation-run1/{report.md,report.json}, log
 /tmp/ablation-run1.log. Two llm_schemas rows hit the 180 s timeout —
 check whether error rows are cached in results.jsonl; if so, consider
@@ -200,16 +218,58 @@ Suite **1209 passed / 1 skipped**. Gaps re-run: 90 registry filters,
 pilot drift [], all pilot names resolved (9.0.1 unresolved=[];
 6.1.1 unresolved=[blackdetect_vulkan] — genuine: the 6.1.1 manual
 predates the "blackdetect, blackdetect_vulkan" comma group); 31
-remaining drift rows are GENUINE registry data-quality findings
-(acompressor legacy kratio/level/rms vs 6.1.x knee/level_in/detection,
-freezedetect/silencedetect n/noise string-vs-<double>,
-adynamicequalizer 9.0.1 renames auto/mode/direction, anullsrc
-r/sample_rate string-vs-int on 9.0.1, libvmaf 9.0.1 cpuid/log_format
-removed + pool bool-vs-string, overlay.alpha 9.0.1 default
-auto-vs-straight) — documented in the report, not yet fixed.
-Backlog 496 (includes non-filter section headings like "Filtergraph
-syntax" — known cosmetic limitation). drafts/ + gaps/ are untracked
-review artifacts (reproducible via rag.author / rag.gaps).
+remaining drift rows — TRIAGED (verdicts below). Backlog 496
+(includes non-filter section headings like "Filtergraph syntax" —
+known cosmetic limitation). drafts/ + gaps/ are untracked review
+artifacts (reproducible via rag.author / rag.gaps).
+
+**Parser round 3 (f2a1dd8) + 10-draft triage.** Singular form-(b)
+marker ("It accepts the following option:" — aspectralstats),
+token-based default extraction (decimal-safe "Default is 0.5.",
+"Default value is 2048.", "Default mode is merge.", "default is: X",
+"Defaults is X", sentence-truncation for "Default is 0, which means
+step is disabled."), enabled/disabled ↔ true/false normalization,
+"all" vs expanded flag-sum comparison (aspectralstats measure) —
+showvolume/thistogram/aspectralstats go from 8–12 diffs to
+**verified_both 0-diff**. Test suite **1213 passed / 1 skipped**
+(18 tests in test_rag_author.py). Final 10-draft triage:
+**CLEAN (merge at 2.7.0): edgedetect, freezeframes (multi_input 2),
+thistogram, ahistogram, aspectralstats, showvolume.** GENUINE
+docs↔build (no merge without a decision): histogram — 12 rows are
+6 undocumented 1-letter aliases (b/c/d/f/l/m) present in BOTH
+builds, absent from docs (the 4 decimal conflicts were parser bugs,
+now gone); tinterlace — docs document a `flags` option (vlpf/cvlpf/
+bypass_il) that NEITHER build has (docs ahead of build);
+blockdetect/blurdetect — docs "first only" vs build bitmask "1" for
+`planes` (register "1" when merged).
+
+**31 drift rows — final triage (gaps re-run round 3: identical 31,
+drift unaffected by the parser fixes — it compares registry vs
+build only).** (a) **16 rows INTENTIONAL, keep as-is:**
+freezedetect/silencedetect n/noise — builds report `<double>` but
+EMPIRICALLY accept dB-suffixed values (`freezedetect=n=-30dB` exits
+0 on system ffmpeg 6.1.1); the registry's `string` kind models the
+accepted input domain (a `number` kind would false-reject -30dB).
+Stable noise in the gaps output. (b) **6 rows → FIXED at 2.7.0:**
+acompressor kratio/level/rms "absent from build" (both corpora) —
+the M10.0 entry described the PRE-5.0 option set; both corpora's
+builds + docs carry the modern 12-option set (level_in, mode,
+threshold, ratio, attack, release, makeup, knee, link, detection,
+level_sc, mix; shared acompressor/sidechaincompress AVOptions block,
+level_sc undocumented under acompressor — documented under
+sidechaincompress). Refresh drafted via rag.author (drafts/
+acompressor.json, verified_both, only diff = level_sc
+undocumented_option) and folded into /tmp/m114_registry_merge.py
+(in-place block replacement; doc_ref anchor fixed Commands →
+acompressor; test_filters.py's `level=` examples → `level_in=`).
+(c) **9 rows GENUINE 9.x build evolution, NO registry change**
+(registry targets both builds; 6.1.1 is the common denominator):
+adynamicequalizer (auto default disabled→off; `direction` removed in
+9.x; mode default cut→cutbelow), anullsrc (r/sample_rate
+string→int in 9.x), libvmaf (cpuid/log_format removed in 9.x; pool
+bool→string; filter absent from the 6.1.1 corpus build entirely),
+overlay (alpha default straight→auto in 9.x). Document as
+version-conditional notes; revisit if a 9.x-only registry ever ships.
 
 **M11.1 (COMPLETE, for reference) — part A integrated as 181c1e5**
 (from tr4-secondary job j_7dea91b80b): rag/retrieval.py FTS5 lexical
@@ -276,24 +336,35 @@ elsewhere, else ship arm 3 + static doc_ref citations (arm 1 rules
 stays default either way); §9.4 from the report: RAG overhead =
 arm 4 − arm 3 (≤400 ms), overall (≤8 s); check the 2 llm_schemas
 180 s timeouts (error rows cached in results.jsonl? re-run just those
-arms if worth it). (2) restart the fass-rag service (kill EXACT pid
-959120 after verifying it's still the rag server — never pkill -f;
-relaunch `FASS_RAG_DATA=rag/corpus nohup .venv/bin/python -m
-rag.server > /tmp/fass-rag-serve.log 2>&1 &`) → cold first-query
-budget `FASS_RAG_ENABLED=1 FASS_RAG_URL=http://127.0.0.1:8100
+arms if worth it). (2) **registry 2.7.0 merge** (the moment the
+ablation process is gone): `.venv/bin/python
+/tmp/m114_registry_merge.py` (dry-run verified on a scratch copy:
++edgedetect/freezeframes/thistogram video, +ahistogram/
+aspectralstats/showvolume audio, acompressor refreshed in place to
+the 12 modern options; version 2.6.0 → 2.7.0; 96 filters 56/40) →
+test updates: tests/test_filters.py (53/37 → 56/40; acompressor
+examples `level=3`/`level=999`/`level=-1` → `level_in=2`/`level_in=
+999`/`level_in=0.001` at L99/123-124/150-157/184/221) and
+tests/test_registry_docs.py (90 → 96 in two places, "2.6.0" →
+"2.7.0") → full suite → commit (Co-Authored-By line). Then a gaps
+re-run: expected drift 31 → 25 (the 6 acompressor rows resolved).
+(3) restart the fass-rag service (kill EXACT pid 959120 after
+verifying it's still the rag server — never pkill -f; relaunch
+`FASS_RAG_DATA=rag/corpus nohup .venv/bin/python -m rag.server >
+/tmp/fass-rag-serve.log 2>&1 &`) → cold first-query budget
+`FASS_RAG_ENABLED=1 FASS_RAG_URL=http://127.0.0.1:8100
 .venv/bin/python scripts/m11_rag_budgets.py --cold --n 5 --pid
-<newpid> --out /tmp/rag-budgets/cold.json` (≤1000 ms). (3) M11.4
+<newpid> --out /tmp/rag-budgets/cold.json` (≤1000 ms). (4) M11.4
 close-out (go/no-go recorded + dual-build battery on media/titan.mp4)
 + §9.4 close-out (all budgets PASS + this HANDOFF) + /savework.
 Standing: advisory evidence only — registry/builder/argv gate stays
 sovereign; treat evidence_status 'supported' with skepticism per the
-M11.1 calibration note. Later: more M11.3 backlog entries (10
-diagnostic candidates present in both builds: ahistogram,
-aspectralstats, blockdetect, blurdetect, edgedetect, freezeframes,
-histogram, showvolume, thistogram, tinterlace — same author → draft →
-review → surgical-merge cycle); acompressor registry refresh
-(kratio/level/rms → knee/level_in/detection); triage the 31 genuine
-drift findings.
+M11.1 calibration note. Later backlog (each: author → draft → review
+→ surgical-merge cycle): histogram merge (decide: register the 6
+undocumented 1-letter aliases b/c/d/f/l/m or keep long names only),
+blockdetect + blurdetect merges (register `planes` as build "1" with
+a docs-phrasing note), tinterlace merge (register `mode` only, note
+the docs-only `flags` as docs-ahead-of-build).
 
 ## Previous state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; M11.0 done; RAG M11.1 in flight at the time)
 **M10.6 — per-category E2E verification battery + docs.** The battery

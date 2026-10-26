@@ -51,14 +51,45 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   129, both datasets in ONE run — 880 arms; the former separate run 2
   was absorbed, the §9.2 go/no-go is computed from the held-out subset
   of run 1's report)** vs tr4 vllm vllm-qwen38-27b-dual-max :8091;
-  run 1 in background (pid 1186350, out /tmp/ablation-run1, live
-  progress = results.jsonl line count — 475/880 at 22:02, ETA ~00:45
-  CET; waiter task b7icgf4vl). **§9.4 budgets (offline ones DONE):** warm
-  retrieval p95 29 ms (≤300), evidence body max 4000 ch + 263 ch
-  wrapper (≤4000), RAG RSS 71 MB (≤4096) — scripts/m11_rag_budgets.py,
-  /tmp/rag-budgets/warm.json; determinism: rules plans byte-identical
-  with RAG on vs off, 91/91 (rules path never calls RAG —
-  pipeline.py llm-adapter-only hook). **M11.3 COMPLETE (2026-10-26):** fixtures
+  **Ablation status 2026-10-27 ~00:28: COMPLETE 880/880.** Run 1 (pid
+  1186350, out /tmp/ablation-run1) crashed at abl-121's rules arm; the
+  crash → ArmResult(error) wrapper in run_rules landed as **4a6a891**
+  and run 2 (pid 1774958) RESUMED APPENDING to the same results.jsonl
+  and finished 880/880; log /tmp/ablation-run2.log. Report written
+  (report.md + report.json); artifacts copied reboot-proof to
+  /dd2/andrei/ablation-run1/ (+ /dd2/andrei/m114_gonogo.py,
+  /dd2/andrei/rag-budgets/). **§9.2 VERDICT: NO-GO → ship arm 3
+  (llm_schemas) + static doc_ref citations.** Pre-registered rule:
+  arm 4 must beat arm 3 by ≥ +0.05 held-out PARAPHRASE param_acc with
+  no held-out regression. Result: paraphrase (n=79) param_acc
+  arm3=1.0 arm4=1.0 → delta 0.0; NO regressions (arm 4 ≥ arm 3 on
+  every held-out axis — status 0.814>0.7984, clarif 0.85>0.75,
+  unsupported equal). No code change: RagConfig.enabled defaults False
+  (RAG opt-in, fass/config.py), LLM path already uses the schemas
+  block, citations already derive from static registry doc_ref
+  (derive_citations works with rag_result=None); arm 1 rules stays
+  default either way; evidence augmentation stays an opt-in
+  experiment (it leads on every other held-out axis — revisit if the
+  gate ever becomes status/ops-based). 19 error rows: 7× 180s LLM
+  timeouts, 7× plan validation (abl-009 ×3 pixel format, abl-048 ×3
+  filter, abl-072 video-needs-encoder), 2× malformed LLM JSON
+  (abl-028/abl-090), 3× rules-arm (≤0.2s).
+  **§9.5 budgets ALL MEASURED (final):** warm retrieval p95 27 ms
+  (≤300 PASS; first-query cold 33 ms, ≤1000 PASS) · evidence 4000ch
+  + 263 wrapper (≤4000 PASS) · RAG generation overhead arm4−arm3 =
+  −3.104 s mean / −69.114 s p95 (≤400 ms PASS — negative, vLLM
+  latency variance dominates; retrieval ~25 ms) · overall generation
+  p95: rules 3 ms PASS (default); LLM arms 73–82 s NOT met by local
+  qwen3.8-27b @ tr4 dual-model 3090 serving (recorded per PRD's
+  "existing PRD target; now measured") · RAG memory 70 MB (≤4 GB
+  PASS). Budgets JSON: /dd2/andrei/rag-budgets/{warm,cold}.json.
+  **§9.4 gates:** suite 1218/1 (tr4 host 6.1.1) PASS; battery host
+  6.1.1 = **21/21** (scripts/m10_battery.sh local; 3 feature-SKIPs:
+  fdk_vbr4, libvmaf, scale_cuda — host build lacks them, same as
+  M10.6 baseline); i7 9.0.1 docker half DEFERRED (repo sync/push =
+  user decision; origin/main still aa0e534, whole M11 arc unpushed).
+  Determinism: rules plans byte-identical with RAG on vs off, 91/91
+  (M11.2 §9.3). **M11.3 COMPLETE (2026-10-26):** fixtures
   adb8c60/f13ae07 (ebur128/signalstats/blackframe, verbatim real
   corpus, edge cases); rag/author + rag/gaps integrated as d47f96e
   (job j_5c845355c5); parser round 1 (10b1fe5: grouped <dt>s,
@@ -72,21 +103,71 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   b122e36** (audio ebur128 + video signalstats + video blackframe,
   surgical line insertion — hand-formatted file, never re-serialize;
   6 read-only ebur128 log exports excluded; doc_ref/aliases/provenance
-  as last three keys; test count bumps 90 / 53-37). Suite **1209
-  passed / 1 skipped**. Gaps re-run: pilots resolved, pilot drift [];
-  31 genuine drift rows documented (acompressor legacy options,
-  freezedetect/silencedetect n+noise, adynamicequalizer/anullsrc/
-  libvmaf 9.0.1 changes, overlay.alpha 9.0.1); 6.1.1 unresolved =
-  [blackdetect_vulkan] (genuine — manual predates the comma group).
-  **Next: run 1 report (4-arm table + §9.2 go/no-go from the held-out
-  subset: +5 pp arm 4 > arm 3 on paraphrase, no regression, else ship
-  arm 3 + static doc_ref; §9.4 RAG overhead arm 4 − arm 3 ≤400 ms +
-  overall ≤8 s) → rag service restart (kill EXACT pid 959120 after
-  verifying) → cold retrieval (≤1 s, scripts/m11_rag_budgets.py
-  --cold) → M11.4 + §9.4 close-out (go/no-go + dual-build battery on
-  media/titan.mp4) + /savework. Later: more M11.3 backlog entries
-  (10 diagnostic candidates in both builds), acompressor refresh,
-  31 drift findings triage.**
+  as last three keys; test count bumps 90 / 53-37). **Parser round 3
+  (f2a1dd8):** singular form-(b) marker ("It accepts the following
+  option:"), token-based decimal-safe default extraction ("Default is
+  0.5.", "Default value is 2048.", "Default mode is merge.",
+  "default is: X", "Defaults is X"), enabled/disabled↔true/false,
+  "all" vs expanded flag-sum comparison — 18 author tests, suite
+  **1213 passed / 1 skipped**. **10-draft triage FINAL:** 6
+  verified_both 0-diff → merge at 2.7.0 (edgedetect, freezeframes
+  multi_input 2, thistogram, ahistogram, aspectralstats, showvolume);
+  4 genuine docs↔build (histogram: 12 rows = 6 undocumented 1-letter
+  aliases in both builds; tinterlace: docs-only `flags`, neither
+  build has it; blockdetect/blurdetect: `planes` "first only" vs
+  bitmask "1"). **31 drift rows TRIAGED:** 16 intentional
+  (freezedetect/silencedetect n/noise `string` kind — builds report
+  `<double>` but accept `-30dB` empirically; verified on system
+  ffmpeg 6.1.1), 6 → acompressor refresh (M10.0 entry had the
+  pre-5.0 option set; both corpora carry the modern 12-option set,
+  level_sc from the shared acompressor/sidechaincompress block;
+  drafts/acompressor.json verified_both), 9 genuine 9.x evolution
+  (adynamicequalizer auto/direction/mode, anullsrc r/sample_rate,
+  libvmaf cpuid/log_format/pool, overlay alpha) — no registry change
+  (dual-build target, 6.1.1 common denominator). **Merge package
+  /tmp/m114_registry_merge.py ready + DRY-RUN VERIFIED on a scratch
+  copy** (plan said 2.6.0 → 2.7.0: +6 filters, acompressor in-place
+  refresh, 96 filters 56/40) — SUPERSEDED: the merge that actually
+  landed as **5c34d01 included all 10 review-merge filters → registry
+  2.7.0 = 100 filters (60 video / 40 audio)**. Suite **1213 passed / 1 skipped**. Gaps re-run round 3:
+  drift identical (31) — the parser fixes don't touch registry-vs-
+  build comparison; 6.1.1 unresolved = [blackdetect_vulkan]
+  (genuine — manual predates the comma group).
+  **DONE since that plan (2026-10-26 → 00:16): (2) registry 2.7.0
+  MERGED as 5c34d01 — all 10 review-merge filters IN (edgedetect,
+  freezeframes, thistogram, histogram, blockdetect, blurdetect,
+  tinterlace, ahistogram, aspectralstats, showvolume; 100 filters
+  60/40; freezeframes = the 10th combiner, `multi_input: 2`, planned
+  by the generic combine machinery with ZERO planner changes;
+  acompressor refreshed in-place — 12 options identical in both
+  corpora, level_in/level_sc [0.015625,64] default 1). Merge
+  decisions: histogram long-names-only (1-letter aliases left OUT,
+  open question), tinterlace `mode` only (docs-only `flags` noted),
+  blockdetect/blurdetect `planes` documented as "1". 4a6a891 =
+  no-audio containers (e.g. GIF) drop the input track with -an + the
+  ablation run_rules crash wrapper. **Drift 31 → 25 (2ce5e95):** the
+  6 removed rows were DETECTOR artifacts, not real drift — (i)
+  gaps.py registry_default truncated at the first ')' (showvolume c's
+  nested-paren expression default) → balanced-paren scan; (ii) gaps
+  drift lacked author.py's 'all' ≡ 'all+...' flag-sum normalization
+  (aspectralstats measure); (iii) the acompressor level_sc review
+  note sat INSIDE the (default 1) parens in the registry. 2
+  regression tests (tests/test_rag_gaps.py); the 25 remaining rows
+  all verified known/expected (16 freezedetect/silencedetect
+  string-modeling + 9 9.0.1-evolution). Suite **1218 passed / 1
+  skipped** (120 s).**
+  **Next (post-reboot 2026-10-27):** (1) i7 docker 9.0.1 battery
+  half of §9.4 — needs the M11 arc on i7 first (push = user decision
+  or manual file sync; i7 mirror at 5354cc7), then
+  scripts/m10_battery.sh docker on media/titan.mp4 per filter
+  category. (2) Push decision — 20+ local commits (M11.0 → M11.4)
+  sit on tr4/i7 only. (3) Open merge questions from 2.7.0: histogram
+  1-letter aliases (register or not), tinterlace docs-only `flags`,
+  blockdetect/blurdetect `planes` phrasing. (4) PRD-deferred scope
+  still out: multiple watermarks, HDR workflows, batch processing.
+  Standing: advisory evidence only — the registry/builder/argv gate
+  stays sovereign; treat evidence_status 'supported' with skepticism
+  (M11.1 calibration note).
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):
@@ -321,12 +402,12 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 
 | fact | value |
 |---|---|
-| git | `main` = **c27a0d8** (merge of M10.7 web work, 2026-10-26); `origin/main` = **aa0e534** (M10.5) — commits up to c27a0d8 are LOCAL ONLY, push only when asked. Unpushed since aa0e534 (17 commits): M11.0 corpus foundation (36510a8, e1ff741, c9e4f55, 0081cd3), parser 1.2 (58b889c), M11.1A (88b1f7b, 181c1e5), M10.6 battery + fixes (fb2bc82, b989e31, a3528f5, c866f64, 88cd63b, 6ff28f1, 801ec1e), M11.1B (0ccdb7f), M10.7 web (bcb60e8, merge c27a0d8) |
-| working tree | clean except untracked `.resume`; RAG corpus data under rag/corpus/* is gitignored (rebuilt by rag/tools/build_corpus.sh, recipe rag/corpus/BUILD-RECIPE.md); rag/benchmark/results.json gitignored |
-| test baseline | **1015 passed / 1 skipped** (115 s, tr4 host 6.1.1, 2026-10-26) — includes 25 M10.7 webinfo tests + the RAG benchmark gate run (skipif-guarded on the gitignored corpus) |
-| local machine | `/dd2/andrei/fass`, host ffmpeg **6.1.1-3ubuntu5**, `.venv` present, `media/titan.mp4` (20 s test clip) |
-| i7 (192.168.0.33) | `ssh i7`; repo mirror at the SAME path `/dd2/andrei/fass` (HEAD **5354cc7** per the M10.0 push; not re-probed this session; true git mirror, github remote); host ffmpeg **6.1.1-3ubuntu5**; `.venv` present (pytest 9.1.1); docker deployment: containers **fass** + **fass-worker** (image `fass:latest`, FFmpeg **9.0.1**). **OFFLINE 2026-10-26** (no route to host; dispatcher backend offline) — i7's role (docker 9.0.1 E2E) temporarily taken over by tr4 rebuilding the same Dockerfile |
-| tr4 (192.168.0.30) | `ssh tr4`; hostname **b760one**; repo mirror at the SAME path `/dd2/andrei/fass`, HEAD **5354cc7** (synced from i7 2026-10-25; suite **683 passed / 86 s**), host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3; docker runs **vllm-qwen38-27b-dual-max** + **facecat-db** (no fass containers); 3 GPUs (3090, 3080 Ti, 3090); **ONLINE 2026-10-26** — synced 5354cc7 → **4ff3393** (M10.2) via `git fetch origin && git reset --hard origin/main`; docs re-copied from i7; suite **783 passed / 63 s** verified on tr4 2026-10-26; docker/ untouched (canonical tracked compose); handoff details in §3 "tr4 handoff details" |
+| git | `main` = **2ce5e95** (M11.4: gaps drift 31→25, 2026-10-27); `origin/main` = **aa0e534** (M10.5) — everything after is LOCAL ONLY, push only when asked. Unpushed since aa0e534: the whole M11 arc — M11.0 corpus foundation (36510a8, e1ff741, c9e4f55, 0081cd3), parser 1.2 (58b889c), M11.1A (88b1f7b, 181c1e5), M10.6 battery + fixes (fb2bc82, b989e31, a3528f5, c866f64, 88cd63b, 6ff28f1, 801ec1e), M11.1B (0ccdb7f), M10.7 web (bcb60e8, merge c27a0d8), M11.2 (d60c167, 1621b8b, 63a2a35, 56324af, d005578, 9bd4401, 09060a3, 5704ff0, merge 97c0552, bb9bcc0, 15a0baa, 5308bd7, 38ce046), M11.3 (adb8c60, f13ae07, d47f96e, 10b1fe5, 0116554, b122e36, f2a1dd8), M11.4 (1d543a6, 4a6a891, 5c34d01, 2ce5e95) |
+| working tree | clean except untracked `.resume` (per-machine — leave alone), `drafts/` + `gaps/` (working dirs — keep untracked), and 3 stray `media/` files (Beauty_...HEVC_RAW.hevc, src01_hrc00/01_576x324.yuv — NOT from our work, leave untracked/uncommitted); RAG corpus data under rag/corpus/* is gitignored (rebuilt by rag/tools/build_corpus.sh, recipe rag/corpus/BUILD-RECIPE.md); rag/benchmark/results.json gitignored |
+| test baseline | **1218 passed / 1 skipped** (120 s, tr4 host 6.1.1, 2026-10-27) — includes 25 M10.7 webinfo tests, the RAG benchmark gate run (skipif-guarded on the gitignored corpus), 18 rag/author tests, 2 gaps drift regression tests, 13 held-out shape tests |
+| local machine | **session machine = tr4 (b760one)**; `/dd2/andrei/fass`, host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3, `media/titan.mp4` (20 s test clip). vLLM: tr4-primary 127.0.0.1:8091 (qwen3.8-27b — the ablation endpoint, healthy) + tr4-secondary 127.0.0.1:8080 (swift-1.5-iq3_xxs — weak); fass-rag service live on 127.0.0.1:8100 (pid **1918855** — restarted 2026-10-27 00:4x after the ablation finished; old pid 959120 killed by exact pid) |
+| i7 (192.168.0.33) | `ssh i7`; repo mirror at the SAME path `/dd2/andrei/fass` (HEAD **5354cc7** per the M10.0 push; not re-probed this session; true git mirror, github remote); host ffmpeg **6.1.1-3ubuntu5**; `.venv` present (pytest 9.1.1); docker deployment: containers **fass** + **fass-worker** (image `fass:latest`, FFmpeg **9.0.1**). was **OFFLINE 2026-10-26** (no route to host; dispatcher backend offline) — i7's role (docker 9.0.1 E2E) temporarily taken over by tr4 rebuilding the same Dockerfile; **vLLM backend back ONLINE 2026-10-27** (192.168.0.33:8080, qwen3.8-27b, 230k ctx, per dispatcher health) |
+| tr4 (192.168.0.30) | `ssh tr4`; hostname **b760one**; repo mirror at the SAME path `/dd2/andrei/fass`, HEAD **5354cc7** (synced from i7 2026-10-25; suite **683 passed / 86 s**), host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3; docker runs **vllm-qwen38-27b-dual-max** + **facecat-db** (no fass containers); 3 GPUs (3090, 3080 Ti, 3090); **ONLINE 2026-10-26 → now the SESSION MACHINE (2026-10-27)** — local main at **2ce5e95** (M11.0–M11.4 arc all local; synced from origin at 4ff3393 earlier); suite **1218/1** verified here 2026-10-27; docker/ untouched (canonical tracked compose; rag overlay docker/compose.rag.yaml, profiles ["rag"]); docker runs vllm-qwen38-27b-dual-max (:8080/:8091) + facecat-db — do NOT touch; fass-rag :8100 (pid 1918855); ablation COMPLETE 880/880 (results at /dd2/andrei/ablation-run1/; /tmp copy may be gone post-reboot) |
 
 Milestone history (all committed): M1 CLI+5 ops (162 tests) → M2 FastAPI web
 (178) → M3a multi-inputs (218) → M3b stream I/O (265) → M4 all 8 FFmpeg
@@ -800,26 +881,35 @@ and forgotten), #318/#316 (forgotten, same chain).
 
 ## 8. Pending user decisions + next unfinished task
 
-**Next unfinished task (2026-10-26, current):**
-**M11.4 close-out** (PRD M11.4) — M11.2 (advisory RAG layer, all 9
-commits, UI tabs) and M11.3 (authoring pipeline rag/author + rag/gaps,
-parser rounds, registry 2.6.0) are COMPLETE on main. Ablation run 1
-(pid 1186350, 880 arms = 4 arms × 220 entries, both datasets) is in
-background (waiter b7icgf4vl; 475/880 at 22:02, ETA ~00:45 CET).
-Standing constraints from M11.1B/M11.2 that the close-out must respect:
-advisory evidence only — the registry/builder/argv gate stays
-sovereign; evidence_status 'supported' is over-claimed for
-out-of-domain queries (bm25 cannot separate them) — the no-fabrication
-check relies on exact_match verifiability; the 21 residual recall8
-misses are genuine NL lexical gaps — tolerated by the advisory layer.
-§9.2 go/no-go from the held-out subset of the run 1 report: +5 pp arm 4
-> arm 3 on paraphrase, no regression, else ship arm 3 + static doc_ref
-citations (arm 1 rules stays default either way). Then: rag service
-restart → cold retrieval budget (≤1 s) → dual-build battery on
-media/titan.mp4 → §9.4 close-out + /savework. Later backlog: more
-M11.3 registry entries (10 diagnostic candidates in both builds),
-acompressor refresh, 31 genuine drift findings triage. (The parser
-release for comma-grouped headings is DONE — 0116554 heading_names.)
+**Next unfinished task (2026-10-27 ~00:55, post-reboot):**
+**M11.4 is COMPLETE — §9.2 verdict: NO-GO → ship arm 3
+(llm_schemas) + static doc_ref citations.** All 880 ablation arms
+done (run 2 pid 1774958 finished; report.md/report.json written);
+verdict computed by /dd2/andrei/m114_gonogo.py against the
+pre-registered rule (arm 4 must beat arm 3 by ≥ +0.05 held-out
+PARAPHRASE param_acc with no held-out regression): paraphrase
+param_acc arm3=1.0 arm4=1.0 → delta 0.0 → NO-GO; no regressions
+(arm 4 ≥ arm 3 on every held-out axis). **No code change needed:**
+RagConfig.enabled defaults False (RAG opt-in), the LLM path already
+uses the schemas block, citations already derive from static
+registry doc_ref (derive_citations with rag_result=None); arm 1
+rules stays the default either way. §9.5 budgets all measured
+(warm p95 27 ms, cold 33 ms, evidence 4000ch, RAG overhead
+−3.1 s mean / −69.1 s p95, RAG mem 70 MB — all PASS; LLM-arm
+overall p95 73–82 s NOT met by local qwen3.8-27b, recorded per PRD
+"now measured"). §9.4 gates: suite 1218/1 + battery host 6.1.1
+21/21; **i7 9.0.1 docker half DEFERRED** — needs the M11 arc on i7
+(i7 mirror at 5354cc7; origin/main still aa0e534, whole M11 arc
+unpushed) → user push decision or manual sync, then
+scripts/m10_battery.sh docker on media/titan.mp4 per filter
+category. Artifacts reboot-proof at /dd2/andrei/{ablation-run1,
+rag-budgets}/ + /dd2/andrei/m114_gonogo.py; rag service live pid
+1918855 (old 959120 killed by exact pid after the run finished).
+Remaining: (1) i7 9.0.1 battery after sync/push; (2) push decision
+(20+ commits M11.0→M11.4 local-only); (3) open merge questions:
+histogram 1-letter aliases, tinterlace docs-only `flags`,
+blockdetect/blurdetect `planes` phrasing; (4) PRD-deferred scope:
+multiple watermarks, HDR workflows, batch processing.
 
 **Decisions pending:**
 1. **channelsplit** — defer multi-output export (current plan: in-graph only),
