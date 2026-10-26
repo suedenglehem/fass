@@ -305,6 +305,143 @@ def test_comma_group_heading(tmp_path):
     assert d["option_diffs"] == []
 
 
+# --------------------------------------------------------------------------
+# parser round 3: singular form-(b) marker, default-form variants,
+# enabled/disabled normalization, metadata-keys <dl> must not be crossed
+# --------------------------------------------------------------------------
+
+def test_extract_default_forms():
+    from rag.author import extract_default
+    assert extract_default("Set background opacity. Default is 0.5.") == "0.5"
+    assert extract_default(
+        "Set width. Default value is 2048. Allowed range is from 32 to 65536."
+    ) == "2048"
+    assert extract_default("Set mode. Default mode is merge.") == "merge"
+    assert extract_default(
+        "Set step size, allowed range is [0, 5]. Default is 0, which means "
+        "step is disabled."
+    ) == "0"
+    assert extract_default("The color of the max line. default is: orange") == "orange"
+    assert extract_default("In second. default is disabled: 0.") == "disabled"
+    assert extract_default("Set sampling rate. Defaults is 16000.") == "16000"
+    assert extract_default("Set planes to filter. Default is first only.") == "first"
+    assert extract_default(
+        "Select the parameters which are measured. The metadata keys can be "
+        "used as flags, default is all which measures everything."
+    ) == "all"
+    # not defaults: plural 'values are', 'Default value of ...' prose,
+    # 'By default, ...', 'a default value of ...', 'Default and minimum ...'
+    assert extract_default(
+        "Set minimum and maximum values. Default values are [3,24].") is None
+    assert extract_default(
+        "Default value of 0.5 will pick always median values, while 0 will "
+        "pick minimum values.") is None
+    assert extract_default(
+        "By default, the logging level is set to info.") is None
+    assert extract_default("has a default value of -3.01dB.") is None
+    assert extract_default(
+        "Set the video size. Default and minimum resolution is 640x480.") is None
+
+
+def test_normalize_default_lexical():
+    from rag.author import normalize_default
+    assert normalize_default("disabled") == "0"
+    assert normalize_default("enabled") == "1"
+    assert normalize_default("false") == "0"
+    assert normalize_default("true") == "1"
+    assert normalize_default(None) is None
+
+
+def test_defaults_equal_all_expansion():
+    from rag.author import defaults_equal
+    expanded = "all+mean+variance+centroid+spread+skewness+kurtosis+entropy+flatness+crest+flux+slope+decrease+rolloff"
+    assert defaults_equal("all", expanded)
+    assert defaults_equal(expanded, "all")
+    assert defaults_equal("0", "0")
+    assert not defaults_equal("0", "1")
+    assert not defaults_equal("all", "mean+variance")  # not the full set
+
+
+FORM_B2_HTML = """
+<h3 class="section">8.57 mystats<span class="pull-right"><a class="anchor hidden-xs" href="#mystats" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-mystats" aria-hidden="true">TOC</a></span></h3>
+<p>Display frequency domain statistical information about the audio channels.
+</p>
+<p>It accepts the following option:
+</p><dl class="table">
+<dt><samp class="option">win_size</samp></dt>
+<dd><p>Set the window length in samples. Default value is 2048.
+Allowed range is from 32 to 65536.
+</p>
+</dd>
+<dt><samp class="option">win_func</samp></dt>
+<dd><p>Set window function.
+</p>
+<p>It accepts the following values:
+</p><dl class="table">
+<dt>&lsquo;<samp class="samp">rect</samp>&rsquo;</dt>
+<dt>&lsquo;<samp class="samp">hann, hanning</samp>&rsquo;</dt>
+</dl>
+<p>Default is <code class="code">hann</code>.
+</p>
+</dd>
+<dt><samp class="option">measure</samp></dt>
+<dd><p>Select the parameters which are measured. default is <samp class="option">all</samp> which measures everything.
+</p></dd>
+<dt><samp class="option">fade</samp></dt>
+<dd><p>Set fade, allowed range is [0, 1]. Default is 0.95.
+</p></dd>
+<dt><samp class="option">names</samp></dt>
+<dd><p>If set, displays channel names. Default is enabled.
+</p></dd>
+</dl>
+
+<p>A list of each metadata key follows:
+</p>
+<dl class="table">
+<dt><samp class="option">mean</samp></dt>
+<dt><samp class="option">variance</samp></dt>
+</dl>
+<h3 class="section">8.58 asr<span class="pull-right"><a class="anchor hidden-xs" href="#asr" aria-hidden="true">#</a></span></h3>
+<p>Not the one we author.
+</p>
+"""
+
+FORM_B2_BUILD = """Filter mystats
+mystats AVOptions:
+   win_size          <int>        ..FV....... window length (from 32 to 65536) (default 2048)
+   win_func          <int>        ..FV....... window function (default hann)
+   measure           <flags>      ..FV....... measured parameters (default all)
+   fade              <double>     ..FV....... set fade (from 0 to 1) (default 0.95)
+   names             <boolean>    ..FV....... display channel names (default true)
+
+Exiting with exit code 0
+"""
+
+
+def test_singular_marker_and_metadata_dl(tmp_path):
+    # 'It accepts the following option:' (singular, 'It') is form (b) too,
+    # and the separate metadata-keys <dl> (whose <dt>s also use
+    # class="option") must not be crossed by the options parser
+    root = tmp_path / "corpus-root"
+    for c in CORPORA:
+        make_corpus(root, c, FORM_B2_HTML, FORM_B2_BUILD, name="mystats")
+    out = tmp_path / "draft.json"
+    r = run_author("filter:mystats", CORPORA, root, out)
+    assert r.returncode == 0, r.stderr
+    d = json.loads(out.read_text())
+    assert d["classification"] == "verified_both"
+    for c in CORPORA:
+        opts = d["docs"][c]["options"]
+        assert set(opts) == {"win_size", "win_func", "measure", "fade", "names"}, c
+        assert opts["win_size"]["default"] == "2048", c
+        assert opts["win_func"]["default"] == "hann", c
+        assert opts["measure"]["default"] == "all", c
+        assert opts["fade"]["default"] == "0.95", c
+        assert opts["names"]["default"] == "enabled", c
+    # decimal + enabled/true line up against the build defaults
+    assert d["option_diffs"] == []
+
+
 def test_build_facts_multi_block():
     # the filter's own block (header may carry an alias) plus shared
     # component blocks (framesync) are all part of the option surface

@@ -143,6 +143,25 @@ def parse_dl(html: str, start: int):
     return items
 
 
+# 'Default is 0.5.' / 'Default value is 2048.' / 'Default mode is merge.' /
+# 'default is: orange' / 'default is disabled: 0.' / 'Defaults is 16000.' —
+# a single token (number or word), case-insensitive.  Token capture (not
+# sentence capture): 'Default is 0, which means step is disabled.' -> '0';
+# the decimal-aware number alternative keeps 'Default is 0.5.' -> '0.5'.
+# 'Default values are [3,24].' deliberately does NOT match.
+DEFAULT_RE = re.compile(
+    r"(?i)\bdefaults?\b(?:\s+value)?(?:\s+[a-z_]+)?\s+(?:is|to):?\s+"
+    r"(\d+(?:\.\d+)?|[A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def extract_default(desc: str):
+    m = DEFAULT_RE.search(desc)
+    if not m:
+        return None
+    return m.group(1).rstrip(".").strip('"')
+
+
 PROSE_MARKER = re.compile(r"accepts the following parameters:", re.I)
 PROSE_OPTION = re.compile(
     r"(\w+)(?:\s*,\s*(\w+))?\s+(.+?)it defaults to\s*([\w.]+)\s*\.", re.S)
@@ -151,11 +170,15 @@ PROSE_OPTION = re.compile(
 def parse_doc_options(body: str) -> tuple[dict, str | None]:
     """The ONE options list of a section body. Forms:
     (a) <h4>Options</h4> + <dl>,
-    (b) paragraph ending 'The filter accepts the following options:' + <dl>,
+    (b) paragraph ending 'The filter accepts the following options:' (or the
+        singular 'It accepts the following option:') + <dl>,
     (c) prose '...accepts the following parameters: ...' (no dl).
     Returns (options, form) where form is 'options_dl' | 'prose' | None."""
     dl_start = None
-    m = re.search(r"The filter accepts the following options:\s*</p>", body)
+    # 'The filter accepts the following options:' and the singular/short
+    # variant 'It accepts the following option:' (aspectralstats)
+    m = re.search(
+        r"(?:The filter|It)\s+accepts the following options?:\s*</p>", body)
     if m:
         dl_start = body.find("<dl", m.end())
     else:
@@ -169,8 +192,7 @@ def parse_doc_options(body: str) -> tuple[dict, str | None]:
         for name, desc in parse_dl(body, dl_start):
             if not name:
                 continue
-            dm = re.search(r"Default is\s+(.+?)\.", desc)
-            default = dm.group(1).strip() if dm else None
+            default = extract_default(desc)
             # alias groups arrive as one <dt> ("color, c") — split on commas
             for n in (p.strip() for p in name.split(",")):
                 if n:
@@ -250,11 +272,23 @@ def normalize_default(value):
     if value is None:
         return None
     s = str(value).strip().strip('"')
-    if s == "false":
+    if s in ("false", "disabled"):
         s = "0"
-    elif s == "true":
+    elif s in ("true", "enabled"):
         s = "1"
     return s
+
+
+def defaults_equal(dd: str, bd: str) -> bool:
+    """Equal after normalization.  'all' (docs) and the build's expanded
+    flag sum 'all+mean+variance+...' (aspectralstats measure) name the
+    same flag set differently."""
+    if dd == bd:
+        return True
+    for a, b in ((dd, bd), (bd, dd)):
+        if a == "all" and b.startswith("all+"):
+            return True
+    return False
 
 
 def compute_option_diffs(corpus: str, docs_opts: dict, build_opts: dict) -> list:
@@ -270,7 +304,7 @@ def compute_option_diffs(corpus: str, docs_opts: dict, build_opts: dict) -> list
         else:
             dd = normalize_default(d.get("default"))
             bd = normalize_default(b.get("default"))
-            if dd is not None and bd is not None and dd != bd:
+            if dd is not None and bd is not None and not defaults_equal(dd, bd):
                 diffs.append({"corpus": corpus, "option": opt,
                               "kind": "default_conflict",
                               "docs_default": d.get("default"),
