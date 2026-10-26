@@ -66,9 +66,10 @@ scale_cuda) expect a preflight warning + skip on 6.1.1 and RUN on 9.0.1.
   executing (both modes share acceptance semantics); 2 regression
   tests. Host re-run: battery 21/21 with the gate ACTIVE, suite
   953/1 skipped.
-- **Final i7 21/21 re-verification RUNNING** (resubmitted at this
-  commit; expect suite 953/1 skipped + battery 21/21 with
-  fdk_vbr4/libvmaf/scale_cuda executing).
+- **Final i7 21/21 re-verification RUNNING** — job j_0a7359da46 at
+  this commit (image fass:m106c, serve port 18107); expect suite
+  953/1 skipped + battery 21/21 with fdk_vbr4/libvmaf/scale_cuda
+  executing.
 - **M11.1 part A SUCCEEDED** on tr4-secondary (job j_7dea91b80b,
   branch dispatch/j_7dea91b80b, base b989e31): `rag/retrieval.py`
   FTS5 lexical core + `rag/server.py` fass-rag FastAPI service (PRD

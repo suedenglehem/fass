@@ -176,6 +176,9 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   BUILD-INDEPENDENT and reproduce on the host — the local battery had
   been bypassing `validate_argv` (docker mode enforces it at
   /v1/runs), so the earlier host 21/21 was hollow for xfade/concat.
+  (The worker's concat error showed a 3-label shape only because the
+  error context prints the instance after one label was already
+  stripped — the generated 4-pad graph is correct.)
   **Fixed in this commit**: `settb` registry entry + docs_provenance
   URL (51 video / 36 audio = 87); `loader._validate_instance` strips
   ALL leading labels; the local battery now runs `validate_argv` on
@@ -184,8 +187,9 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   xfade settb chain) + count assertion updated; DEVELOPMENT filter
   count 86→87. **Host 6.1.1 re-run: battery 21/21 with the gate
   ACTIVE, suite 953 passed / 1 skipped.** Final i7 21/21
-  re-verification resubmitted at this commit; docs evidence lines
-  then get the real container numbers.
+  re-verification resubmitted at this commit as **job j_0a7359da46**
+  (i7, image fass:m106c, serve port 18107, suite expected 953/1);
+  docs evidence lines then get the real container numbers.
 - **Next task:** **M10.6** — final i7 21/21 re-verification running at
   the fix commit (expect suite 953/1 skipped, battery 21/21 with
   fdk_vbr4/libvmaf/scale_cuda executing); on success: DEVELOPMENT
