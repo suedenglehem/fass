@@ -13,11 +13,25 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   provenance, 87 filters); 56324af §6.2 query builder + fail-open
   client; d005578 §6.2 FIX (alias mentions now resolve to canonical
   registry keys — matched text was leaking into component_names);
-  9bd4401 §6.3 evidence block + LLM user-turn augmentation. **Next:
-  M11.2 commit 5 — §6.4/§6.5 pipeline RAG hook + citation derivation**
-  (citations.py + pipeline.py + 19 tests; suite 1100 passed / 1
-  skipped), then commit 6 UI Sources panel, 7 deployment overlay, 8
-  §9.3 safety-gate tests, 9 §9.2 ablation harness.
+  9bd4401 §6.3 evidence block + LLM user-turn augmentation; 09060a3
+  §6.4/§6.5 pipeline RAG hook + citation derivation (citations.py +
+  pipeline.py + 19 tests; suite 1100 passed / 1 skipped).
+  **In flight: M11.2 commit 8 — §9.3 safety gates** (pipeline fail-open
+  guard around rag_retrieve + "evidence not used → command unaffected"
+  warning in build_evidence + tests/test_rag_safety.py, 9 tests covering
+  all 6 gates: poisoned doc, wrong-version corpus, RAG down/raising
+  client, absent filter, adversarial filenames with RAG on, rules-path
+  determinism RAG on vs off; **suite 1109 passed / 1 skipped**).
+  **Delegated: M11.2 commit 7 — §6.7 deployment** (job j_3d4505da56,
+  tr4-secondary: rag/health.py, docker/Dockerfile.rag,
+  docker/compose.rag.yaml overlay, rag/server.py FASS_RAG_DATA/
+  FASS_RAG_BIND + parse_bind, tests/test_rag_deployment.py; attempt 1
+  crashed exit 0 — suspect report-schema rejection; attempt 2 running,
+  deadline 18:03; integrate via dispatch_integrate or manual --no-ff
+  merge). **Next: commit 8, integrate j_3d4505da56, commit 6 UI
+  Sources panel + config-tab rag block, commit 9 §9.2 ablation
+  harness (scripts/m11_ablation.py vs tr4's vllm
+  vllm-qwen38-27b-dual-max), then §9.4 close-out.**
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):

@@ -20,7 +20,7 @@ from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
 from fass.planner import PlanError, plan_execution
 from fass.rag.citations import chunk_citation, derive_citations
-from fass.rag.client import retrieve as rag_retrieve
+from fass.rag.client import RagSearchResult, retrieve as rag_retrieve
 from fass.rag.evidence import format_evidence_block
 from fass.probe.ffprobe import (
     Check,
@@ -118,6 +118,23 @@ def build_evidence(edit, ep, rag_result) -> dict | None:
         # RAG was consulted: report its outcome even when degraded —
         # a failed search is status "unavailable" (PRD §4.4), with the
         # static registry_doc_ref citations the plan can still show.
+        warnings = list(rag_result.warnings)
+        if rag_result.ok:
+            # PRD §9.3: evidence the plan did not use cannot affect the
+            # command — say so, once per unused retrieved filter.
+            cited = {c["component"] for c in citations}
+            seen: set[str] = set()
+            for chunk in rag_result.chunks:
+                ctype = chunk.get("component_type")
+                cname = chunk.get("component_name")
+                if ctype != "filter" or not cname:
+                    continue
+                key = f"filter:{cname}"
+                if key not in cited and key not in seen:
+                    seen.add(key)
+                    warnings.append(
+                        f"evidence for {key} was not used by the plan; "
+                        "the command is unaffected by it")
         return {
             "status": ("unavailable" if not rag_result.ok
                        else rag_result.evidence_status or "insufficient"),
@@ -125,7 +142,7 @@ def build_evidence(edit, ep, rag_result) -> dict | None:
             "corpus_match": rag_result.corpus_match,
             "retrieval_ms": rag_result.retrieval_ms,
             "citations": citations,
-            "warnings": list(rag_result.warnings),
+            "warnings": warnings,
         }
     if citations:
         # RAG off: static doc_ref citations only (PRD §6.5) — they work
@@ -134,6 +151,15 @@ def build_evidence(edit, ep, rag_result) -> dict | None:
                 "retrieval_ms": None, "citations": citations,
                 "warnings": []}
     return None
+
+
+def _degraded_rag(e: Exception) -> RagSearchResult:
+    """PRD §9.3 — the client is contractually fail-open (it never
+    raises); if it ever does, degrade to the same shape instead of
+    failing the generation."""
+    return RagSearchResult(
+        ok=False, query=None, corpus_id=None, corpus_match="none",
+        warnings=[f"RAG retrieval failed: {e}"])
 
 
 def _closest_supported(instruction, media, rag_result) -> dict | None:
@@ -149,9 +175,12 @@ def _closest_supported(instruction, media, rag_result) -> dict | None:
         if not cfg.enabled:
             return None
         info = probe_ffmpeg()
-        rag_result = rag_retrieve(
-            cfg, instruction, media=media,
-            probed_version=info.version if info else None)
+        try:
+            rag_result = rag_retrieve(
+                cfg, instruction, media=media,
+                probed_version=info.version if info else None)
+        except Exception as e:  # noqa: BLE001 — fail-open (see above)
+            rag_result = _degraded_rag(e)
     if rag_result is None or not rag_result.ok or not rag_result.chunks:
         return None
     top = rag_result.chunks[0]
@@ -313,9 +342,12 @@ def generate(
         rag_cfg = resolved_rag()
         if rag_cfg.enabled:
             info = probe_ffmpeg()
-            rag_result = rag_retrieve(
-                rag_cfg, instruction, media=media,
-                probed_version=info.version if info else None)
+            try:
+                rag_result = rag_retrieve(
+                    rag_cfg, instruction, media=media,
+                    probed_version=info.version if info else None)
+            except Exception as e:  # noqa: BLE001 — fail-open
+                rag_result = _degraded_rag(e)
 
     # The formatted evidence block goes into the LLM's USER TURN (the
     # system prompt stays stable across requests — PRD §6.3).

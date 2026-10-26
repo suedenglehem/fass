@@ -17,7 +17,7 @@ benchmark + 10 media outcomes (synthetic lavfi) + 4 real-media (titan.mp4).
 pass: +16 API tests (PRD §9 contract, security invariants). `fass serve`
 smoke-tested live (healthz, /v1/commands, UI).
 
-## Current state (2026-10-26, M11.2 IN PROGRESS — §6.1–§6.5 + §6.6 committed; UI / deployment / safety-gate / ablation next)
+## Current state (2026-10-26, M11.2 IN PROGRESS — §6.1–§6.6 + §6.4/§6.5 committed; §9.3 safety gates ready to commit; deployment delegated; UI / ablation next)
 **M11.2 commits on main so far:** d60c167 §6.6 RagConfig block +
 FASS_RAG_* env overrides; 1621b8b/63a2a35 §6.1 registry 2.5.0 (doc_ref +
 aliases + provenance, all 87 filters); 56324af §6.2 deterministic query
@@ -30,25 +30,61 @@ aliases can shadow them; 9bd4401 §6.3 evidence block (delimited
 `<<<EVIDENCE`, untrusted preamble, budget-bounded, explicit
 `[truncated]`) + LLM prompt augmentation (block in the USER TURN, static
 system-prompt paragraph only, schema unchanged).
-**In flight: commit 5 — §6.4/§6.5 pipeline RAG hook + citation
+**Committed: 09060a3 §6.4/§6.5 pipeline RAG hook + citation
 derivation.** fass/rag/citations.py (used_components / _matches /
 chunk_citation / derive_citations — retrieved chunk wins, highest
 score; filter-only registry doc_ref fallback `source:
-"registry_doc_ref"`; unused chunks dropped) + pipeline.py (GenerationResponse.evidence;
-retrieval ONLY on the llm adapter when resolved_rag().enabled; evidence
-kwarg into adapter.parse only when the block exists;
-build_evidence on ready — status "unavailable"/evidence_status/
-"insufficient" with RAG, "static" without; `_closest_supported`
-fail-open note on UNSUPPORTED — status never changed). 19 new tests
-(tests/test_rag_citations.py 13, tests/test_pipeline_rag.py 6).
-**Full suite green: 1100 passed / 1 skipped.** Remaining M11.2:
-commit 6 UI Sources panel + config-tab rag block; commit 7 deployment
-(Dockerfile.rag + rag/health.py + compose.rag.yaml overlay, profile
-"rag", /dd2/andrei/fass/docker-data/rag:/data, 0.0.0.0:8100); commit 8
-§9.3 safety-gate tests; commit 9 §9.2 ablation harness
-(scripts/m11_ablation.py, 4 arms vs tr4's local vllm
-vllm-qwen38-27b-dual-max). Then §9.4 close-out (live corpus +
-/v1/support doc_refs), M11.3, M11.4.
+"registry_doc_ref"`; unused chunks dropped) + pipeline.py
+(GenerationResponse.evidence; retrieval ONLY on the llm adapter when
+resolved_rag().enabled; evidence kwarg into adapter.parse only when the
+block exists; build_evidence on ready — status "unavailable"/
+evidence_status / "insufficient" with RAG, "static" without;
+`_closest_supported` fail-open note on UNSUPPORTED — status never
+changed). 19 new tests (tests/test_rag_citations.py 13,
+tests/test_pipeline_rag.py 6) → **suite 1100 passed / 1 skipped.**
+
+**In flight: commit 8 — §9.3 safety gates.** pipeline.py: both
+`rag_retrieve` call sites (generate + `_closest_supported`) wrapped in
+fail-open try/except → `_degraded_rag(e)` (a broken client contract
+degrades to the same shape instead of failing generation);
+build_evidence appends `evidence for filter:X was not used by the plan;
+the command is unaffected by it` per unused retrieved filter (deduped,
+only when retrieval was ok). tests/test_rag_safety.py (9 tests, all 6
+gates): poisoned doc (injection text reaches the LLM turn but
+plan/argv byte-identical to a RAG-off run, warning + no citation);
+wrong-version corpus (select_corpus unit — never "exact", warnings
+surfaced in the response as corpus_match "nearest"); RAG down (REAL
+client against a dead port → "unavailable", registry_doc_ref citations
+only; a raising client → degraded with the error in warnings); absent
+filter (benign chunk unused → no citation / warning / not in command;
+LLM induced into a disallowed filter → schema rejection, error, no
+command); adversarial filenames roundtrip with RAG on (rules path, 0
+retrieval calls); determinism (rules path asdict minus "evidence"
+identical RAG on vs off). **Full suite: 1109 passed / 1 skipped.**
+(One flaky test_webinfo.py failure in the first full run — passes in
+isolation and on re-run; unrelated to this change.)
+
+**Delegated: commit 7 — §6.7 deployment (job j_3d4505da56,
+tr4-secondary, cc-worker, base 09060a3, deadline 18:03).** 5 files:
+rag/health.py (`python -m rag.health`, FASS_RAG_DATA precedence over
+FASS_RAG_DATA_DIR), docker/Dockerfile.rag (python:3.12-slim, non-root,
+/data), docker/compose.rag.yaml overlay (profile "rag",
+docker-data/rag:/data, 0.0.0.0:8100, healthcheck, restart
+unless-stopped; committed compose.yaml untouched), rag/server.py
+minimal (FASS_RAG_DATA honored, pure parse_bind(spec), FASS_RAG_BIND
+default "127.0.0.1:8100", FASS_RAG_PORT still overrides the port),
+tests/test_rag_deployment.py (text assertions — pyyaml NOT in the
+venv). Attempt 1 crashed with exit 0 (suspect report-schema rejection
+again, per the two prior jobs); attempt 2 running. Integration plan:
+review diff, verify the 5 files + full suite, then dispatch_integrate
+(or manual --no-ff merge if it fails on the schema — that merge is the
+integration authority).
+
+Remaining M11.2: commit 6 UI Sources panel + config-tab rag block
+(fass/ui.py; the response now carries `evidence`; node --check on the
+embedded JS); commit 9 §9.2 ablation harness (scripts/m11_ablation.py,
+4 arms vs tr4's local vllm vllm-qwen38-27b-dual-max). Then §9.4
+close-out (live corpus + /v1/support doc_refs), M11.3, M11.4.
 
 **M11.1 (COMPLETE, for reference) — part A integrated as 181c1e5**
 (from tr4-secondary job j_7dea91b80b): rag/retrieval.py FTS5 lexical
@@ -106,13 +142,18 @@ suite: 1015 passed / 1 skipped** (990 + 25). dispatch_integrate is
 impossible for failed jobs — the merge commit c27a0d8 records the
 integration; the job's worktree is retained for review.
 
-**Next:** finish M11.2 commits 6–9 (UI, deployment, safety gates,
-ablation harness) — advisory evidence only; registry/builder/argv gate
-stays sovereign; treat evidence_status 'supported' with skepticism per
-the M11.1 calibration note. Then M11.3 authoring, M11.4 ablation kill
-criterion; and a later parser release for comma-grouped headings (split
-→ component_name, re-ingest manuals — the parser 1.3 slot was taken by
-build-help provenance).
+**Next:** (1) commit 8 (§9.3 safety gates — code + 9 tests done, suite
+1109/1, message `rag: M11.2 §9.3 — safety gates: fail-open retrieval +
+evidence-ignored warnings`); (2) integrate deployment job j_3d4505da56
+when it lands (review diff, verify 5 files + full suite,
+dispatch_integrate or manual --no-ff merge); (3) commit 6 UI Sources
+panel + config-tab rag block; (4) commit 9 ablation harness. Advisory
+evidence only; registry/builder/argv gate stays sovereign; treat
+evidence_status 'supported' with skepticism per the M11.1 calibration
+note. Then M11.3 authoring, M11.4 ablation kill criterion; and a later
+parser release for comma-grouped headings (split → component_name,
+re-ingest manuals — the parser 1.3 slot was taken by build-help
+provenance).
 
 ## Previous state (2026-10-26, M10.6 COMPLETE — dual-build 21/21 + suite 953/1 on both halves; M11.0 done; RAG M11.1 in flight at the time)
 **M10.6 — per-category E2E verification battery + docs.** The battery
