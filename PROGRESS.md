@@ -157,11 +157,17 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   string-modeling + 9 9.0.1-evolution). Suite **1218 passed / 1
   skipped** (120 s).**
   **Next (post-reboot 2026-10-27):** (1) i7 docker 9.0.1 battery
-  half of §9.4 — needs the M11 arc on i7 first (push = user decision
-  or manual file sync; i7 mirror at 5354cc7), then
-  scripts/m10_battery.sh docker on media/titan.mp4 per filter
-  category. (2) Push decision — 20+ local commits (M11.0 → M11.4)
-  sit on tr4/i7 only. (3) Open merge questions from 2.7.0: histogram
+  half of §9.4 — sync STAGED: bundle
+  /dd2/andrei/fass-m11-arc.bundle (4ff3393..00c9120, 50 commits;
+  i7 main 4ff3393 = verified ancestor) → scp to i7; on i7: cp
+  PROGRESS.md ~/PROGRESS.md.i7-local-backup && rm PROGRESS.md
+  (untracked local copy blocks merge — arc adds tracked PROGRESS.md),
+  then git fetch <bundle> main && git merge --ff-only FETCH_HEAD
+  (docker/compose.yaml untouched — unchanged across the arc, local
+  opt-ins stay); then scripts/m10_battery.sh docker on
+  media/titan.mp4 per filter category. (2) Push decision — 50 local
+  commits (M11.0 → M11.4) sit on tr4/i7 only (origin/main =
+  aa0e534). (3) Open merge questions from 2.7.0: histogram
   1-letter aliases (register or not), tinterlace docs-only `flags`,
   blockdetect/blurdetect `planes` phrasing. (4) PRD-deferred scope
   still out: multiple watermarks, HDR workflows, batch processing.
@@ -898,9 +904,11 @@ rules stays the default either way. §9.5 budgets all measured
 −3.1 s mean / −69.1 s p95, RAG mem 70 MB — all PASS; LLM-arm
 overall p95 73–82 s NOT met by local qwen3.8-27b, recorded per PRD
 "now measured"). §9.4 gates: suite 1218/1 + battery host 6.1.1
-21/21; **i7 9.0.1 docker half DEFERRED** — needs the M11 arc on i7
-(i7 mirror at 5354cc7; origin/main still aa0e534, whole M11 arc
-unpushed) → user push decision or manual sync, then
+21/21; **i7 9.0.1 docker half DEFERRED** — sync staged via bundle
+/dd2/andrei/fass-m11-arc.bundle (4ff3393..00c9120, 50 commits; i7
+main 4ff3393 = verified ancestor; origin/main still aa0e534, push =
+user decision) → scp + fetch + ff-only merge on i7 (back up i7's
+untracked PROGRESS.md first; docker/compose.yaml untouched), then
 scripts/m10_battery.sh docker on media/titan.mp4 per filter
 category. Artifacts reboot-proof at /dd2/andrei/{ablation-run1,
 rag-budgets}/ + /dd2/andrei/m114_gonogo.py; rag service live pid
