@@ -227,6 +227,7 @@ def generate(
     media: MediaInfo | None = None,
     adapter_name: str = "auto",
     preflight_check: bool = False,
+    verbose: bool = False,
 ) -> GenerationResponse:
     resp = GenerationResponse(status="")
     try:
@@ -273,6 +274,18 @@ def generate(
         resp.status = "error"
         resp.errors = list(e.errors)
         return resp
+
+    if verbose:
+        # Verbose-log mode (M10.7): the plan's -loglevel is raised to
+        # 'verbose' BEFORE the argv is built, so every pass of a multi-pass
+        # plan shows it in the displayed command (and the executor writes
+        # the run log into {output}/log/ — see execute.start_run).
+        ep.loglevel = "verbose"
+        for p in ep.passes or []:
+            p.loglevel = "verbose"
+        resp.defaults.append(
+            "verbose log requested — every pass runs with -loglevel verbose "
+            "and the run log is written to the output folder's log/ directory")
 
     argvs = build_argv_all(ep)
     argv = argvs[-1]  # the final pass — the one that produces the artifact

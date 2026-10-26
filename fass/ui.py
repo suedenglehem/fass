@@ -1,9 +1,12 @@
 """The web UI (PRD §9): a single self-contained page, no external assets
-(local-first model). Three tabs:
+(local-first model). Four tabs:
 
-- Command — the request form, the clarification flow and the generated
-  command (with a Run button when execution is enabled);
+- Command — the request form (incl. the verbose-log toggle), the
+  clarification flow and the generated command (with a Run button when
+  execution is enabled);
 - Runs — the executed commands, live status, stop, log and output links;
+- Info / Log — media info (ffprobe JSON for an input or output file) and
+  the run/verbose log browser;
 - Config — the deployment config (M6): volume mappings, stream port
   mappings, GPU, the LLM provider, LLM test, save / apply / compose preview.
 """
@@ -104,6 +107,7 @@ th { color: var(--muted); font-weight: 600; }
   <div class="tabs">
     <button id="tab-cmd" class="on" onclick="showTab('cmd')">Command</button>
     <button id="tab-runs" onclick="showTab('runs')">Runs</button>
+    <button id="tab-info" onclick="showTab('info')">Info / Log</button>
     <button id="tab-cfg" onclick="showTab('cfg')">Config</button>
   </div>
 
@@ -128,6 +132,7 @@ th { color: var(--muted); font-weight: 600; }
     <div id="extra"></div>
     <button type="button" class="copy" onclick="addExtra()">+ add input</button>
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
+    <label class="check"><input type="checkbox" id="verbose"> verbose log <span class="note">(every pass runs with -loglevel verbose; the log lands in the output folder's log/ directory — see the Info / Log tab)</span></label>
     <button type="submit">Generate</button>
   </form>
   <div class="result" id="res" hidden></div>
@@ -144,6 +149,38 @@ th { color: var(--muted); font-weight: 600; }
         <tbody id="runs-body"></tbody>
       </table></div>
       <pre id="runs-log" hidden style="margin-top:10px"></pre>
+    </div>
+  </div>
+
+  <!-- ========================================================== INFO / LOG -->
+  <div id="pane-info" hidden>
+    <div class="card">
+      <h2 style="margin-top:0">What to look at</h2>
+      <label class="check" style="margin-top:0"><input type="radio" name="infosel" id="sel-mi" checked onchange="showInfo('mi')"> media info <span class="note">(ffprobe report on one file)</span></label>
+      <label class="check"><input type="radio" name="infosel" id="sel-log" onchange="showInfo('log')"> run log <span class="note">(what ffmpeg printed while running)</span></label>
+
+      <div id="info-mi">
+        <div class="row">
+          <div><label for="mi-target">Look in</label>
+            <select id="mi-target" onchange="fillMi()"><option value="input">input file</option><option value="output">output file</option></select></div>
+          <div><label for="mi-file">File (bare name in that folder)</label>
+            <input id="mi-file" placeholder="clip.mp4"></div>
+        </div>
+        <button type="button" onclick="showMediaInfo()">Show media info</button>
+        <span id="mi-status" class="note"></span>
+        <pre id="mi-out" hidden style="margin-top:10px"></pre>
+      </div>
+
+      <div id="info-log" hidden>
+        <div class="row" style="align-items:flex-end">
+          <div><label for="log-run">Log file</label><select id="log-run"></select></div>
+          <div style="flex:0 0 auto"><button type="button" class="copy" onclick="loadLogs()">↻ refresh</button></div>
+        </div>
+        <button type="button" onclick="showLogFile()">Show log</button>
+        <span id="log-status" class="note"></span>
+        <pre id="log-out" hidden style="margin-top:10px"></pre>
+        <p class="note">Logs longer than 10000 lines are shown as their last 1000.</p>
+      </div>
     </div>
   </div>
 
@@ -205,11 +242,12 @@ let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => { EXEC_ENABLED = !!d.execution; }).catch(() => {});
 
 function showTab(t) {
-  for (const p of ['cmd','runs','cfg']) {
+  for (const p of ['cmd','runs','info','cfg']) {
     $('pane-'+p).hidden = (p !== t);
     $('tab-'+p).classList.toggle('on', p === t);
   }
   if (t === 'runs') loadRuns();
+  if (t === 'info') { loadLogs(); showInfo($('sel-log').checked ? 'log' : 'mi'); }
 }
 
 /* ------------------------------------------------------------ command tab */
@@ -241,6 +279,7 @@ async function submit(e) {
   const body = {
     instruction: $('instr').value.trim(),
     assets, target_shell: 'posix', adapter: $('ad').value, preflight: $('pf').checked,
+    verbose: $('verbose').checked,
   };
   if ($('out').value.trim()) body.output_filename = $('out').value.trim();
   $('res').hidden = false;
@@ -301,7 +340,7 @@ async function runCmd() {
   try {
     const r = await fetch('/v1/runs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ arguments: argv }),
+      body: JSON.stringify({ arguments: argv, verbose: $('verbose').checked }),
     });
     const data = await r.json();
     if (!r.ok) {
@@ -358,6 +397,81 @@ async function showLog(id) {
   const r = await fetch(`/v1/runs/${id}/log`);
   $('runs-log').hidden = false;
   $('runs-log').textContent = (await r.text()) || '(empty log — ffmpeg prints progress on stderr)';
+}
+
+/* -------------------------------------------------------- info / log tab */
+function showInfo(which) {
+  $('info-mi').hidden = (which !== 'mi');
+  $('info-log').hidden = (which !== 'log');
+  if (which === 'mi') fillMi();
+}
+function fillMi() {
+  // auto-fill from the Command tab's fields ('-i ' prefix stripped),
+  // still editable by hand
+  const src = ($('mi-target').value === 'output')
+    ? $('out').value.trim() : $('inp').value.trim();
+  $('mi-file').value = src.replace(/^-i\\s+/, '');
+}
+async function showMediaInfo() {
+  const target = $('mi-target').value;
+  const file = $('mi-file').value.trim();
+  const out = $('mi-out');
+  $('mi-status').textContent = 'reading…';
+  try {
+    const r = await fetch(`/v1/mediainfo?target=${encodeURIComponent(target)}&file=${encodeURIComponent(file)}`);
+    const data = await r.json();
+    if (!r.ok) {
+      out.hidden = true;
+      $('mi-status').innerHTML = `<span class="err">${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2))}</span>`;
+      return;
+    }
+    $('mi-status').textContent = '';
+    out.hidden = false;
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    out.hidden = true;
+    $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
+  }
+}
+async function loadLogs() {
+  const sel = $('log-run');
+  try {
+    const r = await fetch('/v1/logs');
+    const data = await r.json();
+    const logs = data.logs || [];
+    const keep = sel.value;
+    sel.innerHTML = '';
+    for (const lg of logs) {
+      const opt = document.createElement('option');
+      opt.value = lg.name;
+      opt.textContent = `${lg.name} (${lg.kind})`;
+      sel.appendChild(opt);
+    }
+    if (keep) sel.value = keep;
+    $('log-status').textContent = logs.length ? '' : 'no logs on this deployment yet';
+  } catch (e) {
+    $('log-status').innerHTML = `<span class="err">log list failed: ${esc(e)}</span>`;
+  }
+}
+async function showLogFile() {
+  const name = $('log-run').value;
+  if (!name) { $('log-status').textContent = 'pick a log first'; return; }
+  const out = $('log-out');
+  $('log-status').textContent = 'loading…';
+  try {
+    const r = await fetch(`/v1/logs/${encodeURIComponent(name)}`);
+    const text = await r.text();
+    if (!r.ok) {
+      out.hidden = true;
+      $('log-status').innerHTML = `<span class="err">${esc(text)}</span>`;
+      return;
+    }
+    out.hidden = false;
+    out.textContent = text || '(empty log — ffmpeg prints progress on stderr)';
+    $('log-status').textContent = '';
+  } catch (e) {
+    $('log-status').innerHTML = `<span class="err">${esc(e)}</span>`;
+  }
 }
 
 /* ------------------------------------------------------------ config tab */
