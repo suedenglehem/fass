@@ -23,6 +23,7 @@ UI_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fass — natural language → validated FFmpeg commands</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap');
 :root {
   --bg: #f6f7f9; --card: #fff; --text: #1c2128; --muted: #57606a;
   --border: #d0d7de; --accent: #0969da;
@@ -35,6 +36,56 @@ UI_HTML = """<!doctype html>
     --ready: #3fb950; --warn: #d29922; --bad: #f85149;
   }
 }
+/* explicit theme (Config → Appearance): a data-theme attribute on <html>
+   that wins over the prefers-color-scheme auto above whenever present.
+   The Quicksand webfont (Hello Kitty only) degrades to the system stack
+   when offline — the palette carries the scheme either way. */
+html[data-theme="light"] {
+  --bg: #f6f7f9; --card: #fff; --text: #1c2128; --muted: #57606a;
+  --border: #d0d7de; --accent: #0969da;
+  --ready: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+}
+html[data-theme="dark"] {
+  --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
+  --border: #30363d; --accent: #58a6ff;
+  --ready: #3fb950; --warn: #d29922; --bad: #f85149;
+}
+html[data-theme="kitty"] {
+  --bg: #fff5f9; --card: #fff; --text: #7a4059; --muted: #b57f98;
+  --border: #ffc5dc; --accent: #ff4f9a;
+  --ready: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+}
+html[data-theme="kitty"] body { font-family: 'Quicksand', system-ui, -apple-system, sans-serif; }
+html[data-theme="kitty"] h1 { color: var(--accent); }
+html[data-theme="kitty"] .card { border: 2px solid var(--border); border-radius: 24px;
+  box-shadow: 0 6px 16px #ffb6d133; }
+html[data-theme="kitty"] button { border-radius: 30px; }
+html[data-theme="autodesk"] {
+  --bg: #383838; --card: #454545; --text: #e0e0e0; --muted: #aaaaaa;
+  --border: #555555; --accent: #e8a04a;
+  --ready: #3fb950; --warn: #d29922; --bad: #f85149;
+}
+html[data-theme="autodesk"] body { font: 13px/1.5 Arial, sans-serif; }
+html[data-theme="autodesk"] input,
+html[data-theme="autodesk"] select,
+html[data-theme="autodesk"] textarea { background: #303030; border-color: #222; }
+/* Maya's solid-gray toolbar buttons; the orange accent stays on links, the
+   active tab underline and status badges */
+html[data-theme="autodesk"] button:not(.danger):not(.ghost):not(.copy) {
+  background: #505050; border: 1px solid #606060; border-radius: 2px; color: var(--text); }
+html[data-theme="autodesk"] button:not(.danger):not(.ghost):not(.copy):hover { background: #626262; }
+html[data-theme="ffmpeg"] {
+  --bg: #fff; --card: #fff; --text: #333333; --muted: #777777;
+  --border: #dddddd; --accent: #337ab7;
+  --ready: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+}
+/* the FFmpeg-manual docs look: white page, blue links/buttons, gray code */
+html[data-theme="ffmpeg"] body { font: 14px/1.6 Arial, Helvetica, sans-serif; }
+html[data-theme="ffmpeg"] pre { background: #f5f5f5; }
+html[data-theme="ffmpeg"] a:hover { text-decoration: underline; }
+html[data-theme="ffmpeg"] button:not(.danger):not(.ghost):not(.copy) {
+  border: 1px solid #2e6da4; border-radius: 4px; }
+html[data-theme="ffmpeg"] button:not(.danger):not(.ghost):not(.copy):hover { background: #286090; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, sans-serif; }
@@ -238,7 +289,20 @@ a { color: var(--accent); }
   <!-- ============================================================= CONFIG -->
   <div id="pane-cfg" hidden>
     <div class="card">
-      <h2 style="margin-top:0">Volumes — host folders ↔ container</h2>
+      <h2 style="margin-top:0">Appearance</h2>
+      <div class="row" style="align-items:center">
+        <div style="flex:0 0 auto"><label for="theme">theme</label>
+          <select id="theme">
+            <option value="auto">auto — follow the system</option>
+            <option value="light">light</option>
+            <option value="dark">night (dark)</option>
+            <option value="kitty">Hello Kitty</option>
+            <option value="autodesk">Autodesk (Maya)</option>
+            <option value="ffmpeg">FFmpeg (docs)</option>
+          </select></div>
+        <span class="note">Stored in this browser only. 'auto' follows the OS color scheme.</span>
+      </div>
+      <h2>Volumes — host folders ↔ container</h2>
       <div class="row">
         <div><label>/input — inputs live here</label><input id="v-in" placeholder="/data/fass/input"></div>
         <div><label>/output — results land here</label><input id="v-out" placeholder="/data/fass/output"></div>
@@ -351,6 +415,26 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 let lastRunId = null;
 let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => { EXEC_ENABLED = !!d.execution; }).catch(() => {});
+
+/* Appearance: an explicit theme on <html data-theme> overrides the OS
+   prefers-color-scheme; the pick persists in this browser. 'auto' removes
+   the attribute so the media query drives the scheme. */
+(function () {
+  const root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem('fassTheme'); } catch (e) {}
+  if (saved && saved !== 'auto') root.dataset.theme = saved;
+  const sel = $('theme');
+  if (sel) {
+    sel.value = (saved && saved !== 'auto') ? saved : 'auto';
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      if (v === 'auto') delete root.dataset.theme;
+      else root.dataset.theme = v;
+      try { localStorage.setItem('fassTheme', v); } catch (e) {}
+    });
+  }
+})();
 
 function showTab(t) {
   // the base four + 'rag' + 'files' (concat keeps the pinned literal in test_webinfo)
