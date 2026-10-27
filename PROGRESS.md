@@ -223,10 +223,11 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   optional: gaps/ note on auto-adapter 401-no-fallback on tr4 (no
   ANTHROPIC_API_KEY → E2E must use `--adapter rules`); dispatcher
   cc-worker result-format drift note. Context: PUSHED 2026-10-27
-  (user's explicit "push it") — origin/main = 844943c (pushed to
-  c949b9e, then to 844943c, the "push landed" docs commit);
-  unpushed since: b8ed8ff, ea9919e, 9967441, 8c2e11a, 6bca1a3 +
-  the M12 close-out commit. M11 series DONE: all PRD gates
+  (user's explicit "push it") — origin/main = 237d554 (844943c..
+  237d554, 6 commits fast-forward: b8ed8ff, ea9919e, 9967441,
+  8c2e11a, 6bca1a3, 237d554); i7 mirror ff-merged from origin
+  (local state preserved). Unpushed: only this push-record
+  commit. M11 series DONE: all PRD gates
   measured, both battery halves 21/21. Standing: advisory evidence
   only — the registry/builder/argv gate stays sovereign; treat
   evidence_status 'supported' with skepticism (M11.1 calibration
@@ -465,7 +466,7 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 
 | fact | value |
 |---|---|
-| git | `main` = **6bca1a3** (README quality-comparison workflow + stream allowlist + spec link, 2026-10-27) + the M12 close-out docs commit (this segment); `origin/main` = **844943c** (PUSHED 2026-10-27 on the user's explicit "push it": first to c949b9e, then to 844943c the "push landed" docs commit — the whole M11 arc 36510a8…2ce5e95 is inside it) — everything after is LOCAL ONLY, push only when asked. Unpushed since 844943c: b8ed8ff (compare: Netflix vmaf order + probe-conditional setpts), ea9919e (M12.WM multiple watermarks), 9967441 (M12.BATCH batch mode), 8c2e11a (M12.HDR HDR→SDR tone-mapping), 6bca1a3 (README docs job) + the M12 close-out docs commit |
+| git | `main` = **237d554** (M12 close-out docs) + this push-record commit; `origin/main` = **237d554** (PUSHED 2026-10-27 on the user's explicit "push it": 844943c..237d554, 6 commits fast-forward — the whole M11 arc + all M12 work is inside it); i7 mirror ff-synced to 237d554 (compose.yaml local opt-ins preserved) — everything after is LOCAL ONLY, push only when asked. Unpushed: only this push-record docs commit |
 | working tree | clean except untracked `.resume` (per-machine — leave alone), `drafts/` + `gaps/` (working dirs — keep untracked), and 3 stray `media/` files (Beauty_...HEVC_RAW.hevc, src01_hrc00/01_576x324.yuv — NOT from our work, leave untracked/uncommitted); RAG corpus data under rag/corpus/* is gitignored (rebuilt by rag/tools/build_corpus.sh, recipe rag/corpus/BUILD-RECIPE.md); rag/benchmark/results.json gitignored |
 | test baseline | **1278 passed / 1 skipped** (146 s, tr4 host 6.1.1, 2026-10-27, post-M12.HDR) — includes 25 M10.7 webinfo tests, the RAG benchmark gate run (skipif-guarded on the gitignored corpus), 18 rag/author tests, 2 gaps drift regression tests, 13 held-out shape tests, +24 M12.WM multi-watermark tests, M12.BATCH tests, 24 M12.HDR tonemap tests (tests/test_tonemap.py) |
 | local machine | **session machine = tr4 (b760one)**; `/dd2/andrei/fass`, host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3, `media/titan.mp4` (20 s test clip). vLLM: tr4-primary 127.0.0.1:8091 (qwen3.8-27b — the ablation endpoint, healthy) + tr4-secondary 127.0.0.1:8080 (swift-1.5-iq3_xxs — weak); fass-rag service live on 127.0.0.1:8100 (pid **1918855** — restarted 2026-10-27 00:4x after the ablation finished; old pid 959120 killed by exact pid) |
