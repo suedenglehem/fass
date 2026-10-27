@@ -717,6 +717,198 @@ def test_hls_container(gen):
     assert r.plan["output"]["container"] == "hls"
 
 
+def test_dash_container(gen):
+    r = gen("convert to dash", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "dash"
+
+
+def test_dash_word_phrasings(gen):
+    r = gen("make a dash", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "dash"
+
+
+def test_mpd_extension_phrasing_is_dash(gen):
+    r = gen("convert to a .mpd", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "dash"
+
+
+# ---------------- M13.2: live HLS (rolling event playlist)
+
+def test_live_hls_event_playlist(gen):
+    r = gen("live hls", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert out["format_options"] == {
+        "hls_playlist_type": "event",
+        "hls_flags": "independent_segments"}
+
+
+def test_live_hls_window(gen):
+    r = gen("live hls with a 10 segment window", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["format_options"] == {
+        "hls_playlist_type": "event",
+        "hls_flags": "independent_segments",
+        "hls_list_size": "10"}
+    a = r.arguments
+    assert a[a.index("-f") + 1] == "hls"
+    assert a[a.index("-hls_playlist_type") + 1] == "event"
+    assert a[a.index("-hls_list_size") + 1] == "10"
+    assert a[a.index("-hls_flags") + 1] == "independent_segments"
+
+
+def test_live_hls_delete_segments_opt_in(gen):
+    # delete_segments is OPT-IN (deleting rolled-off segments breaks
+    # DVR/seek) — only the explicit phrasing adds it
+    r = gen("live hls with a 5 segment window and delete old segments",
+            "clip.mp4")
+    assert r.status == "ready"
+    fo = r.plan["output"]["format_options"]
+    assert fo["hls_list_size"] == "5"
+    # '+'-joined FFmpeg flag syntax (the flagset validator's form)
+    assert set(fo["hls_flags"].split("+")) == {
+        "independent_segments", "delete_segments"}
+
+
+def test_hls_without_live_stays_vod(gen):
+    r = gen("convert to hls", "clip.mp4")
+    assert r.status == "ready"
+    fo = r.plan["output"].get("format_options") or {}
+    assert "hls_playlist_type" not in fo
+    assert "delete_segments" not in (fo.get("hls_flags") or "")
+
+
+def test_live_hls_finite_input_warns(gen):
+    # an event playlist over a finite file ends with #EXT-X-ENDLIST
+    # (probed) — the run is allowed, the warning is owed
+    r = gen("live hls", "clip.mp4")
+    assert r.status == "ready"
+    assert any("ENDLIST" in w for w in r.warnings)
+
+
+def test_live_hls_stream_input_no_endlist_warning(gen):
+    r = gen("live hls", "rtsp://cam.local/stream")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "hls"
+    assert not any("ENDLIST" in w for w in r.warnings)
+
+
+# ---------------- M13.3: ABR HLS ladder
+
+def test_ladder_explicit_levels(gen):
+    r = gen("abr hls with levels 216p 300k, 360p 700k, 480p 1500k",
+            "clip.mp4", media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert [(v["height"], v["video_bitrate_kbps"]) for v in out["variants"]] == [
+        (216, 300), (360, 700), (480, 1500)]
+    # the per-level '216p' tokens must not double-read as a top-level
+    # resize or a top-level bitrate
+    assert not any(op["type"] == "resize" for op in r.plan["operations"])
+    assert out["video_bitrate_kbps"] is None
+
+
+def test_ladder_default_table_request(gen):
+    r = gen("abr hls", "clip.mp4", media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert out["variants"] == []
+
+
+def test_ladder_count_only(gen):
+    r = gen("make an hls ladder with 3 quality levels", "clip.mp4",
+            media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert out["variants"] == []
+
+
+def test_dash_ladder(gen):
+    r = gen("dash ladder", "clip.mp4", media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "dash"
+    assert out["variants"] == []
+
+
+def test_dash_ladder_explicit_levels(gen):
+    r = gen("dash ladder with levels 216p 300k, 480p 1500k", "clip.mp4",
+            media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "dash"
+    assert len(out["variants"]) == 2
+    v0, v1 = out["variants"]
+    assert (v0["height"], v0["video_bitrate_kbps"]) == (216, 300)
+    assert (v1["height"], v1["video_bitrate_kbps"]) == (480, 1500)
+
+
+def test_abr_dash(gen):
+    r = gen("abr dash", "clip.mp4", media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "dash"
+    assert out["variants"] == []
+
+
+def test_dash_word_then_ladder(gen):
+    r = gen("convert to dash and make an abr ladder", "clip.mp4",
+            media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "dash"
+    assert out["variants"] == []
+
+
+def test_ladder_default_container_is_hls(gen):
+    # a ladder without a container word: segmented output, HLS is the home
+    r = gen("make me a ladder with 3 quality levels", "clip.mp4",
+            media=make_media())
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert out["variants"] == []
+    assert any("ladder" in n.lower() for n in r.defaults)
+
+
+def test_ladder_conflicts_with_resize(gen):
+    r = gen("abr hls and resize to 480p", "clip.mp4", media=make_media())
+    assert r.status == "needs_clarification"
+
+
+def test_ladder_conflicts_with_grayscale(gen):
+    r = gen("abr hls with levels 360p 700k and make it grayscale",
+            "clip.mp4", media=make_media())
+    assert r.status == "needs_clarification"
+
+
+def test_ladder_conflicts_with_audio_remove(gen):
+    r = gen("abr hls with no audio", "clip.mp4", media=make_media())
+    assert r.status == "needs_clarification"
+
+
+def test_ladder_trim_allowed(gen):
+    r = gen("abr hls and cut the first 10 seconds", "clip.mp4",
+            media=make_media())
+    assert r.status == "ready"
+    assert r.plan["trim"] is not None
+    assert r.plan["output"]["variants"] == []
+
+
+def test_live_hls_is_not_a_ladder(gen):
+    r = gen("live hls with a 10 segment window", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"].get("variants") is None
+
+
 def test_mpeg2_for_broadcast_is_mpegts(gen):
     r = gen("convert to mpeg2 for broadcast mpegts", "clip.mp4")
     assert r.status == "ready"

@@ -485,7 +485,7 @@ def subtitle_dump_codec(container: str) -> str | None:
 # movflags/brand/fragmentation options of the whole MPEG-4 family).
 _FORMAT_OPTION_GROUPS = {
     "mp4": "mp4", "mov": "mp4", "m4a": "mp4", "3gp": "mp4",
-    "mpegts": "mpegts", "hls": "hls", "avi": "avi", "flv": "flv",
+    "mpegts": "mpegts", "hls": "hls", "dash": "dash", "avi": "avi", "flv": "flv",
     "mp3": "mp3", "wav": "wav",
 }
 

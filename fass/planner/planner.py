@@ -1490,11 +1490,18 @@ def plan_execution(
             ])
         out_path = dest
         if not out_path:
-            stem = os.path.splitext(os.path.basename(in_path))[0] or "output"
-            ext = extension_for(edit.output.container)
-            out_path = f"{stem}.{ext}"
+            if out.container == "hls" and out.variants is not None:
+                # M13.3: the ladder writes one playlist per level — the
+                # default name carries the %v variant pattern.
+                out_path = "stream_%v.m3u8"
+            else:
+                stem = os.path.splitext(os.path.basename(in_path))[0] or "output"
+                ext = extension_for(edit.output.container)
+                out_path = f"{stem}.{ext}"
             # A defaulted name must never resolve to the source file.
             if os.path.realpath(out_path) == os.path.realpath(in_path):
+                stem = os.path.splitext(os.path.basename(in_path))[0] or "output"
+                ext = extension_for(edit.output.container)
                 out_path = f"{stem}_out.{ext}"
             defaults.append(f"output filename defaulted to '{out_path}'")
 
@@ -1509,6 +1516,42 @@ def plan_execution(
                     "HLS output uses a .m3u8 playlist file (the muxer writes "
                     "the media segments next to it)"
                 )
+            if out.variants is not None \
+                    and "%v" not in os.path.basename(out_path):
+                # The hls muxer's per-variant playlists are the playlist
+                # name with %v substituted — without the pattern every
+                # level would overwrite the same file.
+                base, ext = os.path.splitext(out_path)
+                out_path = f"{base}_%v{ext}"
+                defaults.append(
+                    "the ABR ladder writes one playlist per level — a '%v' "
+                    "pattern was added to the playlist name"
+                )
+            if out.format_options.get("hls_playlist_type") == "event" \
+                    and stream_scheme(in_path) is None:
+                # An event playlist over a finite file (probed): the rolling
+                # playlist grows as segments close and gains #EXT-X-ENDLIST
+                # only when the process exits — a live player plays the
+                # window and then stops. Allowed (the UI's live playback
+                # needs file-input runs); a stream input (or -re pacing,
+                # M13b) is what true live means.
+                warnings.append(
+                    "live (event) playlist from a finite input ends with "
+                    "#EXT-X-ENDLIST — a live player will play through and "
+                    "then stop; for true live use a stream input (or -re "
+                    "for a paced pseudo-live)")
+
+        if out.container == "dash" and out_path:
+            # DASH on disk is the .mpd manifest; the muxer writes the fMP4
+            # segments next to it. Force the extension and the explicit muxer.
+            muxer = "dash"
+            if os.path.splitext(out_path)[1].lower() != ".mpd":
+                base, _ = os.path.splitext(out_path)
+                out_path = f"{base}.mpd"
+                defaults.append(
+                    "DASH output uses a .mpd manifest file (the muxer writes "
+                    "the media segments next to it)"
+                )
 
         real_out = os.path.realpath(out_path)
         if real_out == os.path.realpath(in_path):
@@ -1520,6 +1563,20 @@ def plan_execution(
             raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
         if sub_path and real_out == os.path.realpath(sub_path):
             raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
+        if out.mode != "subtitles" and out_path:
+            # A .ts destination carries MPEG-TS (and so on) — an explicitly
+            # requested, conflicting container is a contradiction (the
+            # pipeline reconciles a merely-defaulted one before this point).
+            # After the overwrite guards: "refusing to overwrite" is the
+            # more specific error when the destination IS one of the inputs.
+            dest_container = _container_from_path(out_path)
+            if dest_container is not None \
+                    and dest_container != edit.output.container:
+                raise PlanError([
+                    f"output destination '{out_path}' carries "
+                    f"{dest_container.upper()} but the plan is "
+                    f"{edit.output.container.upper()} — name one, not both"
+                ])
         if out_path and out_path.startswith("/input/"):
             warnings.append(
                 f"output '{out_path}' lands in the input folder — later "
@@ -1579,6 +1636,35 @@ def plan_execution(
         else:
             mode = "reencode"
     else:
+        # M13.3: an ABR ladder is always a re-encode (a stream copy cannot
+        # make levels) and a plain one — the per-level -map groups own the
+        # video chain, so no edit may ride along (the NLU clarifies the mix;
+        # the planner enforces it for plans built outside the NLU).
+        if out.variants is not None:
+            if edit.operations or edit.filtergraph:
+                raise PlanError([
+                    "an ABR ladder re-encodes every level on its own — a "
+                    "resize, effect, subtitle or audio edit in the same "
+                    "plan would apply to every variant; build the ladder "
+                    "first, then add the edit in a follow-up"
+                ])
+            if out.audio_mode is AudioMode.REMOVE:
+                raise PlanError([
+                    "an ABR ladder carries one audio track per level — it "
+                    "cannot remove the audio"
+                ])
+            if out.video_preset is not None \
+                    or out.video_codec_options or out.audio_codec_options:
+                raise PlanError([
+                    "an ABR ladder sets per-level rate control and presets "
+                    "of its own — clear the encoder preset and codec "
+                    "options (they cannot be applied per level)"
+                ])
+            if metadata is not None and not metadata.has_audio:
+                raise PlanError([
+                    "an ABR ladder carries one audio track per level — the "
+                    "input has no audio stream"
+                ])
         # PRD FR-4: trimming re-encodes. An explicit target bitrate also
         # forces a re-encode: stream copy cannot honor a bitrate the input
         # does not have. A filtergraph decodes the video, so it re-encodes too.
@@ -1598,6 +1684,7 @@ def plan_execution(
         needs_reencode = (has_trim and not copy_trim or bool(forced_ops)
                           or bool(edit.filtergraph)
                           or edit.output.video_bitrate_kbps is not None
+                          or out.variants is not None
                           or encoder_params
                           or force_reencode)
         if force_reencode and not (has_trim or bool(forced_ops)
@@ -1767,6 +1854,12 @@ def plan_execution(
         sub_enc = soft_subtitle_codec(edit.output.container) if sub_path else None
         ep = _build_copy_plan(edit, in_path, out_path, metadata,
                               sub_path=sub_path, sub_enc=sub_enc)
+    elif out.variants is not None:
+        # M13.3: ABR ladder — guarded plain + forced re-encode above.
+        ep = _build_ladder_plan(
+            edit, in_path, out_path,
+            _resolve_ladder_levels(out.variants, metadata,
+                                   out.video_profile, defaults))
     else:
         sub_input, sub_exprs, sub_enc = None, None, None
         if sub_path:
@@ -2097,6 +2190,225 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
         output_opts=opts,
         output_path=out_path,
         defaults=defaults,
+    )
+
+
+# ---------------------------------------------------------------- ABR ladder (M13.3)
+
+# Default ladder table (product policy, not an FFmpeg capability): one row
+# per height — the CBR-style video bitrate, the H.264 profile and level,
+# and the audio bitrate. -bufsize is always 2x the video bitrate.
+_DEFAULT_LADDER_TABLE: list[tuple[int, int, str, str, int]] = [
+    # (height, video_kbps, profile, level, audio_kbps)
+    (216, 300, "main", "3.0", 56),
+    (360, 700, "main", "3.1", 64),
+    (480, 1500, "main", "3.2", 80),
+    (720, 2500, "main", "3.1", 96),
+    (1080, 4500, "main", "4.0", 128),
+]
+_DEFAULT_LADDER_COUNT = 3  # the common ABR spread (the tallest rows that fit)
+
+
+def _ladder_row_at_or_below(height: int):
+    """The table row at or below the level's height — the fallback for a
+    height the table doesn't know (nearest-lower row: its profile, level
+    and audio bitrate). None below the smallest row."""
+    row = None
+    for r in _DEFAULT_LADDER_TABLE:
+        if r[0] <= height:
+            row = r
+        else:
+            break
+    return row
+
+
+def _resolve_ladder_levels(variants, metadata, top_profile,
+                           defaults: list[str]) -> list[dict]:
+    """Resolve ABR ladder levels against the input geometry.
+
+    An empty ``variants`` list = 'ladder requested': the default table, the
+    tallest ``_DEFAULT_LADDER_COUNT`` rows that fit the input height (never
+    an upscale). Filled levels: a missing width or height derives from the
+    input aspect (kept even), the height caps at the input height, and an
+    unset bitrate/profile/level/audio falls back to the table row at or
+    below the level's height. A top-level video_profile applies to every
+    level that does not name its own. Returns the levels ascending by
+    height, each a dict with width, height, video_kbps, audio_kbps,
+    profile and level.
+    """
+    def fail(msg):
+        raise PlanError([msg])
+
+    in_w = metadata.width if metadata else None
+    in_h = metadata.height if metadata else None
+    aspect = in_w / in_h if (in_w and in_h) else None
+
+    def width_for(height: int) -> int:
+        if aspect is None:
+            fail(
+                "an ABR ladder level named by height alone needs the "
+                "input's probed width and height to derive the width "
+                "(no media metadata)"
+            )
+        return even(round(height * aspect))
+
+    seen: set[int] = set()
+    levels: list[dict] = []
+
+    def add(w: int, h: int, vkb: int, akb: int, prof: str, lvl: str) -> None:
+        if h in seen:
+            fail(f"duplicate ladder level {h}p — merge the two levels")
+        seen.add(h)
+        levels.append({"width": w, "height": h, "video_kbps": vkb,
+                       "audio_kbps": akb, "profile": prof, "level": lvl})
+
+    if not variants:
+        # 'ladder requested' without levels: the default table, capped.
+        if in_h is None:
+            fail(
+                "an ABR ladder needs the input's probed height to pick the "
+                "default levels (no media metadata); name the levels "
+                "explicitly (e.g. 'abr hls with levels 216p 300k, "
+                "360p 700k, 480p 1500k')"
+            )
+        rows = [r for r in _DEFAULT_LADDER_TABLE if r[0] <= in_h]
+        if not rows:
+            fail(
+                f"the input is {in_h}px tall — shorter than the ladder's "
+                "smallest default level (216p); name the levels explicitly"
+            )
+        rows = rows[-_DEFAULT_LADDER_COUNT:]
+        defaults.append(
+            "ABR ladder default levels: "
+            + ", ".join(f"{r[0]}p {r[1]}k" for r in rows)
+            + " (the tallest default levels that fit the input height)"
+        )
+        for h, vkb, prof, lvl, akb in rows:
+            add(width_for(h), h, vkb, akb, top_profile or prof, lvl)
+    else:
+        for i, v in enumerate(variants):
+            h, w = v.height, v.width
+            if h is None and w is None:
+                fail(f"ladder level {i + 1} needs a width and/or a height")
+            if h is None:
+                if aspect is None:
+                    fail(
+                        f"ladder level {w}x? needs the input's probed width "
+                        "and height to derive the height (no media metadata)"
+                    )
+                h = even(round(w / aspect))
+            if in_h is not None and h > in_h:
+                defaults.append(
+                    f"ladder level {h}p capped at the input height "
+                    f"({in_h}p) — fass never upscales a ladder level"
+                )
+                h = in_h
+                if w is not None:
+                    # The cap changed the level — re-derive the explicit
+                    # width from the capped height to keep the aspect.
+                    w = width_for(h)
+            if w is None:
+                w = width_for(h)
+            w = even(w)
+            row = _ladder_row_at_or_below(h)
+            vkb = v.video_bitrate_kbps
+            if vkb is None:
+                if row is None:
+                    fail(
+                        f"ladder level {h}p: no video bitrate given and the "
+                        "height is below the smallest default-table row "
+                        "(216) — name a bitrate (e.g. '180p 200k')"
+                    )
+                vkb = row[1]
+                defaults.append(
+                    f"ladder level {h}p video bitrate {vkb}k from the "
+                    "default table"
+                )
+            prof = v.video_profile or top_profile
+            if prof is None:
+                prof = row[2] if row else "main"
+            lvl = v.video_level
+            if lvl is None:
+                lvl = row[3] if row else "3.0"
+            akb = v.audio_bitrate_kbps or (row[4] if row else 56)
+            add(w, h, vkb, akb, prof, lvl)
+
+    levels.sort(key=lambda lv: lv["height"])
+    return levels
+
+
+def _build_ladder_plan(edit: EditPlan, in_path: str, out_path: str,
+                       levels: list[dict]) -> ExecutionPlan:
+    """M13.3: an ABR ladder — one mapped v+a pair per level, per-level
+    options addressed by stream specifier.
+
+    Stream specifiers are the probed mechanism (both 6.1.1 and 9.0.1):
+    `-b:v:N`/`-s:v:N`/`-b:a:N` address the Nth mapped stream OF THAT TYPE
+    (the maps are v-then-a per level, so level K's video and audio are
+    v:K and a:K). The shared encoders ride bare (they apply to every
+    mapped stream of that type). The interleaved bare form — one
+    `-map … -b:v … -s …` group per level — is WRONG: a bare per-stream
+    option applies to ALL matching output streams (last occurrence wins),
+    so every variant encoded at the last level's size/bitrate (probed on
+    6.1.1: two-level interleaved ladder produced two identical variants).
+
+        -map 0:v:0 -map 0:a:0 -map 0:v:0 -map 0:a:0 …   (per level)
+        -c:v libx264 -c:a aac -pix_fmt yuv420p
+        -b:v:0 300k -minrate:v:0 300k -maxrate:v:0 300k -bufsize:v:0 600k
+         -profile:v:0 main -level:v:0 3.0 -s:v:0 384x216 -b:a:0 56k
+        (per-level block repeated with the level's index)
+        -var_stream_map 'v:0,a:0 v:1,a:1 …'
+    """
+    if edit.output.video_codec == "h265" \
+            and any(lv["profile"] == "baseline" for lv in levels):
+        raise PlanError([
+            "libx265 has no 'baseline' profile — use 'main' (or clear the "
+            "profile)"
+        ])
+    inputs = [_main_input(in_path)]
+    if edit.trim is not None:
+        # -ss as an input option: frame-accurate when followed by decoding
+        # (the same cut for every level).
+        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+    vc = REGISTRY["video_codecs"][edit.output.video_codec]
+    v_encoder = vc["encoder"]
+    acodec = edit.output.audio_codec or audio_for(edit.output.container)
+    ac = REGISTRY["audio_codecs"][acodec]
+    opts: list[str] = []
+    if edit.trim is not None and edit.trim.is_bounded:
+        opts += ["-t", fmt_num(edit.trim.duration_seconds)]
+    # All the maps first — the specifier indices follow the map order
+    # (v-then-a per level, so level K is v:K and a:K).
+    for _ in levels:
+        opts += ["-map", "0:v:0", "-map", "0:a:0"]
+    # The shared encoders ride bare: a bare codec/pix_fmt option applies
+    # to every mapped stream of that type (probed).
+    opts += ["-c:v", v_encoder, "-c:a", ac["encoder"],
+             "-pix_fmt", vc["pix_fmt"]]
+    # Per-level blocks, each addressed by the level's stream specifier.
+    for i, lv in enumerate(levels):
+        vkb = lv["video_kbps"]
+        opts += [
+            f"-b:v:{i}", f"{vkb}k",
+            f"-minrate:v:{i}", f"{vkb}k",
+            f"-maxrate:v:{i}", f"{vkb}k",
+            f"-bufsize:v:{i}", f"{2 * vkb}k",
+            f"-profile:v:{i}", lv["profile"],
+            f"-level:v:{i}", lv["level"],
+            f"-s:v:{i}", f"{lv['width']}x{lv['height']}",
+            f"-b:a:{i}", f"{lv['audio_kbps']}k",
+        ]
+    opts += ["-var_stream_map",
+             " ".join(f"v:{i},a:{i}" for i in range(len(levels)))]
+    return ExecutionPlan(
+        mode="reencode",
+        inputs=inputs,
+        vf=None,
+        filter_complex=None,
+        maps=[],
+        output_opts=opts,
+        output_path=out_path,
+        af=None,
     )
 
 

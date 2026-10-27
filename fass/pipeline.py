@@ -244,12 +244,33 @@ def _reconcile_output_destination(
             ])
         return
     info = stream_output_info(output_filename)
-    if info is None:
-        return  # a filename, or a URL the planner will reject with a message
-    dest_container, _ = info
-    edit.output_destination = output_filename
+    if info is not None:
+        dest_container, _ = info
+        edit.output_destination = output_filename
+        if edit.output.container != dest_container:
+            defaulted = any("container" in d and "default" in d
+                            for d in nlu_defaults)
+            if not defaulted:
+                return  # explicit, conflicting container -> the planner's PlanError
+            edit.output.container = dest_container
+            resp.defaults.append(
+                f"output container set to {dest_container} by the output destination {output_filename}"
+            )
+        return
+    # A file destination: its extension is authoritative for the container
+    # when the plan's container was only defaulted — an mp4/mov default must
+    # not ship -movflags +faststart into an mpegts (.ts) output. Subtitle
+    # dumps are excluded: the stream 'srt' container shadows 'srt_file' for
+    # the .srt extension.
+    if edit.output.mode == "subtitles":
+        return
+    dest_container = container_from_extension(
+        Path(output_filename).suffix.lstrip("."))
+    if dest_container is None:
+        return  # no extension, or one the registry doesn't map
     if edit.output.container != dest_container:
-        defaulted = any("container" in d and "default" in d for d in nlu_defaults)
+        defaulted = any("container" in d and "default" in d
+                        for d in nlu_defaults)
         if not defaulted:
             return  # explicit, conflicting container -> the planner's PlanError
         edit.output.container = dest_container

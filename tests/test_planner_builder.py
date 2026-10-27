@@ -312,6 +312,40 @@ def test_mpegts_output_extension():
     assert "libx264" in ep.output_opts
 
 
+# --------- M13.1: single-variant DASH
+
+def test_dash_output_extension_and_muxer():
+    ep = ep_for(output=OutputSpec(container="dash", video_codec="h264"))
+    assert ep.output_path == "clip.mpd"
+    # -f dash is prepended to the output options (mirrors the hls special case)
+    assert ep.output_opts[:2] == ["-f", "dash"]
+    assert "-movflags" not in ep.output_opts
+
+
+def test_dash_forces_mpd_extension():
+    ep = ep_for(output=OutputSpec(container="dash", video_codec="h264"), out="clip")
+    assert ep.output_path == "clip.mpd"
+
+
+def test_file_destination_carries_conflicting_container():
+    # An explicitly requested mp4 plan with a .ts destination is a
+    # contradiction (a merely-defaulted container is reconciled upstream)
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    with pytest.raises(PlanError, match="carries MPEGTS"):
+        plan_execution(edit, _assets(), None, "out.ts")
+
+
+def test_ts_destination_reconciles_defaulted_mp4_container(gen):
+    # Bug: an mp4/mov source transcoded to a .ts file — the container
+    # defaulted from the input filename used to ship -movflags +faststart
+    # into the mpegts output
+    r = gen("convert my clip", media=make_media(), output_filename="out.ts")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "mpegts"
+    assert "-movflags" not in r.arguments
+    assert r.arguments[-1] == "out.ts"
+
+
 def test_cbr_trim_argv_full_shape():
     # The user's exact request: trim 20-30s, CBR 10 Mbps, mpeg ts.
     argv = argv_for(
@@ -908,3 +942,277 @@ def test_mxf_output_reencodes_and_uses_pcm(gen):
     assert argv[argv.index("-g") + 1] == "120"  # mxf index table: frame offsets ±127
     assert any("master format" in d for d in r.defaults)
     assert any("GOP capped at 120" in d for d in r.defaults)
+
+
+# ------------------------------------------------- M13.3 ABR ladder (planner)
+
+def _lvl(h, kbps, profile=None, level=None):
+    d = {"height": h, "video_bitrate_kbps": kbps}
+    if profile:
+        d["video_profile"] = profile
+    if level:
+        d["video_level"] = level
+    return d
+
+
+def test_ladder_explicit_levels_argv_exact():
+    # the probed specifier form: all the maps first (v-then-a per level, so
+    # level K is v:K and a:K), the shared bare encoders, then per-level
+    # options addressed by stream specifier, then '-var_stream_map', then
+    # the %v playlist name
+    ep = ep_for(output=OutputSpec(
+        container="hls", video_codec="h264",
+        variants=[_lvl(216, 300), _lvl(360, 700), _lvl(480, 1500)]),
+        media=make_media())
+    argv = build_argv(ep)
+    assert argv[-1] == "stream_%v.m3u8"
+    # maps is empty — the per-level maps live inside output_opts
+    assert ep.maps == []
+    assert argv[:6] == ["ffmpeg", "-hide_banner", "-loglevel", "error",
+                        "-i", "clip.mp4"]
+    assert argv[6:8] == ["-f", "hls"]
+    assert argv[8:20] == ["-map", "0:v:0", "-map", "0:a:0"] * 3
+    # the shared encoders ride bare — they apply to every mapped stream
+    assert argv[20:26] == ["-c:v", "libx264", "-c:a", "aac",
+                           "-pix_fmt", "yuv420p"]
+    # level 0: the 216p row (300k, main, 3.0, 56k, 384x216)
+    assert argv[26:42] == [
+        "-b:v:0", "300k", "-minrate:v:0", "300k", "-maxrate:v:0", "300k",
+        "-bufsize:v:0", "600k", "-profile:v:0", "main", "-level:v:0", "3.0",
+        "-s:v:0", "384x216", "-b:a:0", "56k"]
+    # level 1: the 360p row (700k, main, 3.1, 64k, 640x360)
+    assert argv[42:58] == [
+        "-b:v:1", "700k", "-minrate:v:1", "700k", "-maxrate:v:1", "700k",
+        "-bufsize:v:1", "1400k", "-profile:v:1", "main", "-level:v:1", "3.1",
+        "-s:v:1", "640x360", "-b:a:1", "64k"]
+    # level 2: the 480p row (1500k, main, 3.2, 80k, 854x480)
+    assert argv[58:74] == [
+        "-b:v:2", "1500k", "-minrate:v:2", "1500k", "-maxrate:v:2", "1500k",
+        "-bufsize:v:2", "3000k", "-profile:v:2", "main", "-level:v:2", "3.2",
+        "-s:v:2", "854x480", "-b:a:2", "80k"]
+    # var_stream_map at the end, one 'v:i,a:i' per level
+    v = argv.index("-var_stream_map")
+    assert argv[v + 1] == "v:0,a:0 v:1,a:1 v:2,a:2"
+    # no stream-copy (the ladder always re-encodes)
+    assert "copy" not in argv
+
+
+def test_ladder_default_table_picks_top3_fit_input():
+    # 1080p input, no explicit levels -> the three tallest default rows that
+    # fit: 480p / 720p / 1080p (never upscales)
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[]),
+                media=make_media(width=1920, height=1080))
+    argv = build_argv(ep)
+    # collect all per-level sizes in order
+    s = [argv[i + 1] for i in range(len(argv))
+         if argv[i].startswith("-s:v:")]
+    assert s == ["854x480", "1280x720", "1920x1080"]
+    b = [argv[i + 1] for i in range(len(argv))
+         if argv[i].startswith("-b:v:")]
+    assert b == ["1500k", "2500k", "4500k"]
+    assert argv[-1] == "stream_%v.m3u8"
+
+
+def test_ladder_never_upscales_explicit_level():
+    # explicit 1080p level on a 720p input -> capped to the input height
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(1080, 4500)]),
+                media=make_media(width=1280, height=720))
+    argv = build_argv(ep)
+    s = [argv[i + 1] for i in range(len(argv))
+         if argv[i].startswith("-s:v:")]
+    assert s == ["1280x720"]  # 1080p capped to the 720p input
+    assert argv[-1] == "stream_%v.m3u8"
+
+
+def test_ladder_single_variant_keeps_var_stream_map():
+    # even a one-level ladder is a ladder: var_stream_map + %v are present
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(360, 700)]),
+                media=make_media())
+    argv = build_argv(ep)
+    v = argv.index("-var_stream_map")
+    assert argv[v + 1] == "v:0,a:0"
+    assert argv[-1] == "stream_%v.m3u8"
+
+
+def test_ladder_dash_uses_mpd_no_v():
+    ep = ep_for(output=OutputSpec(container="dash", video_codec="h264",
+                                  variants=[_lvl(360, 700), _lvl(480, 1500)]),
+                media=make_media())
+    argv = build_argv(ep)
+    assert ep.output_path == "clip.mpd"
+    assert argv[-1] == "clip.mpd"
+    assert argv[6:8] == ["-f", "dash"]
+    assert "%v" not in argv[-1]
+    # still a ladder: var_stream_map is emitted (the DASH ladder, M13.4)
+    assert argv.index("-var_stream_map") != -1
+
+
+def test_ladder_dash_argv_exact():
+    # the DASH ladder (M13.4): identical specifier form to the HLS ladder,
+    # '-f dash' in front, a single .mpd as the destination (auto adaptation
+    # sets — the planner never emits explicit -adaptation_sets)
+    ep = ep_for(output=OutputSpec(
+        container="dash", video_codec="h264",
+        variants=[_lvl(216, 300), _lvl(360, 700), _lvl(480, 1500)]),
+        media=make_media())
+    argv = build_argv(ep)
+    assert argv[-1] == "clip.mpd"
+    assert argv[6:8] == ["-f", "dash"]
+    assert argv[8:20] == ["-map", "0:v:0", "-map", "0:a:0"] * 3
+    assert argv[20:26] == ["-c:v", "libx264", "-c:a", "aac",
+                           "-pix_fmt", "yuv420p"]
+    assert argv[26:42] == [
+        "-b:v:0", "300k", "-minrate:v:0", "300k", "-maxrate:v:0", "300k",
+        "-bufsize:v:0", "600k", "-profile:v:0", "main", "-level:v:0", "3.0",
+        "-s:v:0", "384x216", "-b:a:0", "56k"]
+    v = argv.index("-var_stream_map")
+    assert argv[v + 1] == "v:0,a:0 v:1,a:1 v:2,a:2"
+    # auto adaptation sets only — no explicit -adaptation_sets anywhere
+    assert "-adaptation_sets" not in argv
+
+
+def test_ladder_dash_seg_duration_emitted():
+    # container format_options ride the ladder path too (M13.4): seg_duration
+    # is emitted as -seg_duration <value> before the output path
+    ep = ep_for(output=OutputSpec(
+        container="dash", video_codec="h264",
+        variants=[_lvl(360, 700), _lvl(480, 1500)],
+        format_options={"seg_duration": "6"}),
+        media=make_media())
+    argv = build_argv(ep)
+    i = argv.index("-seg_duration")
+    assert argv[i + 1] == "6"
+    assert i < argv.index(ep.output_path)
+
+
+def test_ladder_rejects_resizing_operation():
+    with pytest.raises(PlanError, match="re-encodes every level"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 variants=[_lvl(360, 700)]),
+               operations=[ResizeOp(height=480)])
+
+
+def test_ladder_rejects_audio_remove():
+    with pytest.raises(PlanError, match="cannot remove the audio"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 variants=[_lvl(360, 700)],
+                                 audio_mode="remove"))
+
+
+def test_ladder_rejects_duplicate_heights():
+    with pytest.raises(PlanError, match="duplicate ladder level 360p"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 variants=[_lvl(360, 700), _lvl(360, 900)]),
+               media=make_media())
+
+
+def test_ladder_rejects_below_smallest_row_without_bitrate():
+    # 180p with no bitrate: below the smallest default row -> the planner
+    # cannot invent a bitrate
+    with pytest.raises(PlanError, match="below the smallest default-table row"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 variants=[{"height": 180}]),
+               media=make_media())
+
+
+def test_ladder_rejects_h265_baseline():
+    with pytest.raises(PlanError, match="no 'baseline' profile"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h265",
+                                 variants=[_lvl(360, 700, profile="baseline")]),
+               media=make_media())
+
+
+def test_ladder_rejects_input_without_audio():
+    with pytest.raises(PlanError, match="input has no audio stream"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 variants=[_lvl(360, 700)]),
+               media=make_media(has_audio=False))
+
+
+def test_ladder_rejects_input_shorter_than_smallest_level():
+    with pytest.raises(PlanError, match="shorter than the ladder's smallest"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 variants=[]),
+               media=make_media(width=320, height=180))
+
+
+def test_ladder_explicit_name_gets_v():
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(360, 700)]), out="myladder",
+                media=make_media())
+    assert ep.output_path == "myladder_%v.m3u8"
+    assert build_argv(ep)[-1] == "myladder_%v.m3u8"
+
+
+def test_ladder_explicit_m3u8_name_still_gets_v():
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(360, 700)]),
+                out="myladder.m3u8", media=make_media())
+    assert ep.output_path == "myladder_%v.m3u8"
+
+
+def test_ladder_trim_places_ss_input_and_t_output():
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(360, 700)]),
+                trim=TrimSpec(start_seconds=10, duration_seconds=20),
+                media=make_media())
+    argv = build_argv(ep)
+    i_i = argv.index("-i")
+    i_ss = argv.index("-ss")
+    assert i_ss < i_i  # -ss is an input option, before -i
+    assert argv[i_ss + 1] == "10"
+    i_t = argv.index("-t")
+    assert i_t > i_i  # -t is an output option, after the input
+    assert argv[i_t + 1] == "20"
+    # the ladder groups are still intact
+    assert argv.index("-var_stream_map") != -1
+
+
+def test_ladder_widths_follow_input_aspect_even():
+    # a 4:3 720x540 input: level widths derive from the input aspect, even
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(360, 700)]),
+                media=make_media(width=720, height=540))
+    argv = build_argv(ep)
+    s = [argv[i + 1] for i in range(len(argv))
+         if argv[i].startswith("-s:v:")]
+    # 360p at 4:3 -> 480x360
+    assert s == ["480x360"]
+
+
+def test_ladder_explicit_profile_and_level_pass_through():
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(480, 1500,
+                                                 profile="high", level="4.1")]),
+                media=make_media())
+    argv = build_argv(ep)
+    p = argv.index("-profile:v:0")
+    assert argv[p + 1] == "high"
+    l = argv.index("-level:v:0")
+    assert argv[l + 1] == "4.1"
+
+
+def test_ladder_bufsize_is_double_bitrate():
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                  variants=[_lvl(360, 700)]),
+                media=make_media())
+    argv = build_argv(ep)
+    b = argv.index("-b:v:0")
+    bs = argv.index("-bufsize:v:0")
+    assert argv[b + 1] == "700k"
+    assert argv[bs + 1] == "1400k"
+
+
+def test_single_variant_hls_argv_regression_guard():
+    # M13.3 must not change the single-variant HLS argv (a h264/aac input to
+    # hls still stream-copies, with the maps from the builder's map loop):
+    # byte-identical to the pre-M13 shape
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264"),
+                media=make_media())
+    assert build_argv(ep) == [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "clip.mp4",
+        "-map", "0:v:0", "-map", "0:a?", "-f", "hls", "-c", "copy",
+        "clip.m3u8"]

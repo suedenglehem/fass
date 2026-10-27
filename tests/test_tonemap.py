@@ -272,7 +272,7 @@ def test_passthrough_copy_note(monkeypatch):
     # the color metadata through
     assets = {"main": Asset(path="in.mkv", kind=AssetKind.VIDEO)}
     probes = {"in.mkv": _hdr(path="in.mkv", video_codec="h264")}
-    ep = _plan([], assets, monkeypatch, probes,
+    ep = _plan([], assets, monkeypatch, probes, output="out.mkv",
                output_spec=OutputSpec(container="mkv", video_codec="h264"))
     assert ep.mode == "copy"
     assert any("stream copy carries" in d for d in ep.defaults)
@@ -281,7 +281,7 @@ def test_passthrough_copy_note(monkeypatch):
 def test_passthrough_10bit_note(monkeypatch):
     assets = {"main": Asset(path="in.mkv", kind=AssetKind.VIDEO)}
     probes = {"in.mkv": _hdr(path="in.mkv", video_codec="h265")}
-    ep = _plan([], assets, monkeypatch, probes,
+    ep = _plan([], assets, monkeypatch, probes, output="out.mkv",
                output_spec=OutputSpec(container="mkv", video_codec="h265",
                                       pixel_format="yuv420p10le"))
     assert any("10-bit output preserves" in d for d in ep.defaults)

@@ -150,6 +150,217 @@ def test_format_option_stream_destination_container():
          "http://example.com/live.m3u8"]) == []
 
 
+# ------------------------------------------- M13.1 DASH (registry 2.9.0)
+
+def test_dash_muxer_accepted():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-f", "dash", "o.mpd"]) == []
+
+
+def test_dash_format_options_accepted():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-seg_duration", "6", "o.mpd"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-dash_segment_type", "fmp4", "o.mpd"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-window_size", "10", "o.mpd"]) == []
+
+
+def test_dash_format_option_unknown_for_mp4_rejected():
+    # seg_duration is a known format-option key (builder vocabulary) but not
+    # a valid option for the plan's mp4 output — the container context decides
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-seg_duration", "6", "o.mp4"])
+    assert any("not a valid option for mp4" in x for x in p)
+
+
+def test_dash_segment_type_choice_checked():
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-dash_segment_type", "bogus", "o.mpd"])
+    assert any("dash_segment_type" in x for x in p)
+
+
+# ------------------------------------------- M13.3 ABR ladder (execute)
+
+# the planner's ladder shape (the probed form): all '-map 0:v:0 -map 0:a:0'
+# pairs first, the shared bare encoders, then per-level options addressed
+# by stream specifier (-b:v:K … -b:a:K), then '-var_stream_map', then the
+# %v playlist name
+def _ladder_argv(dest: str = "stream_%v.m3u8", fmt: str = "hls",
+                 c_v: str = "libx264", c_a: str = "aac",
+                 levels=((384, 216, 300, 56, "3.0"),
+                         (640, 360, 700, 64, "3.1"),
+                         (854, 480, 1500, 80, "3.2"))):
+    a = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+         "-i", "in.mp4", "-f", fmt]
+    for _ in levels:
+        a += ["-map", "0:v:0", "-map", "0:a:0"]
+    a += ["-c:v", c_v, "-c:a", c_a, "-pix_fmt", "yuv420p"]
+    for i, (w, h, vkb, akb, lvl) in enumerate(levels):
+        a += [f"-b:v:{i}", f"{vkb}k", f"-minrate:v:{i}", f"{vkb}k",
+              f"-maxrate:v:{i}", f"{vkb}k", f"-bufsize:v:{i}", f"{2 * vkb}k",
+              f"-profile:v:{i}", "main", f"-level:v:{i}", lvl,
+              f"-s:v:{i}", f"{w}x{h}", f"-b:a:{i}", f"{akb}k"]
+    a += ["-var_stream_map",
+          " ".join(f"v:{k},a:{k}" for k in range(len(levels)))]
+    a.append(dest)
+    return a
+
+
+def test_ladder_argv_passes_validation():
+    # the full ladder: per-level stream-specifier options (-b:v:N …) and
+    # -var_stream_map in the hls output context
+    assert execute.validate_argv(_ladder_argv()) == []
+
+
+def test_ladder_dash_context_accepted():
+    # var_stream_map is a valid option for the dash container too (the
+    # DASH ladder, M13.4)
+    assert execute.validate_argv(
+        _ladder_argv(dest="ladder.mpd", fmt="dash")) == []
+
+
+def test_var_stream_map_unknown_for_mp4_rejected():
+    p = execute.validate_argv(_ladder_argv(dest="o.mp4", fmt="mp4"))
+    assert any("not a valid option for mp4" in x for x in p)
+
+
+def test_minrate_value_checked():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-b:v", "300k",
+         "-minrate", "300k", "o.mp4"]) == []
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-minrate", "300000",
+         "o.mp4"]) == []
+    p = execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-minrate", "300x",
+         "o.mp4"])
+    assert any("bitrate" in x for x in p)
+
+
+def test_level_value_checked():
+    for v in ("3.0", "31", "4"):
+        assert execute.validate_argv(
+            ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-level", v,
+             "o.mp4"]) == []
+    for v in ("3.0x", "x3", "1000"):
+        p = execute.validate_argv(
+            ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-level", v,
+             "o.mp4"])
+        assert any("encoder level" in x for x in p)
+
+
+def test_size_value_checked():
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-s", "384x216",
+         "o.mp4"]) == []
+    for v in ("384", "384x", "384x216x", "axb"):
+        p = execute.validate_argv(
+            ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-s", v, "o.mp4"])
+        assert any("size" in x for x in p)
+
+
+def test_stream_specifier_value_checked():
+    # a stream-indexed per-stream option takes the base flag's value rules
+    assert execute.validate_argv(
+        ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-s:v:1", "640x360",
+         "o.mp4"]) == []
+    for flag, val in (("-s:v:0", "384"), ("-b:v:1", "fast"),
+                      ("-level:v:2", "3.0x"), ("-b:a:0", "56x")):
+        p = execute.validate_argv(
+            ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", flag, val, "o.mp4"])
+        assert p, (flag, val)
+
+
+def test_ladder_from_argv_recognizes_ladder():
+    ld = execute._ladder_from_argv(_ladder_argv())
+    assert ld["container"] == "hls"
+    assert ld["video_codec"] == "h264"
+    assert ld["audio_codec"] == "aac"
+    assert [ (lv["width"], lv["height"], lv["video_kbps"], lv["audio_kbps"],
+              lv["profile"], lv["level"], lv["bandwidth"], lv["playlist"])
+             for lv in ld["levels"] ] == [
+        (384, 216, 300, 56, "main", "3.0", 356000, "stream_0.m3u8"),
+        (640, 360, 700, 64, "main", "3.1", 764000, "stream_1.m3u8"),
+        (854, 480, 1500, 80, "main", "3.2", 1580000, "stream_2.m3u8"),
+    ]
+
+
+def test_ladder_from_argv_plain_run_is_none():
+    assert execute._ladder_from_argv(_valid()) is None
+
+
+def test_ladder_from_argv_dash_dest_needs_no_master():
+    # a DASH ladder is self-describing (.mpd) — no master synthesis
+    assert execute._ladder_from_argv(
+        _ladder_argv(dest="ladder.mpd", fmt="dash")) is None
+
+
+def test_ladder_from_argv_no_percent_v_is_none():
+    assert execute._ladder_from_argv(_ladder_argv(dest="live.m3u8")) is None
+
+
+def test_ladder_from_argv_resolved_path_uses_basename():
+    # start_run resolves the bare name to the output volume — the master
+    # must still reference the playlists by their bare names
+    argv = _ladder_argv(dest="/output/stream_%v.m3u8")
+    ld = execute._ladder_from_argv(argv)
+    assert [lv["playlist"] for lv in ld["levels"]] == [
+        "stream_0.m3u8", "stream_1.m3u8", "stream_2.m3u8"]
+
+
+def test_ladder_from_argv_malformed_group_is_none():
+    argv = _ladder_argv()
+    # drop one level's -s:v:0 value → unparseable geometry, no synthesis
+    i = argv.index("-s:v:0")
+    del argv[i:i + 2]
+    assert execute._ladder_from_argv(argv) is None
+
+
+def test_master_from_ladder_content():
+    ld = execute._ladder_from_argv(_ladder_argv())
+    text = execute._master_from_ladder(ld)
+    assert text == (
+        "#EXTM3U\n"
+        '#EXT-X-STREAM-INF:BANDWIDTH=356000,AVERAGE-BANDWIDTH=356000,'
+        'RESOLUTION=384x216,CODECS="avc1.4d001e,mp4a.40.2"\n'
+        "stream_0.m3u8\n"
+        '#EXT-X-STREAM-INF:BANDWIDTH=764000,AVERAGE-BANDWIDTH=764000,'
+        'RESOLUTION=640x360,CODECS="avc1.4d001f,mp4a.40.2"\n'
+        "stream_1.m3u8\n"
+        '#EXT-X-STREAM-INF:BANDWIDTH=1580000,AVERAGE-BANDWIDTH=1580000,'
+        'RESOLUTION=854x480,CODECS="avc1.4d0020,mp4a.40.2"\n'
+        "stream_2.m3u8\n"
+    )
+
+
+def test_master_codecs_omitted_for_h265():
+    # HEVC has no common fourcc here — the audio part stays, the video
+    # part is dropped
+    argv = _ladder_argv(c_v="libx265", levels=((384, 216, 300, 56, "3.0"),))
+    ld = execute._ladder_from_argv(argv)
+    text = execute._master_from_ladder(ld)
+    assert 'CODECS="mp4a.40.2"' in text
+    assert "avc1" not in text
+
+
+def test_master_codecs_omitted_when_no_parts():
+    # no computable video fourcc (h265) and no AAC audio → no CODECS at all
+    argv = _ladder_argv(c_v="libx265", c_a="libopus",
+                        levels=((384, 216, 300, 56, "3.0"),))
+    ld = execute._ladder_from_argv(argv)
+    text = execute._master_from_ladder(ld)
+    assert "CODECS=" not in text
+
+
+def test_synthesize_master_writes_file(tmp_path):
+    ld = execute._ladder_from_argv(_ladder_argv())
+    note = execute._synthesize_master(tmp_path, ld)
+    assert note == "master.m3u8 synthesized from the run's declared levels (3 variants)"
+    assert (tmp_path / "master.m3u8").read_text(encoding="utf-8") == \
+        execute._master_from_ladder(ld)
+
+
 # ------------------------------------------------- M7 filtergraph validation
 
 def test_vf_valid_graph_accepted_bad_name_rejected():

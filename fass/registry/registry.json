@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.8.0",
+  "registry_version": "2.10.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -16,6 +16,7 @@
     "rtsp": { "extensions": ["rtsp"], "muxer": "rtsp", "file": false },
     "srt": { "extensions": ["srt"], "muxer": "srt", "file": false },
     "hls": { "extensions": ["m3u8"], "muxer": "hls", "note": "playlist + segment files, written into the output directory; -f hls is always emitted explicitly" },
+    "dash": { "extensions": ["mpd"], "muxer": "dash", "note": "MPEG-DASH: .mpd manifest + fragmented-MP4 segments in the output directory; -f dash is always emitted explicitly" },
     "avi": { "extensions": ["avi"], "muxer": "avi" },
     "mxf": { "extensions": ["mxf"], "muxer": "mxf", "reencode": true, "gop": 120, "note": "broadcast master wrapper (OP-Atom) — the muxer takes an encoded master: video is re-encoded into it (stream-copied h264 arrives avcc-packaged and the mxf muxer rejects it), audio must be PCM, and the h264 GOP is capped (ffmpeg 9.x's mxf index table requires frame offsets within ±127)" },
     "vob": { "extensions": ["vob", "mpg"], "muxer": "vob", "note": "MPEG program stream (DVD/VOB)" },
@@ -171,6 +172,7 @@
     "rtsp": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an rtsp(s):// destination; never a file" },
     "srt": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an srt:// destination; never a file" },
     "hls": { "video": ["h264", "h265", "mpeg2"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "HLS: .m3u8 playlist + transport segments in the output directory; tune with hls_* format options" },
+    "dash": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "DASH: .mpd manifest + fMP4 segments in the output directory; tune with dash_* format options" },
     "avi": { "video": ["mpeg4", "mjpeg", "h264", "mpeg2"], "audio": ["pcm_s16le", "mp3", "mp2", "ac3"], "default_video": "mpeg4", "audio_codec": "pcm_s16le", "flags": [] },
     "mxf": { "video": ["h264", "mpeg2", "prores"], "audio": ["pcm_s16le", "pcm_s24le", "pcm_s32le"], "default_video": "h264", "audio_codec": "pcm_s16le", "flags": [], "note": "MXF is a broadcast master format: audio must be PCM (the mxf muxer rejects aac/ac3), and the video is re-encoded into it even when the codec matches" },
     "vob": { "video": ["mpeg2"], "audio": ["mp2", "ac3"], "default_video": "mpeg2", "audio_codec": "mp2", "flags": [] },
@@ -260,20 +262,30 @@
     "hls": {
       "hls_time": { "kind": "number", "range": [0.1, 3600], "description": "target segment length in seconds (default 2)" },
       "hls_list_size": { "kind": "int", "range": [0, 1000], "description": "max playlist entries; 0 = unbounded (default 5)" },
-      "hls_flags": { "kind": "flagset", "values": ["split_by_time", "append_list", "single_file", "independent_segments", "round_timestamps", "omit_list_end", "allow_cache", "delete_segments", "program_date_time", "rotation"], "description": "HLS behavior flags, comma-joined (split_by_time cuts on the wall clock, not keyframes)" },
+      "hls_flags": { "kind": "flagset", "values": ["split_by_time", "append_list", "single_file", "independent_segments", "round_timestamps", "omit_list_end", "allow_cache", "delete_segments", "program_date_time", "rotation"], "description": "HLS behavior flags, '+'-joined FFmpeg flag syntax (split_by_time cuts on the wall clock, not keyframes)" },
       "hls_segment_type": { "kind": "choice", "values": ["mp2t", "fmp4", "m4a", "passthrough"], "description": "segment container (default mp2t)" },
       "hls_playlist_type": { "kind": "choice", "values": ["event", "vod"], "description": "playlist type: event (live) or vod (finished, full list)" },
       "hls_start_number": { "kind": "int", "range": [0, 1000000], "description": "number of the first segment" },
       "hls_allow_cache": { "kind": "bool", "description": "allow clients to cache segments (1) or not (0)" },
       "hls_base_url": { "kind": "url", "description": "URL prefix prepended to playlist entries" },
-      "hls_segment_size": { "kind": "int", "range": [0, 1000000000], "description": "max segment size in bytes (0 = unlimited)" }
+      "hls_segment_size": { "kind": "int", "range": [0, 1000000000], "description": "max segment size in bytes (0 = unlimited)" },
+      "var_stream_map": { "kind": "string", "description": "variant stream map: space-separated 'v:N,a:M' groups, one per ABR variant (planner-constructed; multi-word, never NL-captured)" }
+    },
+    "dash": {
+      "seg_duration": { "kind": "number", "range": [0.1, 3600], "description": "target segment length in seconds (default 5)" },
+      "window_size": { "kind": "int", "range": [0, 1000], "description": "number of segments kept in the live manifest window" },
+      "use_timeline": { "kind": "bool", "description": "use SegmentTemplate@duration/timeline (default 1)" },
+      "single_file": { "kind": "bool", "description": "write all segments into one file with byte-range indexing" },
+      "dash_segment_type": { "kind": "choice", "values": ["mp4", "fmp4"], "description": "segment type (default fmp4)" },
+      "adaptation_sets": { "kind": "string", "description": "explicit adaptation sets 'id=N,streams=a,b id=M,streams=c,d' (single-variant DASH only — explicit sets fail with var_stream_map; auto sets are the ladder default)" },
+      "var_stream_map": { "kind": "string", "description": "variant stream map: space-separated 'v:N,a:M' groups, one per ABR variant (planner-constructed; multi-word, never NL-captured)" }
     },
     "avi": {
       "use_auto_bvf": { "kind": "choice", "values": ["auto", "0", "1"], "description": "automatic B-VFLP (B-frame) writing for AVI" },
       "use_odml": { "kind": "bool", "description": "write the ODML (Open DML) chunk for large AVI files" }
     },
     "flv": {
-      "flvflags": { "kind": "flagset", "values": ["no_duration", "no_filesize"], "description": "FLV file flags, comma-joined (no_duration omits the duration in the header — live)" }
+      "flvflags": { "kind": "flagset", "values": ["no_duration", "no_filesize"], "description": "FLV file flags, '+'-joined FFmpeg flag syntax (no_duration omits the duration in the header — live)" }
     },
     "mp3": {
       "id3v2_version": { "kind": "choice", "values": ["2.2", "2.3", "2.4"], "description": "ID3v2 tag version" },

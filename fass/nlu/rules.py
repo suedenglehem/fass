@@ -68,6 +68,7 @@ from fass.schema import (
     ToneMapOp,
     TrimSpec,
     UnsupportedPart,
+    VariantSpec,
     WatermarkOp,
 )
 
@@ -89,7 +90,7 @@ SUPPORTED_SUMMARY = (
     "audio-only output ('extract the audio to mp3', 'make it a wav'); "
     "dumping the input's subtitles to a file ('dump the subtitles to vtt'); "
     "container conversion to any supported container (mp4, mov, mkv, webm, "
-    "mpeg-ts, flv, hls, avi, mxf, vob, asf, 3gp, dv, gif, webp, mp3, mp2, "
+    "mpeg-ts, flv, hls, dash, avi, mxf, vob, asf, 3gp, dv, gif, webp, mp3, mp2, "
     "m4a, aac, ogg, flac, wav, aiff, mka, opus); video encoding (H.264, "
     "H.265, VP9, ProRes, MPEG-2, MPEG-4, MJPEG) at quality presets or a "
     "target bitrate (video: 'cbr 10 Mbps'; audio: 'mp2 128k'), pixel "
@@ -98,7 +99,14 @@ SUPPORTED_SUMMARY = (
     "sync', 'qsv preset=fast'), and per-encoder private options ('with crf "
     "18', 'x264-params keyint=24', 'dialnorm -27', 'vbr 4'); container "
     "format options ('faststart', "
-    "'hls_time=6', 'mpegts_flags=resend_headers'); bitstream filters on the "
+    "'hls_time=6', 'mpegts_flags=resend_headers'), live HLS ('live hls', "
+    "'live hls with a 10 segment window' — a rolling event playlist; "
+    "'and delete old segments' opts in to segment cleanup), ABR ladders "
+    "('abr hls with levels 216p 300k, 360p 700k, 480p 1500k', 'dash "
+    "ladder', '3 quality levels' — one encode per level: HLS variant "
+    "playlists plus a synthesized master playlist, or a single DASH "
+    "manifest with auto adaptation sets); bitstream "
+    "filters on the "
     "compressed stream without re-encoding ('apply the h264_metadata filter "
     "level=4.1', 'remux with trace_headers'), and stream-copy trim ('copy "
     "trim from 00:10 to 00:30' — no re-encode, video keyframe-accurate); one "
@@ -660,14 +668,15 @@ _EXT_TO_CONTAINER["srt"] = "srt_file"
 # target); 'save as .ts' is caught by the dedicated '.ts' alternative.
 _VIDEO_CONTAINER_RX = re.compile(
     r"(?<![\w./-])(mpeg[-\s]?ts|transport\s+stream|mpeg2?\s+ts|m2ts|mts|quicktime|"
-    r"hls|avi|mxf|vob|flv|asf|wmv|3gp|gif|webp|webm|mkv|mov|m4v|mp4|dv)\b"
-    r"|\.ts\b|\bts\s+file\b",
+    r"hls|dash|avi|mxf|vob|flv|asf|wmv|3gp|gif|webp|webm|mkv|mov|m4v|mp4|dv)\b"
+    r"|\.ts\b|(\.mpd\b)|\bts\s+file\b",
     re.I,
 )
 _WORD_TO_VIDEO_CONTAINER = {
     "mpegts": "mpegts", "mpeg ts": "mpegts", "mpeg2 ts": "mpegts",
     "transport stream": "mpegts", "m2ts": "mpegts", "mts": "mpegts",
-    "quicktime": "mov", "hls": "hls", "avi": "avi", "mxf": "mxf",
+    "quicktime": "mov", "hls": "hls", "dash": "dash", "mpd": "dash",
+    "avi": "avi", "mxf": "mxf",
     "vob": "vob", "flv": "flv", "asf": "asf", "wmv": "asf", "3gp": "3gp",
     "gif": "gif", "webp": "webp", "webm": "webm", "mkv": "mkv",
     "mov": "mov", "m4v": "mp4", "mp4": "mp4", "dv": "dv",
@@ -679,6 +688,8 @@ def _detect_container(t: str) -> tuple[str | None, str | None]:
     m = _VIDEO_CONTAINER_RX.search(t)
     if not m:
         return None, None
+    if m.group(2) is not None:  # '.mpd' extension phrasing
+        return "dash", None
     word = m.group(1)
     if word is None:  # '.ts' / 'ts file'
         return "mpegts", None
@@ -1104,6 +1115,12 @@ def _detect_filters(
     return ops, graph, ("; ".join(notes) if notes else None), clar, frag
 
 
+# Format options the PLANNER owns — never captured from free text even
+# when a user types them as key=value (the ABR variant map is built from
+# the ladder levels; a user-typed one would not match the levels).
+_PLANNER_FORMAT_OPTIONS = frozenset({"var_stream_map"})
+
+
 def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
     """key=value tokens whose key is a valid option for the container
     (registry-driven), plus natural-language mappings ('faststart',
@@ -1115,7 +1132,8 @@ def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
     filters = all_filter_names()
     for m in re.finditer(r"\b([a-z][a-z0-9_]+)=([^\s,;]+)\b", t):
         key, value = m.group(1), m.group(2)
-        if key in specs and key not in filters and key not in out:
+        if key in specs and key not in filters and key not in out \
+                and key not in _PLANNER_FORMAT_OPTIONS:
             out[key] = value
     if "movflags" in specs and re.search(r"\bfast\s?start\b", t, re.I):
         out["movflags"] = "faststart"
@@ -1125,6 +1143,31 @@ def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
             r"|\bsegments?\s+(?:of\s+)?(\d+)\b", t, re.I)
         if m:
             out["hls_time"] = m.group(1) or m.group(2)
+    if container == "hls":
+        # live HLS (M13.2): a rolling event playlist — explicit phrasing
+        # only, never the default (the default stays a full vod list)
+        live = re.search(r"\blive\b[^\n.!?]{0,24}\bhls\b", t, re.I)
+        if live and "hls_playlist_type" in specs \
+                and "hls_playlist_type" not in out:
+            out["hls_playlist_type"] = "event"
+        if live and "hls_flags" in specs:
+            # independent segments keep a rolling playlist playable from
+            # any segment; delete_segments is OPT-IN (deleting rolled-off
+            # segments breaks DVR/seek and UI playback) — never default
+            flags = [f for f in out.get("hls_flags", "").split(",") if f]
+            if "independent_segments" not in flags:
+                flags.append("independent_segments")
+            if re.search(r"\bdelete\s+(?:the\s+)?(?:old\s+)?segments?\b",
+                         t, re.I) and "delete_segments" not in flags:
+                flags.append("delete_segments")
+            # FFmpeg flag syntax: '+'-joined (the flagset validator's form)
+            out["hls_flags"] = "+".join(flags)
+        if live and "hls_list_size" in specs and "hls_list_size" not in out:
+            m = re.search(
+                r"\b(?:a\s+|an\s+)?(\d+)\s+segment\s+window\b"
+                r"|\bwindow\s+(?:of\s+)?(\d+)\s+segments?\b", t, re.I)
+            if m:
+                out["hls_list_size"] = m.group(1) or m.group(2)
     if container == "mpegts" and "mpegts_flags" in specs:
         if re.search(r"\bresend\s+headers?\b", t, re.I):
             out["mpegts_flags"] = "resend_headers"
@@ -2055,6 +2098,73 @@ def _detect_bitrate(t: str, audio: bool = False) -> int | None:
     return kbps
 
 
+# ---------------------------------------------------------------- ABR ladder (M13.3)
+
+# Ladder intent: an explicit ABR/ladder phrasing, or a '<N> (quality)
+# levels' count. Bare 'ladder' counts — in an ffmpeg request it names the
+# ABR output. (Live HLS never matches: 'live hls' has no ladder word.)
+_LADDER_INTENT_RX = re.compile(
+    r"\b(?:abr|adaptive|multi-?quality|bitrate)\s+(?:hls|dash)\b"
+    r"|\b(?:hls|dash|abr|adaptive|multi-?quality)\s+ladders?\b"
+    r"|\bladders?\b"
+    r"|\b\d{1,2}\s+(?:quality\s+)?levels?\b",
+    re.I,
+)
+
+# An explicit level list: 'levels 216p 300k, 360p 700k, 480p 1500k'.
+# Each item is a resolution ('360p' or '640x360') optionally followed by
+# a video bitrate ('700k').
+_LADDER_LEVELS_RX = re.compile(
+    r"\blevels?\b[\s,]+((?:(?:\d{2,4}(?:p|x\d{2,4})|\d{1,6}k)[\s,]*)+)",
+    re.I,
+)
+
+
+def _detect_ladder(t: str) -> tuple[list["VariantSpec"] | None, tuple[int, int] | None]:
+    """ABR ladder intent (M13.3).
+
+    Returns (variants, span):
+
+    - ``None, None`` — no ladder phrasing;
+    - ``[], None`` — a ladder is requested without explicit levels (the
+      planner fills the default table, capped at the input height);
+    - filled ``[VariantSpec, …], span`` — an explicit 'levels …' list.
+
+    The span covers the level list so the per-level '216p 300k' tokens are
+    masked before the other detectors run (they must not double-read as a
+    top-level resize or bitrate — length-preserving, like the combiner's
+    claim).
+    """
+    if not _LADDER_INTENT_RX.search(t):
+        return None, None
+    m = _LADDER_LEVELS_RX.search(t)
+    if not m:
+        return [], None
+    items = [tok for tok in re.split(r"[,\s]+", m.group(1)) if tok]
+    specs: list[VariantSpec] = []
+    i = 0
+    while i < len(items):
+        res = re.fullmatch(r"(\d{2,4})(?:p|x(\d{2,4}))", items[i])
+        if not res:
+            break
+        bitrate = None
+        if i + 1 < len(items) and re.fullmatch(r"\d{1,6}k", items[i + 1]):
+            bitrate = int(items[i + 1][:-1])
+            i += 1
+        try:
+            specs.append(VariantSpec(
+                width=int(res.group(2)) if res.group(2) else None,
+                height=int(res.group(1)),
+                video_bitrate_kbps=bitrate,
+            ))
+        except ValueError:
+            break
+        i += 1
+    if not specs:
+        return [], None
+    return specs, m.span()
+
+
 # ---------------------------------------------------------------- stream destination (M3b)
 
 _STREAM_DEST = re.compile(
@@ -2193,6 +2303,14 @@ class RulesAdapter:
         tonemap, tm_span = _detect_tonemap(t_det)
         if tm_span is not None:
             s0, s1 = tm_span
+            t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
+        # M13.3: an ABR ladder claims its level list up front (the
+        # per-level '216p 300k' tokens must not double-read as a top-level
+        # resize or bitrate; the mask is length-preserving, like the
+        # combiner's)
+        ladder, ladder_span = _detect_ladder(t_det)
+        if ladder_span is not None:
+            s0, s1 = ladder_span
             t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
         trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
         crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
@@ -2475,12 +2593,30 @@ class RulesAdapter:
                           + " and ".join(extras)
                           + ". Compare the clip first, then apply the rest in "
                             "a follow-up?"))
+        # M13.3: a ladder is a plain multi-level encode — a user edit in
+        # the same request would apply pre-map to EVERY variant (a
+        # semantic the NLU shouldn't guess)
+        ladder_conflict = None
+        if ladder is not None and (resize is not None or crop is not None
+                                   or rotate is not None or speed is not None
+                                   or grayscale or stabilize is not None
+                                   or tonemap is not None or watermarks
+                                   or subtitle is not None or audio_replace is not None
+                                   or filtergraph is not None or video_filters
+                                   or audio == "remove"
+                                   or video_codec_opts or video_preset is not None):
+            ladder_conflict = Clarification(
+                question=("an ABR ladder re-encodes every level on its own — "
+                          "a resize, effect, subtitle or audio change in the "
+                          "same request would apply to every variant, which I "
+                          "can't guess. Build the ladder first, then add the "
+                          "edit in a follow-up?"))
 
         # 4. explicit clarifications win (focused, one at a time)
         for c in (trim_clar, resize_clar, crop_clar, speed_clar, rotate_clar,
                   rs_clar, wm_clar, ar_clar, sub_clar, filter_clar, comb_clar,
                   cmp_clar, mode_conflict, graph_conflict, combine_conflict,
-                  compare_conflict, ambiguous):
+                  compare_conflict, ladder_conflict, ambiguous):
             if c is not None:
                 return ParseResult(
                     status=ParseStatus.NEEDS_CLARIFICATION,
@@ -2610,7 +2746,7 @@ class RulesAdapter:
             if trim is None and resize is None and crop is None and speed is None \
                     and rotate is None and audio_resample is None and not watermarks \
                     and combine is None and compare is None and stabilize is None \
-                    and tonemap is None \
+                    and tonemap is None and ladder is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
                     and audio != "remove" and audio_replace is None and subtitle is None \
@@ -2709,7 +2845,12 @@ class RulesAdapter:
                         container = natural
                         notes.append(f"container set to {natural} (the natural home for {codec.upper()})")
                 if container is None:
-                    if dest is not None:
+                    if ladder is not None:
+                        # an ABR ladder is a segmented output — HLS is the
+                        # natural home (DASH when the user named it)
+                        container = "hls"
+                        notes.append("container set to hls (an ABR ladder is a segmented output)")
+                    elif dest is not None:
                         # the stream destination's scheme fixes the container
                         container = dest_container
                         notes.append(f"container set to {container} by the stream destination {dest}")
@@ -2771,6 +2912,22 @@ class RulesAdapter:
                     plan.output.audio_codec_options = audio_codec_opts
                     notes.append("audio codec options: "
                                  + ", ".join(f"{k}={v}" for k, v in sorted(audio_codec_opts.items())))
+                if ladder is not None:
+                    # M13.3: the ladder levels ride the plan — the planner
+                    # resolves unset fields against its default table
+                    plan.output.variants = ladder
+                    if ladder:
+                        levels = ", ".join(
+                            (f"{v.width}x{v.height}" if v.width is not None
+                             else f"{v.height}p")
+                            + (f" {v.video_bitrate_kbps}k"
+                               if v.video_bitrate_kbps is not None else "")
+                            for v in ladder)
+                        notes.append(f"ABR ladder levels: {levels}")
+                    else:
+                        notes.append(
+                            "ABR ladder: default level table (the planner "
+                            "picks the levels for the input height)")
             format_options = _detect_format_options(t, plan.output.container)
             if format_options:
                 plan.output.format_options = format_options

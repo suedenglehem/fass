@@ -79,12 +79,33 @@ _VALUE_FLAGS = {
     "-loglevel", "-ss", "-t", "-i", "-f",
     "-filter_complex", "-vf", "-af", "-map",
     "-c", "-c:v", "-c:a", "-c:s", "-acodec",
-    "-b:v", "-b:a", "-maxrate", "-bufsize",
+    "-b:v", "-b:a", "-maxrate", "-minrate", "-bufsize",
+    "-level", "-s",
     "-crf", "-rc", "-cq", "-profile:v", "-preset", "-pix_fmt",
     "-ar", "-ac", "-movflags",
     "-bsf:v", "-bsf:a",
 } | {f"-{key}" for key in _FORMAT_OPTION_KEYS}
 KNOWN_FLAGS = _BOOL_FLAGS | _VALUE_FLAGS
+
+# A per-stream option with an explicit stream index — the ABR ladder form
+# ('-b:v:0', '-s:v:1', '-b:a:0', …). The index addresses the Nth mapped
+# stream OF THAT TYPE, so the value rules are the base flag's; the ladder
+# planner is the only emitter, an expert Command-tab edit may carry them.
+_SPEC_RX = re.compile(
+    r"^-(b|c|minrate|maxrate|bufsize|profile|level|s)(:[va]):(\d+)$")
+# the indexed flags whose BASE flag already carries the stream type
+# ('-b:v:0' -> '-b:v', '-c:v:0' -> '-c:v', '-profile:v:0' -> '-profile:v');
+# the rest address a bare base flag ('-s:v:0' -> '-s', '-minrate:v:0'
+# -> '-minrate')
+_SPEC_KEEP_TYPE = {"b", "c", "profile"}
+
+
+def _spec_base(flag: str) -> str | None:
+    m = _SPEC_RX.match(flag)
+    if not m:
+        return None
+    base, typ = m.group(1), m.group(2)
+    return f"-{base}{typ}" if base in _SPEC_KEEP_TYPE else f"-{base}"
 
 _FILTER_FLAGS = {"-filter_complex", "-vf", "-af"}
 _CODECS = (
@@ -181,9 +202,9 @@ def validate_argv(argv: list[str]) -> list[str]:
     positionals = 0
     for i, tok in enumerate(argv[1:], start=1):
         if expect_value is not None:
-            if expect_value == "-c:v":
+            if expect_value == "-c:v" or _spec_base(expect_value) == "-c:v":
                 video_encoder = tok
-            elif expect_value == "-c:a":
+            elif expect_value == "-c:a" or _spec_base(expect_value) == "-c:a":
                 audio_encoder = tok
             problems.extend(
                 _check_value(expect_value, tok, i, container,
@@ -192,7 +213,7 @@ def validate_argv(argv: list[str]) -> list[str]:
             continue
         if tok in _BOOL_FLAGS:
             continue
-        if tok in _VALUE_FLAGS:
+        if tok in _VALUE_FLAGS or _spec_base(tok) is not None:
             expect_value = tok
             if i == len(argv) - 1:
                 problems.append(f"flag '{tok}' at the end has no value")
@@ -240,6 +261,11 @@ def _check_value(flag: str, value: str, index: int,
     p = f"value for '{flag}'"
     if not _PATH_RE.match(value):
         return [f"{p} contains control characters"]
+    base = _spec_base(flag)
+    if base is not None:
+        # a stream-indexed per-stream option ('-b:v:0' …): the value rules
+        # are the base flag's; the message above still names the actual flag
+        flag = base
     if flag in _FILTER_FLAGS:
         if not value:
             return [f"{p} is empty or malformed"]
@@ -309,9 +335,19 @@ def _check_value(flag: str, value: str, index: int,
         if value not in ("cbr", "vbr", "constqp", "lossless"):
             return [f"{p} '{value}' is not a known rate-control mode"]
         return []
-    if flag in ("-b:v", "-maxrate", "-bufsize", "-b:a"):
+    if flag in ("-b:v", "-maxrate", "-minrate", "-bufsize", "-b:a"):
         if not _RATE_RE.match(value):
             return [f"{p} must be a bitrate like '10000k'"]
+        return []
+    if flag == "-level":
+        # Annex A encoder level: '3.0' (x264) or '31' (short form, 1-2 digits)
+        if not re.match(r"^\d\.\d+$|^\d{1,2}$", value):
+            return [f"{p} must be an encoder level like '3.0' or '31'"]
+        return []
+    if flag == "-s":
+        # output frame size WxH (the ladder's per-level geometry)
+        if not re.match(r"^\d+x\d+$", value):
+            return [f"{p} must be a size like '640x360'"]
         return []
     if flag in ("-ss", "-t"):
         if not _NUM_RE.match(value):
@@ -497,6 +533,10 @@ class Run:
     # the run was started in verbose-log mode.
     log_path: str | None = None
     verbose: bool = False
+    # M13.3: an ABR ladder run (HLS) — the declared levels, derived from
+    # the run's argv at start time. The data the post-run master.m3u8
+    # synthesis uses (never parsed from the filesystem); None otherwise.
+    ladder: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -505,6 +545,7 @@ class Run:
             "exit_code": self.exit_code, "output": self.output,
             "notes": self.notes, "steps": self.steps,
             "log_path": self.log_path, "verbose": self.verbose,
+            "ladder": self.ladder,
         }
 
 
@@ -568,6 +609,133 @@ def _update(run_id: str, **kw) -> None:
     p.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
 
 
+def _append_note(run_id: str, note: str) -> None:
+    """Append one note to a run record — the finalizer's _update replaces
+    the notes list wholesale, so a post-finalize note (the M13.3 master
+    synthesis) gets its own read-modify-write pass."""
+    p = _sidecar(run_id)
+    if not p.exists():
+        return
+    rec = json.loads(p.read_text(encoding="utf-8"))
+    rec.setdefault("notes", []).append(note)
+    p.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
+
+
+# --------------------------------------------- ABR ladder master (M13.3)
+
+_AVC_PROFILE_ID = {"baseline": 66, "main": 77, "high": 100}
+
+
+def _ladder_from_argv(argv: list[str]) -> dict | None:
+    """An ABR ladder run, recognized from its fass-generated argv shape
+    (-var_stream_map plus per-level stream-specifier options — -b:v:N,
+    -s:v:N, -b:a:N — against a %v .m3u8 destination). Returns the
+    declared ladder (levels in var_stream_map order) or None.
+
+    The argv is the run's ground truth — never derived from the
+    filesystem — which also keeps the synthesis honest for a ladder an
+    expert hand-edited in the Command tab (it gets a master from its own
+    values). DASH ladders write a self-describing .mpd and need no
+    master, so a non-%v .m3u8-less destination yields None too."""
+    if "-var_stream_map" not in argv:
+        return None
+    out_name = os.path.basename(argv[-1])
+    if os.path.splitext(out_name)[1].lower() != ".m3u8" or "%v" not in out_name:
+        return None
+    try:
+        map_val = argv[argv.index("-var_stream_map") + 1]
+    except IndexError:
+        return None
+    # flag -> value over the whole argv (the last occurrence of a flag
+    # wins, as it does in FFmpeg)
+    kv: dict[str, str] = {}
+    for i, t in enumerate(argv[:-1]):
+        if t.startswith("-") and i + 1 < len(argv):
+            kv[t] = argv[i + 1]
+    levels: list[dict] = []
+    for k, group in enumerate(map_val.split()):
+        spec: dict[str, int] = {}
+        for part in group.split(","):
+            m = re.match(r"^([va]):(\d+)$", part)
+            if not m:
+                return None  # malformed var_stream_map — no synthesis
+            spec[m.group(1)] = int(m.group(2))
+        if "v" not in spec or "a" not in spec:
+            return None
+        v, a = spec["v"], spec["a"]
+        try:
+            vkb = int(kv[f"-b:v:{v}"].rstrip("k"))
+            w, h = (int(x) for x in kv[f"-s:v:{v}"].split("x"))
+            akb = int(kv[f"-b:a:{a}"].rstrip("k"))
+        except (KeyError, ValueError):
+            return None  # a level without its declared options — no synthesis
+        levels.append({
+            "width": w, "height": h, "video_kbps": vkb, "audio_kbps": akb,
+            "profile": kv.get(f"-profile:v:{v}"),
+            "level": kv.get(f"-level:v:{v}"),
+            "bandwidth": (vkb + akb) * 1000,
+            "playlist": out_name.replace("%v", str(k)),
+        })
+    if not levels:
+        return None
+    return {
+        "container": "hls",
+        "video_codec": {"libx264": "h264", "libx265": "h265"}.get(
+            kv.get("-c:v", "")),
+        "audio_codec": kv.get("-c:a"),
+        "levels": levels,
+    }
+
+
+def _ladder_codecs(ladder: dict, lv: dict) -> str | None:
+    """The master's CODECS tag for one level: the avc1 profile/level
+    fourcc (h264) + mp4a.40.2 (AAC). Omitted when not computable (e.g.
+    h265 — there is no common fourcc for HEVC here)."""
+    parts: list[str] = []
+    if ladder.get("video_codec") == "h264" \
+            and lv.get("profile") and lv.get("level"):
+        pid = _AVC_PROFILE_ID.get(lv["profile"])
+        if pid is not None:
+            lvl = lv["level"]
+            lid = int(lvl.replace(".", "")) if "." in lvl else int(lvl)
+            parts.append(f"avc1.{pid:02x}00{lid:02x}")
+    if ladder.get("audio_codec") in ("aac", "fdk_aac"):
+        parts.append("mp4a.40.2")
+    return ",".join(parts) if parts else None
+
+
+def _master_from_ladder(ladder: dict) -> str:
+    """The master.m3u8 text: one #EXT-X-STREAM-INF per declared level,
+    BANDWIDTH = (video + audio kbps) x 1000, relative variant playlist
+    names (the playlists live next to the master)."""
+    lines = ["#EXTM3U"]
+    for lv in ladder["levels"]:
+        parts = [f"BANDWIDTH={lv['bandwidth']}",
+                 f"AVERAGE-BANDWIDTH={lv['bandwidth']}",
+                 f"RESOLUTION={lv['width']}x{lv['height']}"]
+        codecs = _ladder_codecs(ladder, lv)
+        if codecs:
+            parts.append(f'CODECS="{codecs}"')
+        lines.append("#EXT-X-STREAM-INF:" + ",".join(parts))
+        lines.append(lv["playlist"])
+    return "\n".join(lines) + "\n"
+
+
+def _synthesize_master(cwd, ladder: dict) -> str | None:
+    """After a clean ladder run, write master.m3u8 into the run's working
+    directory — next to the variant playlists (the hls muxer writes no
+    master; fass synthesizes one from the run's declared levels). Returns
+    the run note, or None when nothing was written."""
+    out_dir = Path(cwd) if cwd else Path.cwd()
+    try:
+        (out_dir / "master.m3u8").write_text(
+            _master_from_ladder(ladder), encoding="utf-8")
+    except OSError as e:
+        return f"master.m3u8 could not be written: {e}"
+    return (f"master.m3u8 synthesized from the run's declared levels "
+            f"({len(ladder['levels'])} variants)")
+
+
 def execution_enabled() -> bool:
     return os.environ.get(ALLOW_EXECUTE_ENV, "") not in ("", "0", "false", "no")
 
@@ -588,6 +756,7 @@ def start_run(argv: list[str], timeout: float | None = None,
     if problems:
         raise ValueError("refusing to run — argv failed validation: " + "; ".join(problems))
     argv, notes = resolve_paths(argv)
+    ladder = _ladder_from_argv(argv)
 
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     out_name = argv[-1]
@@ -599,6 +768,7 @@ def start_run(argv: list[str], timeout: float | None = None,
         output=None if (stream_scheme(out_name) or out_name == "-") else out_name,
         notes=notes, log=f"{run_id}.log",
         log_path=str(log_path), verbose=verbose,
+        ladder=ladder,
     )
     out_dir = _output_dir()
     cwd = (
@@ -615,7 +785,8 @@ def start_run(argv: list[str], timeout: float | None = None,
         _ACTIVE[run_id] = proc
     _save(run)
     threading.Thread(
-        target=_watch, args=(run_id, proc, logf, timeout), daemon=True
+        target=_watch, args=(run_id, proc, logf, timeout, cwd, ladder),
+        daemon=True,
     ).start()
     return run
 
@@ -723,7 +894,8 @@ def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
             _STOPPING.discard(run_id)
 
 
-def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None) -> None:
+def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
+           cwd=None, ladder: dict | None = None) -> None:
     try:
         if timeout:
             try:
@@ -739,6 +911,13 @@ def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None) -> 
         else:
             status = "success" if rc == 0 else "error"
             _update(run_id, status=status, exit_code=rc)
+            if status == "success" and ladder is not None:
+                # M13.3: the hls muxer writes no master playlist — after a
+                # clean ladder run fass synthesizes one from the run's
+                # declared levels (into the run's working directory).
+                note = _synthesize_master(cwd, ladder)
+                if note:
+                    _append_note(run_id, note)
     finally:
         logf.close()
         with _LOCK:

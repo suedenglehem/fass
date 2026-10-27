@@ -115,6 +115,59 @@ class BitstreamFilterSpec(BaseModel):
 
 # ---------------------------------------------------------------- output
 
+class VariantSpec(BaseModel):
+    """One level of an ABR ladder (M13.3): a resolution + video bitrate,
+    with optional per-level audio bitrate / H.264 profile / level.
+
+    The planner resolves unset fields against the default ladder table for
+    the given height, computes the width from the input aspect ratio (kept
+    even), and caps every level at the input height (it never upscales).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    width: int | None = Field(
+        default=None, ge=16, le=8192,
+        description="Level width in pixels; unset → derived from the input "
+                    "aspect ratio at the given height (kept even).",
+    )
+    height: int | None = Field(
+        default=None, ge=16, le=8192,
+        description="Level height in pixels (e.g. 360 for '360p'); unset → "
+                    "derived from the input aspect ratio at the given width.",
+    )
+    video_bitrate_kbps: int | None = Field(
+        default=None, ge=100, le=200000,
+        description="Level video bitrate in kbps; emitted as -b:v/-minrate/"
+                    "-maxrate with -bufsize 2x (CBR-style, the ABR form); "
+                    "unset → the default table's row for the height.",
+    )
+    audio_bitrate_kbps: int | None = Field(
+        default=None, ge=32, le=3840,
+        description="Level audio bitrate in kbps (e.g. 64); unset → the "
+                    "default table's row for the height.",
+    )
+    video_profile: Literal["baseline", "main", "high"] | None = Field(
+        default=None,
+        description="H.264 profile for this level (baseline/main/high); "
+                    "unset → the default table's row for the height.",
+    )
+    video_level: str | None = Field(
+        default=None, max_length=8,
+        description="H.264 level for this level, e.g. '3.0' or '31'; unset "
+                    "→ the default table's row for the height.",
+    )
+
+    @model_validator(mode="after")
+    def _needs_a_dimension(self) -> "VariantSpec":
+        if self.width is None and self.height is None:
+            raise ValueError(
+                "a ladder level needs a width and/or a height "
+                "(e.g. 360p, or 640x360)"
+            )
+        return self
+
+
 class OutputSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -127,6 +180,7 @@ class OutputSpec(BaseModel):
     )
     container: Literal[
         "mp4", "mov", "mkv", "webm", "mpegts", "flv", "rtsp", "srt", "hls",
+        "dash",
         "avi", "mxf", "vob", "asf", "3gp", "dv", "gif", "webp",
         "mp3", "mp2", "m4a", "aac", "ogg", "flac", "wav", "aiff", "mka",
         "opus", "srt_file", "vtt_file", "ass_file",
@@ -224,6 +278,74 @@ class OutputSpec(BaseModel):
                     "the output path. Keys and values are validated against "
                     "the table.",
     )
+    variants: list[VariantSpec] | None = Field(
+        default=None, max_length=8,
+        description="ABR ladder levels (M13.3): when set, the output is an "
+                    "adaptive-bitrate ladder — one encode per level, an HLS "
+                    "variant playlist per level (stream_%v.m3u8) or a single "
+                    "DASH .mpd with auto adaptation sets. An empty list "
+                    "means 'ladder requested, fill the default table'; a "
+                    "filled list is the user's explicit levels. HLS/DASH "
+                    "containers only; always a re-encode.",
+    )
+
+    @model_validator(mode="after")
+    def _variants_consistency(self) -> "OutputSpec":
+        if self.variants is None:
+            return self
+        if self.container not in ("hls", "dash"):
+            raise ValueError(
+                "an ABR ladder (variants) only makes sense for segmented "
+                f"outputs — the container must be 'hls' or 'dash', not "
+                f"'{self.container}'"
+            )
+        if self.mode != "video":
+            raise ValueError(
+                "an ABR ladder (variants) is a video feature — an "
+                "audio-only or subtitle output has no video levels"
+            )
+        if self.video_codec is not None and self.video_codec not in (
+            "h264", "h265",
+        ):
+            raise ValueError(
+                "an ABR ladder re-encodes video with per-level profile/"
+                f"level flags — only an h264 or h265 ladder is supported, "
+                f"not {self.video_codec}"
+            )
+        if self.gpu or self.qsv:
+            raise ValueError(
+                "an ABR ladder is a CPU encode — clear gpu/qsv; per-level "
+                "NVENC/QSV ladders are not supported"
+            )
+        if self.pixel_format is not None:
+            raise ValueError(
+                "an ABR ladder sets the pixel format per encoder; clear "
+                "pixel_format and let the ladder use the codec default"
+            )
+        if self.variants:
+            if self.video_bitrate_kbps is not None:
+                raise ValueError(
+                    "an ABR ladder sets a bitrate per level — clear the "
+                    "top-level video bitrate (the levels carry their own)"
+                )
+            if self.audio_bitrate_kbps is not None:
+                raise ValueError(
+                    "an ABR ladder sets an audio bitrate per level — clear "
+                    "the top-level audio bitrate (the levels carry their "
+                    "own)"
+                )
+            if any(
+                v.video_profile is not None
+                and self.video_profile is not None
+                and v.video_profile != self.video_profile
+                for v in self.variants
+            ):
+                raise ValueError(
+                    "a per-level video_profile conflicts with a top-level "
+                    "video_profile — set the profile only per level or "
+                    "only top-level"
+                )
+        return self
 
     @model_validator(mode="after")
     def _mode_consistency(self) -> "OutputSpec":

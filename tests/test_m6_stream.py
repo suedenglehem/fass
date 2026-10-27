@@ -7,8 +7,13 @@ from __future__ import annotations
 import pytest
 
 from fass.config import FassConfig, StreamingConfig, save_config
-from fass.pipeline import _rewrite_stream_host, generate
-from fass.schema import Asset, guess_kind
+from fass.pipeline import (
+    GenerationResponse,
+    _reconcile_output_destination,
+    _rewrite_stream_host,
+    generate,
+)
+from fass.schema import Asset, EditPlan, OutputSpec, guess_kind
 from tests.conftest import make_media
 
 HA = "172.17.0.1"
@@ -78,3 +83,36 @@ def test_generate_leaves_placeholder_when_streaming_off(tmp_path, monkeypatch):
                  adapter_name="rules")
     assert r.status == "ready", r.errors
     assert "udp://host:5000" in r.command
+
+
+# ---------------- M13.1: file-destination container reconciliation (bug: an
+# mp4/mov default must not ship -movflags +faststart into a .ts output)
+
+def test_file_destination_reconciles_defaulted_container():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    resp = GenerationResponse(status="ready")
+    _reconcile_output_destination(
+        edit, "out.ts",
+        ["container defaulted to mp4 (from the input filename)"], resp)
+    assert edit.output.container == "mpegts"
+    assert any("out.ts" in d and "mpegts" in d for d in resp.defaults)
+
+
+def test_file_destination_keeps_explicit_container():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    resp = GenerationResponse(status="ready")
+    _reconcile_output_destination(
+        edit, "out.ts", ["container set to mp4"], resp)
+    # explicit container: the planner reports the conflict, no silent switch
+    assert edit.output.container == "mp4"
+    assert edit.output_destination is None
+
+
+def test_file_destination_reconcile_skips_subtitle_dumps():
+    # the stream 'srt' container shadows 'srt_file' for the .srt extension
+    edit = EditPlan(output=OutputSpec(mode="subtitles", container="srt_file"))
+    resp = GenerationResponse(status="ready")
+    _reconcile_output_destination(
+        edit, "subs.srt", ["container defaulted to srt_file"], resp)
+    assert edit.output.container == "srt_file"
+    assert edit.output_destination is None

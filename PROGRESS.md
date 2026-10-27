@@ -5,74 +5,195 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-27, M13 PLANNING — plan mode, no coding yet):**
-  M13 = user-picked scope: (1) HLS ABR ladders (multi-variant),
-  (2) DASH output, (3) `tee` fan-out, (4) live HLS (E2E), (5) play
-  the run's playlist/segments in the web UI. NO coding this session
-  — plan only; the user hand-tests the reference commands first,
-  then they lock in as E2E cases. Exploration COMPLETE via two
-  dispatcher jobs: j_f7d3350725 (i7, succeeded) — schema/planner/
-  builder/execute trace (plan.py OutputSpec L118, planner.py
-  _build_reencode_plan L2103-2428, builder _pass_argv L14-31,
-  execute.py validate_argv L172-233 / resolve_paths L392-475;
-  registry has NO dash container and NO var_stream_map);
-  j_c5a42bb4ec (tr4-secondary; job record failed on the cc-worker
-  evidence_path quirk — work complete, report recovered from the
-  artifacts dir) — NLU rules.py / llm.py / registry.json /
-  loader.py / test-pattern map. KEY VERIFIED on tr4 ffmpeg 6.1.1
-  (null-muxer run, exit 0): per-stream specifiers (-b:v:0
-  -minrate:v:0 -maxrate:v:0 -bufsize:v:0 -s:v:0 -profile:v:0
-  -level:v:0 -b:a:0) → ladders need NO builder change (maps up
-  front, per-level opts in output_opts). Capability matrix (both
-  builds): hls+var_stream_map, dash+adaptation_sets+seg_duration,
-  tee+use_fifo all on 6.1.1 AND 9.0.1; 9.0.1-only
-  hls_segment_filename / hls_start_number_source OUT of scope (no
-  min_version mechanism in format_options). Security finding:
-  absolute paths inside a tee template bypass the volume jail
-  (resolve_paths only rewrites bare names) → forbid at build time.
-  Plan file
-  /home/andrei/.claude/plans/majestic-sauteeing-ullman.md: FINAL —
-  all 8 sections. Design job **j_0130ee5802 SUCCEEDED** (05:17
-  UTC; full doc: worktree
-  ~/.local/share/local-dispatcher/worktrees/j_0130ee5802/.exploration-scratch/M13_DESIGN.md,
-  all ffmpeg facts probed on 6.1.1) — all 10 questions folded in.
-  Key design calls: ladder = OutputSpec.variants (VariantSpec) +
-  tee = OutputSpec.tee (TeeBranch), mutually exclusive, both
-  default None (byte-identical single-variant); ladder mechanism
-  = interleaved -map groups inside output_opts (zero builder
-  change), stream-specifier form is documented fallback (needs a
-  9.0.1 probe); tee = bracket template [f=hls:…]name|[f=dash:…]name
-  + explicit -map 0:v -map 0:a (the muxer=path:opt shorthand
-  FAILS — probed); var_stream_map kind=string in BOTH hls and dash
-  groups (executor's container-context gate validates against the
-  output container); DASH = containers/matrix/format_options.dash +
-  AUTO adaptation sets (explicit sets fail with var_stream_map —
-  probed); live = event + window + independent_segments,
-  delete_segments opt-in only, file input allowed + ENDLIST
-  warning, -re pseudo-live → M13b; **USER DECISION: master.m3u8
-  synthesized post-run** by the execution layer from the plan's
-  declared levels (ffmpeg's hls muxer writes no master — probed;
-  the only place fass writes an output file; generate-only
-  deployments write nothing). HTTP delivery REVISED (user,
-  2026-10-27): Apache in the docker image serves <output_dir>/http/
-  — the executor picks that cwd from argv (hls/dash container, or a
-  tee run with an hls/dash branch; no schema change, Run.http flag);
-  GET /v1/http/manifests + POST /v1/http/purge + /static allowlist
-  (vendored hls.min.js + dash.all.min.js, CORS header load-bearing);
-  new Player tab lists/plays manifests WHILE the run generates,
-  with a Purge button; the earlier artifacts dir-diff +
-  /media/run/{id}/play/ rewrite route + ▶ modal are DROPPED.
-  Six reference FASS commands (typed in the UI Command tab; expected
-  argv = the probed ground truth) in the plan for the user's
-  hand-testing (they lock the E2E cases). Milestones: M13.1 registry+DASH single →
-  M13.2 live → M13.3 HLS ladder + master → M13.4 DASH ladder →
-  M13.5 tee → M13.6 Apache + /output/http → M13.7 Player tab.
-  Mid-generation probes (6.1.1, -re pacing): event-HLS playlist
-  grows mid-run with no ENDLIST → playable WHILE generating;
-  vod .m3u8 absent until completion (3 probe rounds); DASH .mpd
-  type=dynamic (growing timeline) → static at completion; segments
-  written .tmp then renamed (player-safe); -hls_time 4 → actual
-  8.33 s segments (x264 keyint 250). M12 record follows.
+- **Last state (2026-10-27, M13 IMPLEMENTATION — M13.1 + M13.2 +
+  M13.3 + M13.4 COMPLETE on tr4 6.1.1, DUAL-BUILD E2E GREEN (6.1.1 +
+  9.0.1), suite 1365/1):**
+  Plan (unchanged, FINAL, ca52114):
+  /home/andrei/.claude/plans/majestic-sauteeing-ullman.md. M13.1
+  (registry 2.9.0 + single-variant DASH) is implemented and
+  E2E-verified on tr4 6.1.1 — suite **1301 passed / 1 skipped**
+  (M13.1 + M13.2 + Job A + Job B together; Job B alone in its
+  worktree 1275/1)
+  (main tree, M13.1 + Job A + Job B together; Job B alone in its
+  worktree 1275/1). E2E 3/3 via /tmp/fass_e2e_m13/run.py
+  (start_run on media/titan.mp4): DASH copy
+  (`-f dash -c copy dash_e2e.mpd`), DASH re-encode
+  (`-vf scale=-2:480 -c:v libx264 … dash_reenc.mpd`), and the
+  user-reported .ts/movflags bug repro (defaulted mp4 + .ts
+  destination now reconciles to mpegts, no -movflags in the .ts
+  argv; ffprobe: .mpd = dash 20.0 s, .ts = h264 1280x720 + aac).
+  M13.1 change set (UNCOMMITTED in the working tree — commit only
+  on user request): registry.json 2.9.0 (containers/matrix/
+  format_options.dash 6 opts, hand-formatted), loader.py
+  `_FORMAT_OPTION_GROUPS` += dash, plan.py container Literal +=
+  dash, rules.py dash/mpd words + `.mpd` phrase + SUPPORTED_SUMMARY,
+  planner.py DASH special case (muxer="dash" + force .mpd, mirrors
+  HLS L1501-1511) + file-destination container-consistency PlanError
+  (AFTER the overwrite guards), pipeline.py
+  `_reconcile_output_destination` file branch (defaulted container
+  follows the destination extension; explicit conflict → planner
+  error). 6.1.1 DASH facts: works with -c copy AND libx264; output
+  .mpd + init-streamN.m4s + chunk-streamN-NNNNN.m4s; ffprobe
+  format_name=dash. M13.2 (live HLS) is also implemented +
+  E2E-verified on 6.1.1 — see the M13.2 record below. **9.0.1
+  docker half DONE**: base jrottenberg/ffmpeg:9.0-nvidia2404
+  pulled; fass:m132-verify image BUILT from the working tree
+  (no commit needed — docker build uses the tree); in-container
+  E2E (script /tmp/fass_e2e_m13/run901.py, container fass-m132-e2e
+  with media/ on /input) — all three runs success exit 0 on
+  9.0.1: DASH copy (`-f dash -c copy`), DASH re-encode
+  (scale=-2:480 libx264), live HLS (event + list_size 10 +
+  independent_segments → EVENT playlist, 11 segments, ENDLIST,
+  byte-identical playlist shape to 6.1.1). Both .mpds
+  well-formed (type=static, PT20.0S, video+audio sets),
+  cross-probed with host 6.1.1 ffprobe → `dash` 20.0 s.
+  **9.0.1 BUILD LIMITATION found (not a fass bug)**: the
+  jrottenberg build has NO libxml2 → its ffprobe/dash demuxer
+  cannot parse ANY mpd (fails identically on 6.1.1-made mpds;
+  the demuxer is present, MPD parsing just fails) — verify
+  DASH on 9.0.1 structurally (XML + segments) or cross-probe
+  with a libxml2-enabled ffprobe. **DASH SEGMENT-NAME COLLISION
+  noted for M13.6**: the dash muxer names segments
+  init-streamN.m4s / chunk-streamN-NNNNN.m4s independent of the
+  .mpd name — two DASH runs in one shared output dir (the
+  future http/ folder) overwrite each other's segments; the
+  M13.6 design must address it (document / single_file / unique
+  dirs). i7's live fass image deliberately NOT rebuilt
+  (worker follow-up; needs a committed push — parked with the
+  M13.1 commit).
+  Two delegated jobs both INTEGRATED into main this session:
+  **Job A j_bf5977d1b3** (tr4-secondary) — editable Command tab,
+  revalidated server-side (api.py RunRequest.command + shlex split
+  + 422s; ui.py textarea; 7 tests) — ff-merged, **5e4b2bd**,
+  dispatch_integrate "accepted". **Job B j_ae29ca471d** (i7) —
+  RAG baked into the fass-rag image + RAG default in compose
+  (Dockerfile.rag ingests rag/corpus/ at build time, no volume;
+  compose.yaml fass-rag default service + FASS_RAG_ENABLED=1/
+  FASS_RAG_URL; compose.rag.yaml retired; README; 32 tests) — the
+  dispatcher record transiently showed failed/exit-1 but the work
+  was intact in the tr4 worktree (commit e87c708 on
+  dispatch/j_ae29ca471d); reviewed, rebased onto main, ff-merged
+  as **64a0111**, dispatch_integrate "accepted" (record now
+  succeeded/exit-0). i7 live: docker-fass-rag-1 up healthy with
+  baked corpus (1820+836 chunks), compose.yaml.bak-rag backup
+  kept, i7 live compose hand-merged per PRD 6.7.
+  M13.2 (live HLS) IMPLEMENTED + E2E-verified on 6.1.1 this session
+  (suite **1301/1**): rules.py `_detect_format_options` live block
+  ("live hls" → hls_playlist_type=event + hls_flags=
+  independent_segments; "…with a N segment window" → hls_list_size=N;
+  "…delete old segments" → delete_segments OPT-IN only; explicit
+  key=value wins over the NL map); planner finite-input warning
+  (event + file input → "#EXT-X-ENDLIST … for true live use a stream
+  input (or -re)"; stream input → no warning); SUPPORTED_SUMMARY.
+  6 tests. E2E (titan.mp4): `… -f hls -c copy -hls_flags
+  independent_segments -hls_list_size 10 -hls_playlist_type event
+  live_e2e.m3u8` → success exit 0, EVENT playlist + ENDLIST (finite)
+  + 11 segments. LATENT BUG FIXED en route: the flagset validator
+  splits on '+' (FFmpeg flag syntax), but the registry descriptions
+  for hls_flags / flvflags and the llm.py prose said "comma-joined" —
+  a comma-joined multi-flag value fails validation; all three now
+  say '+'. M13.1 + M13.2 9.0.1 docker halves ride on the
+  fass:m132-verify build (base jrottenberg/ffmpeg:9.0-nvidia2404
+  pulled on tr4; image built from the working tree — no commit
+  needed); in-container E2E GREEN (3/3 runs success, DASH + live HLS
+verified — see Last state block for the 9.0.1 libxml2 limitation +
+DASH segment-name collision notes). M13.3 (ABR HLS ladder +
+  post-run master.m3u8) and M13.4 (DASH ladder, auto adaptation sets)
+  are now COMPLETE — records below; then M13.5 (tee bracket
+  template) → M13.6 (Apache + /output/http) → M13.7 (Player tab).
+  M13.1 planning/design record (exploration jobs j_f7d3350725 /
+  j_c5a42bb4ec / j_0130ee5802, capability matrix, design calls,
+  mid-generation probes) remains valid as context — see the M13
+  plan file. M12 record follows.
+- **M13.3 (ABR HLS ladder + post-run master.m3u8) COMPLETE 2026-10-27
+  — DUAL-BUILD E2E GREEN, suite 1360/1, UNCOMMITTED (same working
+  tree).** Schema: VariantSpec (width/height 16..8192,
+  video_bitrate_kbps 100..200000, audio_bitrate_kbps 32..3840,
+  video_profile baseline/main/high, video_level ≤8 chars) +
+  OutputSpec.variants (max 8; container must be hls/dash; re-encode
+  path only — copy cannot make levels; planner caps levels at the
+  probed input height, never upscales; unset per-level fields fall
+  back to the default-table row for that height). Default table
+  (planner module constant): 216p/300k/600k/main/3.0/56k,
+  360p/700k/1400k/main/3.1/64k, 480p/1500k/3000k/main/3.2/80k,
+  720p/2500k/5000k/main/3.1/96k, 1080p/4500k/9000k/main/4.0/128k
+  (bufsize = 2× video kbps); default count 3 → a 720p input gets
+  360/480/720. **Mechanism deviation from the plan (empirically
+  refuted):** the plan's interleaved bare-option ladder form is WRONG
+  on 6.1.1 — a bare per-stream option applies to ALL matching output
+  streams, last occurrence wins (every variant came out at the top
+  level's bitrate). PRIMARY form = stream-specifier: all
+  `-map 0:v:0 -map 0:a:0` pairs first, shared bare `-c:v libx264
+  -c:a aac -pix_fmt yuv420p`, per-level 16-token blocks
+  (`-b:v:N -minrate:v:N -maxrate:v:N -bufsize:v:N -profile:v:N
+  -level:v:N -s:v:N -b:a:N`; width = input aspect × level height,
+  rounded even), then `-var_stream_map "v:0,a:0 v:1,a:1 …"` as ONE
+  argv element (registry kind=string in BOTH the hls and dash
+  format-option groups; registry hand-bumped 2.9.0 → 2.10.0).
+  execute.py: `_SPEC_RX`/`_spec_base` strip the `:N` index (keeping
+  the `:v` type for b/c/profile) so specifier options get the base
+  flag's value checks; new vocab `-minrate` (rate), `-level`
+  (`^\d+(\.\d+)?$|^\d{1,2}$`), `-s` (`^\d+x\d+$`). NLU: "abr hls" /
+  "hls ladder" / "bitrate ladder" / "adaptive hls" / "multi-quality
+  hls" → variants (explicit "levels 216p 300k, 480p 1500k" → filled
+  VariantSpecs; count-only → variants=[] → default table); "dash
+  ladder" / "abr dash" → dash + variants; the generic key=value scan
+  never captures var_stream_map (the planner builds it). **Master
+  synthesis deviation (plan §5.5):** NOT from Run-record metadata —
+  `_ladder_from_argv` (execute.py) derives the ladder from the argv
+  itself at start_run (requires -var_stream_map + per-level specifier
+  options + a .m3u8 destination containing %v; a .mpd or other
+  destination → None, so DASH runs get no master); bandwidth =
+  (video+audio kbps)×1000, CODECS from _AVC_PROFILE_ID
+  (baseline=66/main=77/high=100) + mp4a.40.2, RESOLUTION from the
+  level; `_synthesize_master` writes master.m3u8 into the run's cwd +
+  a Run note; the Run record carries the derived ladder. Ladder + a
+  filter edit in one request → clarification. E2E 6.1.1 ALL PASS
+  (script /tmp/m133/e2e_ladder.py, titan.mp4): case A "abr hls with
+  levels 216p 300k, 480p 1500k" → stream_0/1.m3u8 + .ts (2 levels
+  384x216 L3.0 / 854x480 L3.2), case B "abr hls" → 3 levels
+  640x360 L3.1 / 854x480 L3.2 / 1280x720 L3.1; master.m3u8
+  BANDWIDTH/RESOLUTION/CODECS exact (avc1.4d401e/4d401f/4d4020 +
+  mp4a.40.2); per-variant bitrate checked via segment-bytes ÷
+  #EXTINF durations (±15%) — **ffprobe .ts stream.bit_rate is 0/N/A
+  (MPEG-TS carries no per-stream bitrate metadata)**; single-variant
+  HLS argv byte-identical to pre-M13 (regression guard). E2E 9.0.1
+  in-container (fass:m133-verify, run901_ladder.py) — "## 9.0.1
+  ladder E2E OK": case A overall 376868/759902/1589533 vs targets
+  356000/764000/1580000, case B 757123/1574510/2627745 vs
+  764000/1580000/2596000, master OK, 18 .ts/case; variant
+  geometry/levels cross-probed with host 6.1.1 ffprobe (the 9.0.1
+  ffprobe has no libxml2, and .ts bit_rate=0 anyway).
+- **M13.4 (ABR DASH ladder) COMPLETE 2026-10-27 — DUAL-BUILD E2E
+  GREEN, suite 1365/1, UNCOMMITTED.** Reuses M13.3's emitter
+  unchanged (-f dash + var_stream_map + AUTO adaptation sets — never
+  explicit); format_options (seg_duration etc.) ride the ladder path
+  (the planner emits them after the variant block). 5 new tests
+  (test_planner_builder.py: DASH ladder argv exact — -f dash, map
+  pairs, per-level specifier blocks, var_stream_map, .mpd destination,
+  no -adaptation_sets; dash seg_duration emitted before the output
+  path; test_rules.py: dash ladder explicit levels, "abr dash", dash
+  word + ladder in one phrase). **E2E-verified MPD structure (the
+  plan's "auto sets" form, now pinned empirically):** one
+  (video, audio) AdaptationSet PAIR PER VARIANT in variant order —
+  NOT a single pooled video AS; root type=static +
+  mediaPresentationDuration=PT20.0S; one Representation per video AS
+  at the declared resolution with avc1.4d<profile><level> ids
+  (main=0x4d; 3.0=0x1e, 3.1=0x1f, 3.2=0x20); audio reps all
+  mp4a.40.2. **Init segments are per STREAM:** N variants → 2N init
+  + 2N chunk streams. No master.m3u8 for .mpd destinations (Run
+  record ladder=None). E2E 6.1.1 ALL PASS (script
+  /tmp/m133/e2e_dash_ladder.py): case A "dash ladder with levels
+  216p 300k, 480p 1500k" → titan.mpd static PT20.0S, 2 AS pairs,
+  avc1.4d401e/4d4020; case B "abr dash" → 3 AS pairs
+  640x360/854x480/1280x720, avc1.4d401f/4d4020/4d401f; host ffprobe
+  (libxml2) parses the .mpd. E2E 9.0.1 in-container (fass-m134-e2e,
+  run901_dash_ladder.py; structural XML via ElementTree since the
+  9.0.1 ffprobe cannot parse any .mpd) — "## 9.0.1 dash-ladder E2E
+  OK": case A 2 (video,audio) AS pairs [(384,216),(854,480)]
+  avc1.4d401e/4d4020, 4 init + 14 chunks; case B 3 AS pairs
+  [(640,360),(854,480),(1280,720)] avc1.4d401f/4d401f/4d4020, 6
+  init + 21 chunks — identical structure to 6.1.1.
 - **M12 (COMPLETE 2026-10-27 — all mandated work done):**
   **M12 = the PRD-deferred scope (watermarks / HDR / batch) is all
   on main.** VMAF/compare convention b8ed8ff (Netflix vmaf docs CLI
@@ -1017,17 +1138,18 @@ and forgotten), #318/#316 (forgotten, same chain).
 
 ## 8. Pending user decisions + next unfinished task
 
-**Next unfinished task (2026-10-27, M13 PLANNING — plan COMPLETE, no coding yet):**
-M13 scope (user picks 2026-10-27): HLS ABR ladders, DASH output,
-`tee` fan-out, live HLS, web-UI playback. Plan file
-/home/andrei/.claude/plans/majestic-sauteeing-ullman.md — FINAL
-(all 8 sections; design job j_0130ee5802 succeeded 05:17 UTC and
-its M13_DESIGN.md is folded in; user decision recorded: post-run
-master.m3u8 synthesis). NEXT: user hand-tests the six reference
-argv in the plan on tr4 6.1.1 + i7 9.0.1 docker (the results lock
-the E2E cases); then implement M13.1 → M13.6 in a future session
-(per milestone: suite green from baseline 1278/1 + E2E on 6.1.1).
-M12 close-out record below.
+**Next unfinished task (2026-10-27, M13 IMPLEMENTATION):**
+M13.1 is functionally complete + E2E-verified on tr4 6.1.1
+(suite 1295/1, E2E 3/3) but UNCOMMITTED (12 files in the working
+tree — commit/push only on user request; the i7 fass-image rebuild
+is parked on that commit). Remaining close-out: (1) 9.0.1 docker
+half — base image pulling on tr4, then build fass:dev from the
+working tree + in-container DASH E2E; (2) update HANDOFF.md;
+(3) /savework checkpoint. Then **M13.2 live HLS** (plan §3 —
+details in the top Last-state block), then M13.3 → M13.7 in plan
+order; per milestone: suite green + E2E 6.1.1 + the 9.0.1 docker
+half (reuse the fass:dev build) + the user hand-tests the
+reference fass commands as they land. M12 close-out record below.
 **M11 series COMPLETE** (the ~00:55 block above remains the M11
 record; its two "remaining" items are superseded — i7 9.0.1 battery
 ran 21/21 zero-skips and landed as c949b9e, and origin/main was

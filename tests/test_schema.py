@@ -507,3 +507,150 @@ def test_bsf_for_copy():
     assert bsf_for_copy("mp4", "mp4", "h264") is None
     assert bsf_for_copy("mpegts", "mp4", "h264") is None
     assert bsf_for_copy("mp4", "mpegts", "vp9") is None
+
+
+# ------------------------------------------------- M13.3 ABR ladder schema
+
+def test_variant_level_needs_a_dimension():
+    from fass.schema import VariantSpec
+
+    with pytest.raises(ValidationError, match="needs a width and/or a height"):
+        VariantSpec()
+
+
+def test_variant_field_bounds():
+    from fass.schema import VariantSpec
+
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, video_bitrate_kbps=99)  # < 100
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, video_bitrate_kbps=200001)  # > 200000
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, audio_bitrate_kbps=31)  # < 32
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, audio_bitrate_kbps=3841)  # > 3840
+    with pytest.raises(ValidationError):
+        VariantSpec(height=15)  # < 16
+    with pytest.raises(ValidationError):
+        VariantSpec(height=8193)  # > 8192
+    # the probed row passes
+    v = VariantSpec(height=360, video_bitrate_kbps=700, audio_bitrate_kbps=64,
+                    video_profile="main", video_level="3.1")
+    assert (v.video_profile, v.video_level) == ("main", "3.1")
+
+
+def test_variant_profile_literal():
+    from fass.schema import VariantSpec
+
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, video_profile="ultrafast")
+    for p in ("baseline", "main", "high"):
+        assert VariantSpec(height=360, video_profile=p).video_profile == p
+
+
+def test_variant_level_max_length():
+    from fass.schema import VariantSpec
+
+    assert VariantSpec(height=360, video_level="3.0").video_level == "3.0"
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, video_level="3.0.1.2.3")  # > 8 chars
+
+
+def test_variants_only_for_segmented_containers():
+    with pytest.raises(
+            ValidationError,
+            match="the container must be 'hls' or 'dash', not 'mp4'"):
+        OutputSpec(container="mp4", video_codec="h264",
+                   variants=[{"height": 360}])
+    for c in ("hls", "dash"):
+        assert OutputSpec(container=c, video_codec="h264",
+                          variants=[{"height": 360}]).variants is not None
+
+
+def test_variants_video_mode_only():
+    with pytest.raises(
+            ValidationError,
+            match="an ABR ladder .variants. is a video feature"):
+        OutputSpec(container="hls", video_codec="h264", mode="audio",
+                   variants=[{"height": 360}])
+
+
+def test_variants_h264_h265_only():
+    with pytest.raises(
+            ValidationError,
+            match="only an h264 or h265 ladder is supported"):
+        OutputSpec(container="hls", video_codec="vp9",
+                   variants=[{"height": 360}])
+    assert OutputSpec(container="hls", video_codec="h265",
+                      variants=[{"height": 360}]).variants is not None
+
+
+def test_variants_reject_gpu_qsv_and_pixel_format():
+    with pytest.raises(
+            ValidationError,
+            match="an ABR ladder is a CPU encode"):
+        OutputSpec(container="hls", video_codec="h264", gpu=True,
+                   variants=[{"height": 360}])
+    with pytest.raises(
+            ValidationError,
+            match="an ABR ladder is a CPU encode"):
+        OutputSpec(container="hls", video_codec="h264", qsv=True,
+                   variants=[{"height": 360}])
+    with pytest.raises(
+            ValidationError,
+            match="clear pixel_format"):
+        OutputSpec(container="hls", video_codec="h264",
+                   pixel_format="yuv444p", variants=[{"height": 360}])
+
+
+def test_variants_conflict_with_top_level_bitrates():
+    with pytest.raises(
+            ValidationError,
+            match="clear the top-level video bitrate"):
+        OutputSpec(container="hls", video_codec="h264",
+                   video_bitrate_kbps=1500,
+                   variants=[{"height": 360, "video_bitrate_kbps": 700}])
+    with pytest.raises(
+            ValidationError,
+            match="clear the top-level audio bitrate"):
+        OutputSpec(container="hls", video_codec="h264",
+                   audio_bitrate_kbps=128,
+                   variants=[{"height": 360, "video_bitrate_kbps": 700}])
+    # an EMPTY variants list ('ladder requested') has no per-level values,
+    # so the top-level conflict does not fire
+    assert OutputSpec(container="hls", video_codec="h264",
+                      video_bitrate_kbps=1500, variants=[]).variants == []
+
+
+def test_variants_profile_conflict_only_when_different():
+    with pytest.raises(
+            ValidationError,
+            match="conflicts with a top-level video_profile"):
+        OutputSpec(container="hls", video_codec="h264", video_profile="main",
+                   variants=[{"height": 360, "video_bitrate_kbps": 700,
+                              "video_profile": "high"}])
+    # the same profile top-level and per-level is not a conflict
+    assert OutputSpec(
+        container="hls", video_codec="h264", video_profile="main",
+        variants=[{"height": 360, "video_bitrate_kbps": 700,
+                   "video_profile": "main"}]).variants is not None
+
+
+def test_variants_capped_at_eight_levels():
+    with pytest.raises(ValidationError):
+        OutputSpec(container="hls", video_codec="h264",
+                   variants=[{"height": h, "video_bitrate_kbps": 300}
+                             for h in (216, 360, 480, 720, 1080,
+                                        1440, 2160, 3072, 4320)])
+    assert len(OutputSpec(
+        container="hls", video_codec="h264",
+        variants=[{"height": h, "video_bitrate_kbps": 300}
+                  for h in (216, 360, 480, 720, 1080, 1440, 2160, 3072)]
+    ).variants) == 8
+
+
+def test_variants_unknown_field_rejected():
+    from fass.schema import VariantSpec
+
+    with pytest.raises(ValidationError):
+        VariantSpec(height=360, bitrate_kbps=700)  # 'video_' prefix required

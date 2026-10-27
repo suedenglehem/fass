@@ -1,4 +1,4 @@
-"""M11.2 §6.1 — registry 2.8.0 documentation fields.
+"""M11.2 §6.1 — registry 2.9.0 documentation fields.
 
 Every allowlisted filter entry carries, appended last:
 
@@ -6,7 +6,7 @@ Every allowlisted filter entry carries, appended last:
 - aliases:      reviewed natural-language phrases naming the filter
 - provenance:   {corpus_id, option_source, verified_builds, reviewed}
 
-plus registry_version == "2.8.0".  Shape checks run over the raw JSON;
+plus registry_version == "2.9.0".  Shape checks run over the raw JSON;
 the loader accessors (doc_ref / filter_aliases / doc_ref_map) are checked
 for consistency against the same data, not against hardcoded strings.
 """
@@ -30,7 +30,17 @@ def _entries():
 
 
 def test_registry_version():
-    assert REGISTRY["registry_version"] == "2.8.0"
+    assert REGISTRY["registry_version"] == "2.10.0"
+
+
+def test_var_stream_map_in_hls_and_dash():
+    # M13.3: the ABR variant map is a planner-constructed format option in
+    # BOTH segmented containers (the executor gate validates against the
+    # output container; DASH ladders emit -var_stream_map too).
+    for group in ("hls", "dash"):
+        spec = REGISTRY["format_options"][group]["var_stream_map"]
+        assert list(spec) == ["kind", "description"], group
+        assert spec["kind"] == "string", group
 
 
 def test_all_entries_have_doc_fields():

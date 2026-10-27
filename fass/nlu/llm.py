@@ -98,8 +98,9 @@ An audio_replace operation implies "encode".
 Format options: only when the user names one ("with faststart", "6 second
 HLS segments"), set "format_options" on the output to {{"<key>": "<value>"}}
 using ONLY these keys: {format_opts}. Flagset keys take '+'-joined flags
-(movflags "faststart", mpegts_flags "resend_headers"); hls_flags are
-comma-joined; never invent a key or a value outside the table.
+(movflags "faststart", mpegts_flags "resend_headers", hls_flags
+"independent_segments+delete_segments"); never invent a key or a value
+outside the table.
 GPU encoding (M6): set "gpu": true on "output" when the user asks to encode on the
 GPU / with nvenc / with an NVIDIA card. The GPU covers h264 (h264_nvenc) and h265
 (hevc_nvenc) only — VP9 is CPU-only, and x264 speed presets do not apply on the GPU.
@@ -116,6 +117,17 @@ Target bitrate: an explicit video bitrate ("cbr 10 Mbps", "5 mbps", "2000 kbps")
 "video_bitrate_kbps" on the output (integer kbps, e.g. 10000 for 10 Mbps) — a CBR-style
 target that overrides the quality preset. A *file size* target ("5 MB file") is NOT a
 bitrate: return "needs_clarification".
+ABR ladder (M13.3): when the user asks for an ABR / multi-quality / bitrate ladder
+("abr hls", "hls ladder", "dash ladder", "3 quality levels"), set "output.variants" —
+one object per level (height and/or width, "video_bitrate_kbps", optionally
+"audio_bitrate_kbps", "video_profile" "baseline"|"main"|"high", "video_level" like
+"3.0") — with "output.container" "hls" or "dash". When the user names the levels
+("levels 216p 300k, 360p 700k, 480p 1500k"), fill each level's fields; when the user
+only asks for a ladder or a count ("3 quality levels"), set "variants": [] and the
+planner picks the default levels that fit the input height. A ladder is a plain
+re-encode of every level: it cannot be combined with resize/crop/rotate/speed/
+grayscale/watermark/subtitles/audio replace/filtergraph or an encoder preset —
+that mix is "needs_clarification".
 Stream input/output (M3b):
 - An input asset may be a local file or a URL with an allowlisted scheme (http, https,
   rtmp, rtmps, rtsp, rtsps, rtp, udp, tcp, srt, tls). If the instruction names a URL,
@@ -190,6 +202,9 @@ User: Extract the audio track and transcode it to mp2 audio 128 kbps.
 
 User: Dump the subtitles to a file.
 {{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"mode": "subtitles", "container": "srt_file"}}, "trim": null, "operations": []}}, "clarifications": [], "unsupported": [], "defaults": ["subtitle format defaulted to srt"]}}
+
+User: Make an ABR HLS ladder with levels 216p 300k, 360p 700k and 480p 1500k.
+{{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"container": "hls", "video_codec": "h264", "audio_mode": "encode", "variants": [{{"height": 216, "video_bitrate_kbps": 300}}, {{"height": 360, "video_bitrate_kbps": 700}}, {{"height": 480, "video_bitrate_kbps": 1500}}]}}, "trim": null, "operations": []}}, "clarifications": [], "unsupported": [], "defaults": ["video codec defaulted to h264"]}}
 
 User: Encode this on the GPU as H.265.
 {{"status": "ready", "plan": {{"schema_version": "1.0", "input_id": "main", "output": {{"container": "mp4", "video_codec": "h265", "audio_mode": "encode", "gpu": true}}, "trim": null, "operations": []}}, "clarifications": [], "unsupported": [], "defaults": ["container defaulted to mp4", "GPU encoding: H.265 via hevc_nvenc"]}}
