@@ -5,7 +5,75 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-27, M12 COMPLETE — all mandated work done):**
+- **Last state (2026-10-27, M13 PLANNING — plan mode, no coding yet):**
+  M13 = user-picked scope: (1) HLS ABR ladders (multi-variant),
+  (2) DASH output, (3) `tee` fan-out, (4) live HLS (E2E), (5) play
+  the run's playlist/segments in the web UI. NO coding this session
+  — plan only; the user hand-tests the reference commands first,
+  then they lock in as E2E cases. Exploration COMPLETE via two
+  dispatcher jobs: j_f7d3350725 (i7, succeeded) — schema/planner/
+  builder/execute trace (plan.py OutputSpec L118, planner.py
+  _build_reencode_plan L2103-2428, builder _pass_argv L14-31,
+  execute.py validate_argv L172-233 / resolve_paths L392-475;
+  registry has NO dash container and NO var_stream_map);
+  j_c5a42bb4ec (tr4-secondary; job record failed on the cc-worker
+  evidence_path quirk — work complete, report recovered from the
+  artifacts dir) — NLU rules.py / llm.py / registry.json /
+  loader.py / test-pattern map. KEY VERIFIED on tr4 ffmpeg 6.1.1
+  (null-muxer run, exit 0): per-stream specifiers (-b:v:0
+  -minrate:v:0 -maxrate:v:0 -bufsize:v:0 -s:v:0 -profile:v:0
+  -level:v:0 -b:a:0) → ladders need NO builder change (maps up
+  front, per-level opts in output_opts). Capability matrix (both
+  builds): hls+var_stream_map, dash+adaptation_sets+seg_duration,
+  tee+use_fifo all on 6.1.1 AND 9.0.1; 9.0.1-only
+  hls_segment_filename / hls_start_number_source OUT of scope (no
+  min_version mechanism in format_options). Security finding:
+  absolute paths inside a tee template bypass the volume jail
+  (resolve_paths only rewrites bare names) → forbid at build time.
+  Plan file
+  /home/andrei/.claude/plans/majestic-sauteeing-ullman.md: FINAL —
+  all 8 sections. Design job **j_0130ee5802 SUCCEEDED** (05:17
+  UTC; full doc: worktree
+  ~/.local/share/local-dispatcher/worktrees/j_0130ee5802/.exploration-scratch/M13_DESIGN.md,
+  all ffmpeg facts probed on 6.1.1) — all 10 questions folded in.
+  Key design calls: ladder = OutputSpec.variants (VariantSpec) +
+  tee = OutputSpec.tee (TeeBranch), mutually exclusive, both
+  default None (byte-identical single-variant); ladder mechanism
+  = interleaved -map groups inside output_opts (zero builder
+  change), stream-specifier form is documented fallback (needs a
+  9.0.1 probe); tee = bracket template [f=hls:…]name|[f=dash:…]name
+  + explicit -map 0:v -map 0:a (the muxer=path:opt shorthand
+  FAILS — probed); var_stream_map kind=string in BOTH hls and dash
+  groups (executor's container-context gate validates against the
+  output container); DASH = containers/matrix/format_options.dash +
+  AUTO adaptation sets (explicit sets fail with var_stream_map —
+  probed); live = event + window + independent_segments,
+  delete_segments opt-in only, file input allowed + ENDLIST
+  warning, -re pseudo-live → M13b; **USER DECISION: master.m3u8
+  synthesized post-run** by the execution layer from the plan's
+  declared levels (ffmpeg's hls muxer writes no master — probed;
+  the only place fass writes an output file; generate-only
+  deployments write nothing). HTTP delivery REVISED (user,
+  2026-10-27): Apache in the docker image serves <output_dir>/http/
+  — the executor picks that cwd from argv (hls/dash container, or a
+  tee run with an hls/dash branch; no schema change, Run.http flag);
+  GET /v1/http/manifests + POST /v1/http/purge + /static allowlist
+  (vendored hls.min.js + dash.all.min.js, CORS header load-bearing);
+  new Player tab lists/plays manifests WHILE the run generates,
+  with a Purge button; the earlier artifacts dir-diff +
+  /media/run/{id}/play/ rewrite route + ▶ modal are DROPPED.
+  Six reference FASS commands (typed in the UI Command tab; expected
+  argv = the probed ground truth) in the plan for the user's
+  hand-testing (they lock the E2E cases). Milestones: M13.1 registry+DASH single →
+  M13.2 live → M13.3 HLS ladder + master → M13.4 DASH ladder →
+  M13.5 tee → M13.6 Apache + /output/http → M13.7 Player tab.
+  Mid-generation probes (6.1.1, -re pacing): event-HLS playlist
+  grows mid-run with no ENDLIST → playable WHILE generating;
+  vod .m3u8 absent until completion (3 probe rounds); DASH .mpd
+  type=dynamic (growing timeline) → static at completion; segments
+  written .tmp then renamed (player-safe); -hls_time 4 → actual
+  8.33 s segments (x264 keyint 250). M12 record follows.
+- **M12 (COMPLETE 2026-10-27 — all mandated work done):**
   **M12 = the PRD-deferred scope (watermarks / HDR / batch) is all
   on main.** VMAF/compare convention b8ed8ff (Netflix vmaf docs CLI
   order: reference input 0, distorted input 1; pads
@@ -949,7 +1017,17 @@ and forgotten), #318/#316 (forgotten, same chain).
 
 ## 8. Pending user decisions + next unfinished task
 
-**Next unfinished task (2026-10-27, M12 COMPLETE — close-out commit in flight):**
+**Next unfinished task (2026-10-27, M13 PLANNING — plan COMPLETE, no coding yet):**
+M13 scope (user picks 2026-10-27): HLS ABR ladders, DASH output,
+`tee` fan-out, live HLS, web-UI playback. Plan file
+/home/andrei/.claude/plans/majestic-sauteeing-ullman.md — FINAL
+(all 8 sections; design job j_0130ee5802 succeeded 05:17 UTC and
+its M13_DESIGN.md is folded in; user decision recorded: post-run
+master.m3u8 synthesis). NEXT: user hand-tests the six reference
+argv in the plan on tr4 6.1.1 + i7 9.0.1 docker (the results lock
+the E2E cases); then implement M13.1 → M13.6 in a future session
+(per milestone: suite green from baseline 1278/1 + E2E on 6.1.1).
+M12 close-out record below.
 **M11 series COMPLETE** (the ~00:55 block above remains the M11
 record; its two "remaining" items are superseded — i7 9.0.1 battery
 ran 21/21 zero-skips and landed as c949b9e, and origin/main was
@@ -998,8 +1076,10 @@ processing) — ALL LANDED:
   block at the top).
 
 **Decisions pending:**
-1. **channelsplit** — defer multi-output export (current plan: in-graph only),
-   or implement N-file output (bigger output-model change)?
+1. **channelsplit** — RESOLVED by the M13 scope (2026-10-27 user
+   picks): muxer-level multi-output (HLS/DASH/tee already write N
+   files; the plan model stays one logical output), NOT per-channel
+   N-file export.
 2. **Orphaned i7 worktree dirs** — delete
    `~/.local/share/local-dispatcher/worktrees/{j_cec61c3098, j_848d7f8076,
    j_3c90b56228}`?
