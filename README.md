@@ -73,8 +73,10 @@ inputs is what makes "replace the audio with song.mp3" work.
   the two videos" = end-to-end
 - **Quality comparison** — `compare a.mp4 against b.mp4 with psnr`
   (also ssim; libvmaf on builds that ship the filter + model): the
-  reference clip is the second input, the metric runs frame by frame,
-  the summary lands in the run log (null muxer — nothing is written)
+  reference clip is the **first** input (`-i ref -i main`), the metric
+  runs frame by frame, the summary lands in the run log (null muxer —
+  nothing is written) — full workflow:
+  [Quality comparison](#quality-comparison-vmaf--psnr--ssim)
 - **Two-pass stabilization** — `stabilize the shaky clip`: a
   vidstabdetect pass measures the shake into a `.trf` next to the
   output, the final pass applies vidstabtransform — the response
@@ -113,7 +115,7 @@ inputs is what makes "replace the audio with song.mp3" work.
 - **Capture sources** — `lavfi:` synthetic sources, `v4l2:` cameras, and
   alsa / dshow / avfoundation / x11grab bind as typed inputs
 - **Stream I/O** — inputs and outputs may be stream URLs (rtmp, rtsp, srt,
-  http(s), udp, tcp — allowlisted); a stream destination's scheme fixes the
+  http(s), udp, rtp, tcp — allowlisted); a stream destination's scheme fixes the
   container (rtmp→flv, rtsp→rtsp, srt→srt, udp/tcp→mpegts) and is disclosed
   in the response
 - **Chained processings** — name the output `/input/<file>` (e.g.
@@ -129,6 +131,45 @@ CLI flags, the web API (`POST /v1/commands`, plus `POST /v1/runs` and the
 media endpoints for the execution layer) and the web UI (Command / Runs /
 Config tabs), the security model, validation levels, tests, and the roadmap
 live in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Quality comparison (VMAF / PSNR / SSIM)
+
+Measure how far a clip drifted from its reference — the Netflix vmaf docs'
+command order, as a standalone analysis:
+
+```bash
+./.venv/bin/python -m fass "compare main.mp4 against ref.mp4 with psnr" main.mp4 --asset ref=video:ref.mp4
+./.venv/bin/python -m fass "give me the vmaf against ref.mp4" main.mp4 --asset ref=video:ref.mp4
+./.venv/bin/python -m fass "measure ssim between the two clips" main.mp4 --asset ref=video:ref.mp4
+```
+
+- **Reference binding** — the reference clip is bound with `--asset`
+  (`--asset ref=video:ref.mp4`) and named in the request; a metric-less
+  "compare against ref.mp4" / "how much quality loss" asks which metric
+  (PSNR or SSIM — libvmaf is offered only when you name it)
+- **Input order** — the reference is input 0 (the first `-i`), the main
+  (distorted) input 1; the metric's pads take `[distorted][reference]`.
+  When the sizes differ the main input is scaled to the reference's
+  (the reference is the ground truth); fps / pixel-format mismatches are
+  noted, not converted (resampling would distort the measurement)
+- **Metrics** — `psnr` and `ssim` on every build; `libvmaf` needs a build
+  that ships the filter (FFmpeg 7.0+ — present in the docker image's 9.0,
+  absent from 6.1.1; the plan discloses it as a warning). The VMAF model
+  comes from `FASS_VMAF_MODEL` (a full path) or `FASS_VMAF_MODEL_DIR`
+  (`vmaf_v0.6.1.pkl` / `vmaf_v0.6.1.json`); with neither set, the
+  filter's built-in model applies
+- **Diagnostic output** — the scores go to the ffmpeg log (the run log /
+  UI log tab, log level raised to info); the plan runs against the null
+  muxer (`-f null -`) — **no output file is produced**
+- **Standalone only** — a comparison cannot share one request with trims,
+  watermarks, subtitles, audio replacement, combiners or filter edits;
+  the NLU asks for a follow-up (apply the edit first, then compare the
+  result against the reference)
+- **Timeline alignment** — `setpts=PTS-STARTPTS` re-bases each input's
+  pad only when its probe shows the stream carries packet pts; a raw
+  bitstream (a bare Annex-B `.hevc`) demuxes without any, so the filter
+  is skipped for that pad and the run notes it (frames compare in
+  arrival order)
 
 ## Docker deployment
 
@@ -169,4 +210,4 @@ pick it up by bare name (chained processings). The Config tab's
   `ftp://`, … are rejected)
 - output never overwrites the input; `-y` is never emitted
 
-Spec: `ffmpeg-assistant-prd.md`
+Spec: `ffmpeg-assistant-rag-prd.md`
