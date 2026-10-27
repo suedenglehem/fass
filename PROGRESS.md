@@ -83,13 +83,20 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   qwen3.8-27b @ tr4 dual-model 3090 serving (recorded per PRD's
   "existing PRD target; now measured") · RAG memory 70 MB (≤4 GB
   PASS). Budgets JSON: /dd2/andrei/rag-budgets/{warm,cold}.json.
-  **§9.4 gates:** suite 1218/1 (tr4 host 6.1.1) PASS; battery host
-  6.1.1 = **21/21** (scripts/m10_battery.sh local; 3 feature-SKIPs:
-  fdk_vbr4, libvmaf, scale_cuda — host build lacks them, same as
-  M10.6 baseline); i7 9.0.1 docker half DEFERRED (repo sync/push =
-  user decision; origin/main still aa0e534, whole M11 arc unpushed).
-  Determinism: rules plans byte-identical with RAG on vs off, 91/91
-  (M11.2 §9.3). **M11.3 COMPLETE (2026-10-26):** fixtures
+  **§9.4 gates (ALL GREEN):** suite 1218/1 (tr4 host 6.1.1) PASS;
+  battery host 6.1.1 = **21/21** (scripts/m10_battery.sh local; 3
+  feature-SKIPs: fdk_vbr4, libvmaf, scale_cuda — host build lacks
+  them, same as M10.6 baseline); **i7 9.0.1 docker half = 21/21 with
+  ZERO skips (2026-10-27 01:15)** — all three 9.0.1-only cases
+  executed clean on the nvidia build (log
+  battery-out/m114_battery_i7_901.log; run from tr4:
+  `scripts/m10_battery.py --mode docker --api
+  http://192.168.0.33:8000` after i7 repo sync 4ff3393→7866a93 via
+  bundle + fass:latest rebuild 58b9eba7(2.2.0)→cc5eda7(2.7.0) +
+  `docker compose up -d fass`; clips scp'd to i7
+  docker-data/input, md5-verified; fass-worker left on old code
+  pending user decision). Determinism: rules plans byte-identical
+  with RAG on vs off, 91/91 (M11.2 §9.3). **M11 series COMPLETE.** **M11.3 COMPLETE (2026-10-26):** fixtures
   adb8c60/f13ae07 (ebur128/signalstats/blackframe, verbatim real
   corpus, edge cases); rag/author + rag/gaps integrated as d47f96e
   (job j_5c845355c5); parser round 1 (10b1fe5: grouped <dt>s,
@@ -156,26 +163,18 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   all verified known/expected (16 freezedetect/silencedetect
   string-modeling + 9 9.0.1-evolution). Suite **1218 passed / 1
   skipped** (120 s).**
-  **Next (post-reboot 2026-10-27):** (1) i7 docker 9.0.1 battery
-  half of §9.4 — sync STAGED: bundle
-  /dd2/andrei/fass-m11-arc.bundle (4ff3393..00c9120, 50 commits;
-  i7 main 4ff3393 = verified ancestor) → scp to i7; on i7:
-  mkdir ~/i7-pre-m11-backup && cp PROGRESS.md
-  ffmpeg-assistant-rag-prd.md ~/i7-pre-m11-backup/ && rm PROGRESS.md
-  ffmpeg-assistant-rag-prd.md (BOTH untracked on i7 but tracked on
-  main → block the ff-merge; local copies preserved in backup), then
-  git fetch <bundle> main && git merge --ff-only FETCH_HEAD
-  (docker/compose.yaml untouched — unchanged across the arc, local
-  opt-ins stay); then scripts/m10_battery.sh docker on
-  media/titan.mp4 per filter category. (2) Push decision — 50 local
-  commits (M11.0 → M11.4) sit on tr4/i7 only (origin/main =
-  aa0e534). (3) Open merge questions from 2.7.0: histogram
-  1-letter aliases (register or not), tinterlace docs-only `flags`,
-  blockdetect/blurdetect `planes` phrasing. (4) PRD-deferred scope
-  still out: multiple watermarks, HDR workflows, batch processing.
-  Standing: advisory evidence only — the registry/builder/argv gate
-  stays sovereign; treat evidence_status 'supported' with skepticism
-  (M11.1 calibration note).
+  **Next:** (1) Push decision — 52 local commits (M11.0 → M11.4 +
+  docs) sit on tr4/i7 only (origin/main = aa0e534). (2) Open merge
+  questions from 2.7.0: histogram 1-letter aliases (register or
+  not), tinterlace docs-only `flags`, blockdetect/blurdetect `planes`
+  phrasing. (3) PRD-deferred scope still out: multiple watermarks,
+  HDR workflows, batch processing. (4) i7 fass-worker container still
+  runs pre-rebuild code (image is new, worker process is not) —
+  restart only when the user wants. M11 series otherwise DONE: all
+  PRD gates measured, both battery halves 21/21. Standing: advisory
+  evidence only — the registry/builder/argv gate stays sovereign;
+  treat evidence_status 'supported' with skepticism (M11.1
+  calibration note).
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):
