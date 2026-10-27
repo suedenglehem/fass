@@ -1,17 +1,24 @@
-# fass-rag retrieval service (M11.2, joint PRD 5.6 + 6.7).
+# fass-rag retrieval service (M11.2, joint PRD 5.6 + 6.7; baked index per M13).
 #
 # CPU-only, non-root, no docker socket, no privileged mode: the service is a
-# lexical retriever over a pinned corpus volume — it never executes FFmpeg and
+# lexical retriever over the pinned corpus — it never executes FFmpeg and
 # never touches the host's docker API.
 #
 #   docker build -f docker/Dockerfile.rag -t fass-rag:latest .
 #
-# Build context is the REPO ROOT (the compose overlay sets context: ..);
-# only rag/ and pyproject.toml are copied — the server needs the rag package
-# plus fastapi/uvicorn, not the fass product code.
+# Build context is the REPO ROOT (the compose service sets context: ..);
+# the server needs the rag package (top-level *.py) plus fastapi/uvicorn,
+# not the fass product code.
 #
-# The corpus is a mounted volume at /data (FASS_RAG_DATA=/data) laid out as
-# /data/<corpus_id>/manifest.json; the healthcheck (rag/health.py) checks it.
+# THE CORPUS INDEX IS BAKED INTO THE IMAGE — no volume, no first-boot build.
+# The pinned corpus source from rag/corpus/ is copied to /data and ingested
+# by a build-time RUN step, so the finished /data/<corpus_id>/ tree
+# (manifest.json + chunks/<kind>/gen-N/chunks.jsonl) lives in an image layer
+# and the service starts serving immediately. The corpus source (docs/*.html
+# + build-facts/*.txt) is generated data, gitignored by design: build it
+# first with rag/tools/build_corpus.sh (recipe: rag/corpus/BUILD-RECIPE.md).
+# A build context without it fails the COPY step — deliberately, so a
+# corpus-less image can never be mistaken for a serving one.
 
 FROM python:3.12-slim
 
@@ -20,15 +27,30 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /work
 
-COPY rag/ /work/rag/
+COPY rag/*.py /work/rag/
 COPY pyproject.toml /work/
 
 RUN pip install --no-cache-dir "fastapi>=0.110" "uvicorn[standard]>=0.29" \
-    && mkdir -p /data \
-    && useradd -r -u 10001 rag \
-    && chown -R rag:rag /work /data
+    && useradd -r -u 10001 rag
+
+# Baked corpus: pinned source in, index built at image-build time. COPY
+# lists the source kinds explicitly so the gitignored scratch (_build/) and
+# any host-built generations (chunks/) never enter the image.
+COPY rag/corpus/ffmpeg-9.0.1/manifest.json /data/ffmpeg-9.0.1/
+COPY rag/corpus/ffmpeg-9.0.1/docs /data/ffmpeg-9.0.1/docs
+COPY rag/corpus/ffmpeg-9.0.1/build-facts /data/ffmpeg-9.0.1/build-facts
+COPY rag/corpus/ffmpeg-6.1.1/manifest.json /data/ffmpeg-6.1.1/
+COPY rag/corpus/ffmpeg-6.1.1/docs /data/ffmpeg-6.1.1/docs
+COPY rag/corpus/ffmpeg-6.1.1/build-facts /data/ffmpeg-6.1.1/build-facts
+
+RUN chown -R rag:rag /work /data
 
 USER rag
+
+# Ingest as the non-root user: writes /data/<corpus_id>/chunks/<kind>/gen-1/
+# and activates it, all inside this image layer.
+RUN python -m rag.ingest --corpus-dir /data/ffmpeg-9.0.1 \
+    && python -m rag.ingest --corpus-dir /data/ffmpeg-6.1.1
 
 ENV FASS_RAG_DATA=/data \
     FASS_RAG_BIND=0.0.0.0:8100 \

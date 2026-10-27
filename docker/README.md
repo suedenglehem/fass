@@ -199,6 +199,34 @@ talk to the Docker Engine API directly (no docker CLI in the image):
 The socket grant means each of these containers can manage *any* container
 on the host — only enable it where you accept that.
 
+## RAG (default service, M13)
+
+`fass-rag` — the lexical retriever over the pinned FFmpeg corpora — is part
+of the **default** deployment: `docker compose -f docker/compose.yaml up -d`
+brings it up (no profile, no overlay; the old opt-in `docker/compose.rag.yaml`
+is retired) and the fass service is wired to it via `FASS_RAG_ENABLED=1` +
+`FASS_RAG_URL=http://fass-rag:8100` in the compose environment.
+
+- **The corpus index is baked into the image.** `docker/Dockerfile.rag`
+  copies the pinned corpus source (`rag/corpus/ffmpeg-9.0.1` +
+  `ffmpeg-6.1.1`) into `/data` and runs `python -m rag.ingest` as a
+  build-time step, so the finished `/data/<corpus_id>/` tree (manifest +
+  chunks) lives in an image layer. The service starts serving with **no
+  volume mount** and no first-boot build.
+- **Build prerequisite:** the corpus source (`docs/*.html`,
+  `build-facts/*.txt`) is generated data, gitignored by design — run
+  `rag/tools/build_corpus.sh` (recipe: `rag/corpus/BUILD-RECIPE.md`) in the
+  build context first. A corpus-less context fails the image build loudly.
+- **Fail-open (PRD 4.4):** the fass-side client never blocks generation.
+  With fass-rag down, `/v1/commands` still succeeds and the evidence block
+  records status `unavailable`; `GET /v1/rag` shows the degraded state.
+- **Non-dev default:** the code default in `fass/config.py` stays OFF —
+  development checkouts don't need the service; docker enables it via env.
+- **i7 live rule (PRD 6.7):** i7's live compose carries local opt-ins
+  (socket mount, `FASS_DOCKER_MANAGE=1`, GPU pin). Merge the `fass-rag`
+  service block and the two `FASS_RAG_*` env lines into it **by hand** —
+  never overwrite the file from the repo.
+
 ## Development vs deployment
 
 | | dev checkout | docker image |
@@ -207,5 +235,6 @@ on the host — only enable it where you accept that.
 | config file | `./.fass-config.json` | `/config/config.json` (seeded) |
 | volumes | cwd / local paths | `/input` `/output` `/log` mounts |
 | FFmpeg | whatever is on PATH | 9.0 + nvenc, in the image |
+| RAG | off (code default) | on (`FASS_RAG_ENABLED=1`, baked index) |
 
 Both run the same code; the difference is environment, not code paths.

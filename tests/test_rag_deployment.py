@@ -1,10 +1,16 @@
-"""Deployment tests for the rag service (joint PRD 5.6 + 6.7).
+"""Deployment tests for the rag service (joint PRD 5.6 + 6.7; M13 default).
 
 Three surfaces:
 
-- docker/compose.rag.yaml — checked as TEXT (pyyaml is not installed in the
-  venv, so the assertions are literal-string checks on the overlay, which is
-  also what the PRD block specifies: exact lines, exact shape).
+- docker/compose.yaml — checked as TEXT (pyyaml is not installed in the
+  venv, so the assertions are literal-string checks on the compose file,
+  which is also what the PRD block specifies: exact lines, exact shape).
+  M13: fass-rag is a DEFAULT service (no profile gate, no /data volume —
+  the index is baked into the image) and the fass service enables the RAG
+  client via FASS_RAG_ENABLED=1 + FASS_RAG_URL. The old opt-in overlay
+  docker/compose.rag.yaml is retired.
+- docker/Dockerfile.rag — the corpus bake: pinned source copied to /data
+  and ingested at image-build time.
 - rag/server.py env surface — FASS_RAG_DATA / FASS_RAG_BIND, with
   FASS_RAG_DATA_DIR / FASS_RAG_PORT kept as backward-compatible fallbacks.
 - rag/health.py — the compose healthcheck, exercised as a subprocess
@@ -26,52 +32,63 @@ OVERLAY = REPO_ROOT / "docker" / "compose.rag.yaml"
 COMPOSE = REPO_ROOT / "docker" / "compose.yaml"
 
 
-# --- compose overlay (PRD 6.7 block, verbatim) ------------------------------
+# --- compose default service (PRD 6.7 block, verbatim, M13 default) --------
 
-def _overlay_text() -> str:
-    return OVERLAY.read_text()
+def _compose_text() -> str:
+    return COMPOSE.read_text()
 
 
-def test_overlay_exists_and_is_a_service_overlay():
-    text = _overlay_text()
-    assert text.startswith("#")
-    assert "\nservices:" in text
+def _rag_block() -> str:
+    """The fass-rag service block: from its key to end of file (it is last)."""
+    text = _compose_text()
+    assert "  fass-rag:" in text, "no fass-rag service in compose.yaml"
+    return text[text.index("  fass-rag:"):]
+
+
+def test_compose_rag_overlay_retired():
+    """M13: the opt-in overlay is gone — rag ships in the default compose."""
+    assert not OVERLAY.exists()
+
+
+def test_compose_yaml_has_rag_service_by_default():
+    text = _compose_text()
     assert "fass-rag:" in text
+    assert "build: { context: .., dockerfile: docker/Dockerfile.rag }" in text
+    assert "image: fass-rag:latest" in text
+    assert "- FASS_RAG_DATA=/data" in text
+    assert "- FASS_RAG_BIND=0.0.0.0:8100" in text
+    assert 'healthcheck: { test: ["CMD", "python", "-m", "rag.health"], interval: 30s }' in text
+    assert "restart: unless-stopped" in text
 
 
-@pytest.mark.parametrize("line", [
-    'profiles: ["rag"]',
-    "build: { context: .., dockerfile: docker/Dockerfile.rag }",
-    "image: fass-rag:latest",
-    "- /dd2/andrei/fass/docker-data/rag:/data",
-    "- FASS_RAG_DATA=/data",
-    "- FASS_RAG_BIND=0.0.0.0:8100",
-    'healthcheck: { test: ["CMD", "python", "-m", "rag.health"], interval: 30s }',
-    "restart: unless-stopped",
-])
-def test_overlay_contains_contract_line(line):
-    assert line in _overlay_text()
+def test_compose_yaml_rag_not_profile_gated():
+    """The rag service is default: no profile gate anywhere in the file."""
+    assert "profiles" not in _compose_text()
 
 
-def test_overlay_healthcheck_names_health_module():
-    text = _overlay_text()
-    health_lines = [ln for ln in text.splitlines() if "healthcheck" in ln]
-    assert health_lines, "no healthcheck line in overlay"
+def test_compose_yaml_rag_has_no_data_volume():
+    """The index is baked into the image — no host volume mounts /data."""
+    assert ":/data" not in _compose_text()
+
+
+def test_compose_yaml_healthcheck_names_health_module():
+    health_lines = [ln for ln in _rag_block().splitlines() if "healthcheck" in ln]
+    assert health_lines, "no healthcheck line in the fass-rag service"
     assert all("rag.health" in ln for ln in health_lines)
 
 
 @pytest.mark.parametrize("forbidden", [
-    "privileged", "nvidia", "gpu", "GPU", "docker.sock", "device_ids",
+    "privileged", "nvidia", "gpu", "GPU", "device_ids", "docker.sock", "deploy",
 ])
-def test_overlay_has_no_gpu_socket_privileged(forbidden):
-    assert forbidden not in _overlay_text()
+def test_rag_block_has_no_gpu_socket_privileged(forbidden):
+    assert forbidden not in _rag_block()
 
 
-def test_compose_yaml_untouched():
-    """The default compose file must not have gained the rag service."""
-    text = COMPOSE.read_text()
-    assert "fass-rag" not in text
-    assert "Dockerfile.rag" not in text
+def test_compose_yaml_fass_env_enables_rag():
+    """The fass service is configured to USE the rag service by default."""
+    text = _compose_text()
+    assert "- FASS_RAG_ENABLED=1" in text
+    assert "- FASS_RAG_URL=http://fass-rag:8100" in text
 
 
 def test_dockerfile_rag_is_cpu_only_non_root_server():
@@ -85,8 +102,30 @@ def test_dockerfile_rag_is_cpu_only_non_root_server():
                       "--gpus", "runtime"):
         assert forbidden not in text
     # The server needs rag/ + fastapi/uvicorn only — not the product code.
-    assert "COPY rag/ /work/rag/" in text
+    assert "COPY rag/*.py /work/rag/" in text
     assert "COPY fass/" not in text
+
+
+def test_dockerfile_rag_bakes_corpus_into_image():
+    """M13: the pinned corpus is copied to /data and ingested at build time,
+    so the image serves with NO volume and NO first-boot build."""
+    text = (REPO_ROOT / "docker" / "Dockerfile.rag").read_text()
+    for corpus in ("ffmpeg-9.0.1", "ffmpeg-6.1.1"):
+        assert f"COPY rag/corpus/{corpus}/manifest.json /data/{corpus}/" in text
+        assert f"COPY rag/corpus/{corpus}/docs /data/{corpus}/docs" in text
+        assert f"COPY rag/corpus/{corpus}/build-facts /data/{corpus}/build-facts" in text
+        assert f"python -m rag.ingest --corpus-dir /data/{corpus}" in text
+    # The ingest runs as the non-root rag user, after USER rag.
+    assert text.index("USER rag") < text.index("python -m rag.ingest")
+    # The gitignored scratch and host-built generations never enter the image:
+    # every COPY line names source files only (no bare "COPY rag/", no _build,
+    # no chunks).
+    copy_lines = [ln for ln in text.splitlines() if ln.strip().startswith("COPY")]
+    assert copy_lines
+    for ln in copy_lines:
+        assert "_build" not in ln
+        assert "chunks" not in ln
+        assert ln.strip() != "COPY rag/ /work/rag/"
 
 
 # --- server env surface (PRD 5.6) ------------------------------------------

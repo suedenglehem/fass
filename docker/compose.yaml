@@ -10,6 +10,17 @@
 # The sidecar stops fass, creates+starts the replacement, and records the
 # outcome in /config/last-apply.json (shared volume), which the UI reads.
 # Stream port mappings below must mirror the Config tab's port list.
+#
+# RAG IS PART OF THE DEFAULT DEPLOYMENT (M13): fass-rag comes up with this
+# file (no profile, no overlay — docker/compose.rag.yaml is retired), and the
+# fass service is configured to use it via FASS_RAG_ENABLED=1 +
+# FASS_RAG_URL. The corpus index is baked into the fass-rag image
+# (docker/Dockerfile.rag ingests rag/corpus/ at build time), so fass-rag
+# needs NO volume. The fass-side RAG client is fail-open: a dead fass-rag
+# degrades generation to evidence-less, never blocks it (PRD 4.4).
+# Operational rule (PRD 6.7): i7's LIVE compose carries local opt-ins
+# (host socket mount, FASS_DOCKER_MANAGE=1, accelerator pin) — merge the
+# fass-rag block by hand there, never overwrite the file from the repo.
 
 services:
   fass:
@@ -40,6 +51,10 @@ services:
       - FASS_CONTAINER_NAME=fass
       - FASS_DOCKER_WORKER=fass-worker:8001
       # - FASS_DOCKER_MANAGE=1
+      # RAG active by default (M13): the fass-rag service below answers on
+      # the compose network; the client is fail-open if it is down.
+      - FASS_RAG_ENABLED=1
+      - FASS_RAG_URL=http://fass-rag:8100
     deploy:
       resources:
         reservations:
@@ -65,4 +80,19 @@ services:
       - FASS_CONTAINER_NAME=fass
       - FASS_DOCKER_MANAGE=1
       - FASS_CONFIG=/config/config.json
+    restart: unless-stopped
+
+  fass-rag:
+    # Lexical RAG retriever (joint PRD 5.6 + 6.7), default service (M13).
+    # CPU-only, non-root, no device passthrough, no host socket. The pinned
+    # corpus index is baked into the image at build time (Dockerfile.rag
+    # ingests rag/corpus/ into /data), so NO volume is mounted: the service
+    # starts serving with its DB already present. Not port-published —
+    # only the fass service talks to it, via compose DNS.
+    build: { context: .., dockerfile: docker/Dockerfile.rag }
+    image: fass-rag:latest
+    environment:
+      - FASS_RAG_DATA=/data
+      - FASS_RAG_BIND=0.0.0.0:8100
+    healthcheck: { test: ["CMD", "python", "-m", "rag.health"], interval: 30s }
     restart: unless-stopped
