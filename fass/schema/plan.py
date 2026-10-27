@@ -638,8 +638,11 @@ class EditPlan(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _at_most_one_watermark(self) -> "EditPlan":
-        for op_type in ("watermark", "audio_replace", "subtitles", "crop",
+    def _at_most_one_single_use_op(self) -> "EditPlan":
+        # watermarks are exempt (M12.WM): several image overlays may chain
+        # in the plan's operation order — the planner binds them to inputs
+        # 1..N in that order.
+        for op_type in ("audio_replace", "subtitles", "crop",
                         "speed", "rotate", "audio_resample", "combine",
                         "compare", "stabilize"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:

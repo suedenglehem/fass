@@ -459,6 +459,10 @@ def build_video_chain(operations: list, defaults: list[str],
     segs: list[str] = []
     prev: str | None = start_label
     last_out: str | None = None
+    wm_n = 0  # running watermark ordinal: the k-th watermark op takes
+    # input 1+k (inputs are appended in plan order) and, for 2+ overlays,
+    # a distinct label — one overlay keeps the historical '[1:v]' / '[wm]'
+    wm_total = sum(1 for o in operations if o.type == "watermark")
     offset = 1 if start_label else 0  # the combiner pad already took v0's place
     for i, o in enumerate(operations):
         out = f"v{i + offset}"
@@ -482,12 +486,14 @@ def build_video_chain(operations: list, defaults: list[str],
                 continue
             segs.append(f"{src}{sub_exprs[o.asset_id]}[{out}]")
         elif o.type == "watermark":
+            wm_n += 1
+            lbl = "wm" if wm_total == 1 else f"wm{wm_n}"
             wm_scale = ""
             if o.scale_percent != 100:
                 wm_scale = f",scale=iw*{o.scale_percent}/100:ih*{o.scale_percent}/100"
             x, y = _overlay_position(o)
-            segs.append(f"[1:v]format=rgba{wm_scale}[wm]")
-            segs.append(f"{src}[wm]overlay={x}:{y}[{out}]")
+            segs.append(f"[{wm_n}:v]format=rgba{wm_scale}[{lbl}]")
+            segs.append(f"{src}[{lbl}]overlay={x}:{y}[{out}]")
         prev = out
         last_out = out
     return "complex", ";".join(segs), last_out
@@ -1280,7 +1286,7 @@ def plan_execution(
         raise PlanError([crop_err])
 
     in_path = input_asset.path
-    wm_path = wm_assets[0].path if wm_assets else None
+    wm_paths = [a.path for a in wm_assets]  # plan op order = input order 1..N
     ar_path = ar_assets[0].path if ar_assets else None
     sub_path = sub_assets[0].path if sub_assets else None
 
@@ -1441,8 +1447,8 @@ def plan_execution(
         if real_out == os.path.realpath(in_path):
             # Only reachable for an explicit -o (the default was de-collided above).
             raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
-        if wm_path and real_out == os.path.realpath(wm_path):
-            raise PlanError(["output path resolves to the watermark file — refusing to overwrite it"])
+        if wm_paths and real_out in {os.path.realpath(p) for p in wm_paths}:
+            raise PlanError(["output path resolves to a watermark file — refusing to overwrite it"])
         if ar_path and real_out == os.path.realpath(ar_path):
             raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
         if sub_path and real_out == os.path.realpath(sub_path):
@@ -1705,7 +1711,7 @@ def plan_execution(
                 # burn: the libass filter opens the file itself — no input
                 sub_exprs = {so.asset_id: subtitle_burn_expr(sub_path)}
         ep = _build_reencode_plan(
-            edit, in_path, wm_path, ar_path, sub_input, sub_exprs, sub_enc,
+            edit, in_path, wm_paths, ar_path, sub_input, sub_exprs, sub_enc,
             out_path, defaults, warnings, combine=combine
         )
         if edit.ops_of("stabilize"):
@@ -2027,7 +2033,7 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
     )
 
 
-def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
+def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
                          audio_path: str | None, sub_path: str | None,
                          sub_exprs: dict[str, str] | None, sub_enc: str | None,
                          out_path: str, defaults: list[str], warnings: list[str],
@@ -2038,13 +2044,13 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_path: str | None,
         inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
     # Input order is fixed: main=0, combiner extras in the plan's asset
     # order (the graph pads reference them by index), then — mutually
-    # exclusive with a combiner — watermark=1 (build_video_chain hardcodes
-    # [1:v]), soft-subtitle input before the replacement audio (audio stays
+    # exclusive with a combiner — watermarks=1..N in the plan's op order
+    # (build_video_chain indexes them by the watermark's ordinal), then
+    # the soft-subtitle input before the replacement audio (audio stays
     # last, as audio_idx below assumes).
     if combine:
         inputs += [InputSpec(a.path) for a in combine["extra_assets"]]
-    if wm_path:
-        inputs.append(InputSpec(wm_path))
+    inputs += [InputSpec(p) for p in wm_paths]
     sub_idx = None
     if sub_path:
         # SOFT mode only: a selectable track mapped from this input. Burn

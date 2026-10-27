@@ -22,6 +22,7 @@ EXAMPLES = [
     'fass "cut from 00:10 to 00:30 and make it black and white" clip.mp4 -o out.mp4',
     'fass "convert to MP4 with H.265" clip.mov',
     'fass "add my logo to the bottom-right corner" clip.mp4 --watermark logo.png',
+    'fass "put the logo top-left and the badge bottom-right" clip.mp4 --watermark logo.png --asset badge=image:badge.png',
     'fass "trim the first 20 seconds, resize to 720p, and remove audio" clip.mp4 --json',
     'fass "use H.264 instead" clip.mp4 --previous plan.json   # revision',
     'fass "cut the first 5 seconds and send it to udp://127.0.0.1:5004" clip.mp4   # stream out',

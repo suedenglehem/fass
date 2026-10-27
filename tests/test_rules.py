@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from fass.schema import Asset, AssetKind, AudioReplaceOp, EditPlan, OutputSpec, guess_kind
+from fass.schema import (
+    Asset,
+    AssetKind,
+    AudioReplaceOp,
+    EditPlan,
+    OutputSpec,
+    WatermarkOp,
+    guess_kind,
+)
 from tests.conftest import make_media
 
 
@@ -58,6 +66,53 @@ def test_watermark_position(gen):
     assert len(wms) == 1
     assert wms[0]["position"] == "top_left"
     assert wms[0]["asset_id"] == "watermark"
+
+
+def test_two_watermarks_named_in_text_get_text_order_positions(gen):
+    r = gen("put logo.png top-left and badge.png bottom-right", "clip.mp4",
+            watermark="logo.png",
+            extra={"badge": Asset(path="badge.png", kind=AssetKind.IMAGE)})
+    assert r.status == "ready", (r.status, r.clarifications)
+    wms = ops_by_type(r.plan)["watermark"]
+    # binding order = asset-map order; positions follow the text order
+    assert [w["asset_id"] for w in wms] == ["watermark", "badge"]
+    assert [w["position"] for w in wms] == ["top_left", "bottom_right"]
+
+
+def test_multiple_unmentioned_images_all_bound(gen):
+    r = gen("add my logos", "clip.mp4", watermark="logo.png",
+            extra={"badge": Asset(path="badge.png", kind=AssetKind.IMAGE)})
+    assert r.status == "ready", (r.status, r.clarifications)
+    wms = ops_by_type(r.plan)["watermark"]
+    assert [w["asset_id"] for w in wms] == ["watermark", "badge"]
+    assert all(w["position"] == "bottom_right" for w in wms)
+    assert any("watermarks: logo.png, badge.png" in d for d in r.defaults)
+
+
+def test_duplicate_position_phrases_not_deduped(gen):
+    r = gen("put one logo top-left and another logo top-left", "clip.mp4",
+            watermark="logo.png",
+            extra={"badge": Asset(path="badge.png", kind=AssetKind.IMAGE)})
+    assert r.status == "ready", (r.status, r.clarifications)
+    wms = ops_by_type(r.plan)["watermark"]
+    assert len(wms) == 2
+    assert all(w["position"] == "top_left" for w in wms)
+
+
+def test_revision_updates_multiple_watermarks(gen):
+    prev = EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[WatermarkOp(asset_id="watermark", position="top_left"),
+                    WatermarkOp(asset_id="badge", position="bottom_right")])
+    r = gen("make the logos half size", "clip.mp4", watermark="logo.png",
+            extra={"badge": Asset(path="badge.png", kind=AssetKind.IMAGE)},
+            previous_plan=prev)
+    assert r.status == "ready", (r.status, r.clarifications)
+    wms = ops_by_type(r.plan)["watermark"]
+    assert [w["asset_id"] for w in wms] == ["watermark", "badge"]
+    assert all(w["scale_percent"] == 50 for w in wms)
+    # the follow-up names no corner — the multi-path default applies
+    assert all(w["position"] == "bottom_right" for w in wms)
 
 
 def test_make_it_smaller_asks(gen):

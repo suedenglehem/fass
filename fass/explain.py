@@ -123,6 +123,8 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         elif out.mode == "subtitles":
             lines.append("Trim: subtitle events outside the kept range are dropped")
 
+    wm_seen = 0
+    wm_count = sum(1 for o in edit.operations if o.type == "watermark")
     for op in edit.operations:
         if op.type == "resize":
             if op.height and not op.width:
@@ -155,9 +157,11 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         elif op.type == "grayscale":
             lines.append("Grayscale: video made black and white (audio unaffected)")
         elif op.type == "watermark":
+            wm_seen += 1
+            which = f" {wm_seen} of {wm_count}" if wm_count > 1 else ""
             size = "original image size" if op.scale_percent == 100 else f"scaled to {op.scale_percent}%"
             lines.append(
-                f"Watermark: image at {_POS_WORDS[op.position]}, {op.margin_px}px margin, {size}, "
+                f"Watermark{which}: image at {_POS_WORDS[op.position]}, {op.margin_px}px margin, {size}, "
                 "shown throughout the output"
             )
         elif op.type == "subtitles":

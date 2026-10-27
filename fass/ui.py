@@ -170,7 +170,7 @@ a { color: var(--accent); }
     </div>
     <div id="cmp-hint" class="note" hidden>Quality comparison: the <b>reference</b> (undistorted) clip goes in the Input field, the <b>distorted</b> (processed) clip in Output — or, when Output is empty, as the first additional input. Nothing is written to a file: the VMAF / PSNR / SSIM score is printed in the run log (Log tab).</div>
     <div class="row">
-      <div><label for="wm">Watermark image (optional)</label>
+      <div><label for="wm">Watermark image (optional)<span class="tip" data-tip="For multiple watermarks, add the other images as additional inputs (kind: image) and name them in the request — e.g. 'put the logo top-left and the badge bottom-right'.">?</span></label>
         <input id="wm" placeholder="logo.png"></div>
       <div><label for="ad">Adapter</label>
         <select id="ad"><option>auto</option><option>rules</option><option>llm</option></select></div>

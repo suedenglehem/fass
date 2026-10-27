@@ -1488,12 +1488,33 @@ def _bind_asset(t: str, assets: dict, kinds: AssetKind):
 _WMARK = re.compile(r"\bwatermark\w*|\blogo\w*|\bbranding\b", re.I)
 
 
-def _detect_watermark(t: str, assets: dict):
-    """Return (WatermarkOp|None, clarification|None, note|None)."""
+def _mentioned_asset_ids(t: str, assets: dict, kind: AssetKind) -> list[str]:
+    """IDs of the `kind` assets the text mentions, in binding order."""
+    out: list[str] = []
+    for aid, asset in assets.items():
+        if asset.kind != kind:
+            continue
+        base = os.path.basename(asset.path)
+        if (base.lower() in t or asset.path.lower() in t
+                or (asset.label and asset.label.lower() in t) or aid.lower() in t):
+            out.append(aid)
+    return out
+
+
+def _detect_watermarks(t: str, assets: dict):
+    """Return (list[WatermarkOp], clarification|None, note|None).
+
+    M12.WM: every image the request refers to becomes one watermark
+    overlay (in binding order). An explicit mention wins; with no mention
+    the sole image asset binds as before, and when several images are
+    bound and none is named, all of them are used. Positions: a single
+    watermark takes the first matched position (as before); with several,
+    each position phrase in text order is assigned to the next watermark,
+    the rest default to bottom-right.
+    """
     if not _WMARK.search(t):
-        return None, None, None
+        return [], None, None
     notes: list[str] = []
-    position = _detect_position(t)
     m_margin = re.search(r"(?:margin\s+of\s+|with\s+)?(\d{1,4})\s*(?:px|pixels?|pixel)\b", t, re.I)
     margin = int(m_margin.group(1)) if m_margin else 16
     m_pct = re.search(r"(\d{1,3})\s*%", t)
@@ -1501,18 +1522,55 @@ def _detect_watermark(t: str, assets: dict):
     if not m_pct and re.search(r"\bhalf[\s-]?siz(?:e|ed)\b|\bsmall\s+logo\b", t, re.I):
         scale = 50
 
-    aid, note = _bind_asset(t, assets, AssetKind.IMAGE)
-    if note:
-        notes.append(note)
-    if aid is None:
-        return None, Clarification(
-            question="which file should be used as the watermark?",
-            hint="provide it (e.g. --watermark logo.png) and refer to it in the request",
-        ), None
+    mentioned = _mentioned_asset_ids(t, assets, AssetKind.IMAGE)
+    if mentioned:
+        aids = mentioned
+    else:
+        images = [aid for aid, a in assets.items() if a.kind == AssetKind.IMAGE]
+        if len(images) == 1:
+            aids = images
+            notes.append("bound the only image asset to the request")
+        elif images:
+            aids = images
+        else:
+            return [], Clarification(
+                question="which file should be used as the watermark?",
+                hint="provide it (e.g. --watermark logo.png) and refer to it in the request",
+            ), None
 
-    defaults_used = []
-    if position is None:
-        defaults_used.append("position bottom-right")
+    if len(aids) == 1:
+        position = _detect_position(t)
+        ops = [WatermarkOp(
+            asset_id=aids[0],
+            position=position or "bottom_right",
+            margin_px=margin,
+            scale_percent=scale,
+        )]
+        defaults_used = []
+        if position is None:
+            defaults_used.append("position bottom-right")
+    else:
+        # one position phrase in text order per watermark; the rest get
+        # the default corner
+        found: list[tuple[int, str]] = []
+        for rx, name in _POSITIONS:
+            for m in rx.finditer(t):
+                found.append((m.start(), name))
+        found.sort()
+        positions = [name for _, name in found][:len(aids)]
+        positions += ["bottom_right"] * (len(aids) - len(positions))
+        ops = [WatermarkOp(
+            asset_id=aid,
+            position=pos,
+            margin_px=margin,
+            scale_percent=scale,
+        ) for aid, pos in zip(aids, positions)]
+        defaults_used = []
+        if len(found) < len(aids):
+            defaults_used.append("position bottom-right where not specified")
+        notes.insert(0, "watermarks: "
+                        + ", ".join(os.path.basename(assets[aid].path)
+                                    for aid in aids))
     if not m_margin and margin == 16:
         defaults_used.append("margin 16px")
     if not m_pct and scale == 100:
@@ -1520,13 +1578,7 @@ def _detect_watermark(t: str, assets: dict):
     if defaults_used:
         notes.append("watermark defaults: " + ", ".join(defaults_used))
 
-    op = WatermarkOp(
-        asset_id=aid,
-        position=position or "bottom_right",
-        margin_px=margin,
-        scale_percent=scale,
-    )
-    return op, None, "; ".join(notes) or None
+    return ops, None, "; ".join(notes) or None
 
 
 # ------------------------------------------------- combiners (M10.3)
@@ -2128,7 +2180,7 @@ class RulesAdapter:
         video_preset = None if "preset" in video_codec_opts \
             else _detect_preset(t_det)
         audio = _detect_audio(t_det)
-        watermark, wm_clar, wm_note = _detect_watermark(t_det, assets)
+        watermarks, wm_clar, wm_note = _detect_watermarks(t_det, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t_det, assets)
         # a subtitle DUMP must win over the burn/soft subtitle detector,
         # which would ask for a subtitle file the user never intends to give
@@ -2243,20 +2295,21 @@ class RulesAdapter:
         # GPU mention turned it into a scale_cuda filter (M10.5)
         ambiguous = _scan_ambiguous(t_det, resize_before_gpu, filters)
 
-        # 3. revision: keep the previous watermark's image when the follow-up
-        #    only repositions it (the new text may not name the file again)
+        # 3. revision: keep the previous watermark images when the follow-up
+        #    only repositions them (the new text may not name the files again)
         if previous_plan is not None and wm_clar is not None and _WMARK.search(t):
-            prev_wm = next((o for o in previous_plan.operations if o.type == "watermark"), None)
-            if prev_wm is not None:
+            prev_wms = [o for o in previous_plan.operations if o.type == "watermark"]
+            if prev_wms:
                 position = _detect_position(t)
-                watermark = WatermarkOp(
-                    asset_id=prev_wm.asset_id,
-                    position=position or prev_wm.position,
-                    margin_px=prev_wm.margin_px,
-                    scale_percent=prev_wm.scale_percent,
-                )
+                watermarks = [WatermarkOp(
+                    asset_id=prev.asset_id,
+                    position=position or prev.position,
+                    margin_px=prev.margin_px,
+                    scale_percent=prev.scale_percent,
+                ) for prev in prev_wms]
                 wm_clar = None
-                wm_note = "watermark: kept the previous image"
+                wm_note = ("watermark: kept the previous image" if len(prev_wms) == 1
+                           else f"watermarks: kept the previous {len(prev_wms)} images")
 
         # 3b. revision: keep the previous subtitle file when the follow-up
         #    re-mentions subtitles without naming a new file (a subtitle
@@ -2281,7 +2334,7 @@ class RulesAdapter:
         mode_conflict = None
         if mode == "audio" and (audio == "remove" or resize is not None
                                 or crop is not None or rotate is not None
-                                or watermark is not None or grayscale
+                                or watermarks or grayscale
                                 or stabilize is not None
                                 or filtergraph or video_filters):
             mode_conflict = Clarification(
@@ -2292,7 +2345,7 @@ class RulesAdapter:
                           "extraction?"))
         elif mode == "subtitles" and (audio in ("remove", "keep")
                                       or resize is not None or crop is not None
-                                      or rotate is not None or watermark is not None
+                                      or rotate is not None or watermarks
                                       or grayscale or speed is not None
                                       or stabilize is not None
                                       or audio_resample is not None
@@ -2304,7 +2357,7 @@ class RulesAdapter:
                           "fine). Should I just dump the subtitles, or keep "
                           "these as a video edit?"))
         graph_conflict = None
-        if filtergraph is not None and (watermark is not None
+        if filtergraph is not None and (watermarks
                                         or (subtitle is not None and subtitle.mode == "burn")
                                         or resize is not None or crop is not None
                                         or rotate is not None or speed is not None
@@ -2320,7 +2373,7 @@ class RulesAdapter:
         # ops are fine — the planner chains them after the combiner pad
         combine_conflict = None
         if combine is not None and (trim is not None or filtergraph is not None
-                                     or watermark is not None
+                                     or watermarks
                                      or audio_replace is not None
                                      or subtitle is not None):
             extras = []
@@ -2328,8 +2381,8 @@ class RulesAdapter:
                 extras.append("the trim")
             if filtergraph is not None:
                 extras.append("the custom filtergraph")
-            if watermark is not None:
-                extras.append("the watermark")
+            if watermarks:
+                extras.append("the watermark" if len(watermarks) == 1 else "the watermarks")
             if audio_replace is not None:
                 extras.append("the audio replacement")
             if subtitle is not None:
@@ -2346,7 +2399,7 @@ class RulesAdapter:
         compare_conflict = None
         if compare is not None and (trim is not None or filtergraph is not None
                                      or combine is not None
-                                     or watermark is not None
+                                     or watermarks
                                      or audio_replace is not None
                                      or subtitle is not None
                                      or filters):
@@ -2357,8 +2410,8 @@ class RulesAdapter:
                 extras.append("the custom filtergraph")
             if combine is not None:
                 extras.append(f"the multi-input combine ({combine.filter})")
-            if watermark is not None:
-                extras.append("the watermark")
+            if watermarks:
+                extras.append("the watermark" if len(watermarks) == 1 else "the watermarks")
             if audio_replace is not None:
                 extras.append("the audio replacement")
             if subtitle is not None:
@@ -2395,7 +2448,7 @@ class RulesAdapter:
             prev_path = assets.get(previous_plan.input_id, Asset(path="input.mp4")).path
             input_ext = os.path.splitext(prev_path)[1].lstrip(".").lower()
             plan, changed = _merge_revision(
-                previous_plan, t, trim, resize, audio, watermark, grayscale,
+                previous_plan, t, trim, resize, audio, watermarks, grayscale,
                 audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
                 audio_resample=audio_resample, subtitle=subtitle, gpu=gpu,
                 qsv=qsv, codec=codec, container=container, audio_codec=audio_codec,
@@ -2427,8 +2480,8 @@ class RulesAdapter:
                 ops.append(rotate)
             if grayscale:
                 ops.append(GrayscaleOp())
-            if watermark is not None:
-                ops.append(watermark)
+            if watermarks:
+                ops.extend(watermarks)
             if speed is not None:
                 ops.append(speed)
             for f in filters:
@@ -2499,7 +2552,7 @@ class RulesAdapter:
         # happens, so it is deliberately NOT part of the no-op check below)
         if previous_plan is None:
             if trim is None and resize is None and crop is None and speed is None \
-                    and rotate is None and audio_resample is None and watermark is None \
+                    and rotate is None and audio_resample is None and not watermarks \
                     and combine is None and compare is None and stabilize is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
@@ -2705,7 +2758,7 @@ class RulesAdapter:
 
 # ---------------------------------------------------------------- revision
 
-def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, grayscale,
+def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
                     audio_resample=None, subtitle=None, gpu=None, qsv=None, codec=None,
                     container=None, audio_codec=None, audio_container=None,
@@ -2932,7 +2985,7 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
     if re.search(r"\b(?:no|without|drop|remove|get\s+rid\s+of)\s+(?:the\s+)?watermark\b", t, re.I):
         plan.operations = [o for o in plan.operations if o.type != "watermark"]
         changed.append("watermark removed")
-        watermark = None  # negation wins: do not re-add the detected op
+        watermarks = []  # negation wins: do not re-add the detected ops
     if re.search(r"\b(?:no|without|drop|remove|get\s+rid\s+of)\s+(?:the\s+)?(?:trim|cut)\b|keep\s+the\s+whole\s+video|don'?t\s+cut", t, re.I):
         plan.trim = None
         changed.append("trim removed")
@@ -2961,10 +3014,11 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermark, 
                 plan.operations.insert(base, op)
                 base += 1
                 changed.append(f"{op.type} updated")
-        if watermark is not None:
+        if watermarks:
             plan.operations = [o for o in plan.operations if o.type != "watermark"]
-            plan.operations.append(watermark)
-            changed.append("watermark updated")
+            plan.operations.extend(watermarks)
+            changed.append("watermark updated" if len(watermarks) == 1
+                           else "watermarks updated")
         if grayscale and not any(o.type == "grayscale" for o in plan.operations):
             plan.operations.append(GrayscaleOp())
             changed.append("grayscale added")

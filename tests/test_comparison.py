@@ -496,6 +496,27 @@ def test_comparison_with_a_trim_is_a_clarification():
     assert "standalone analysis" in r.clarifications[0].question
 
 
+def test_comparison_with_one_watermark_names_it_singly():
+    assets = _assets(ref="/tmp/ref.mp4")
+    assets["m1"] = Asset(path="/tmp/m1.png", kind=AssetKind.IMAGE)
+    r = _parse("compare main.mp4 against ref.mp4 with psnr, and add my logo "
+               "top-left", assets)
+    assert r.status == "needs_clarification"
+    q = r.clarifications[0].question
+    assert "the watermark" in q
+    assert "the watermarks" not in q
+
+
+def test_comparison_with_two_watermarks_names_them_plurally():
+    assets = _assets(ref="/tmp/ref.mp4")
+    assets["m1"] = Asset(path="/tmp/m1.png", kind=AssetKind.IMAGE)
+    assets["m2"] = Asset(path="/tmp/m2.png", kind=AssetKind.IMAGE)
+    r = _parse("compare main.mp4 against ref.mp4 with psnr, and put the "
+               "logos top-left and bottom-right", assets)
+    assert r.status == "needs_clarification"
+    assert "the watermarks" in r.clarifications[0].question
+
+
 def test_unrelated_edit_does_not_fire_a_comparison():
     r = _parse("remove the audio", _assets(ref="ref.mp4"))
     assert r.status == "ready"

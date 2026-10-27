@@ -111,6 +111,84 @@ def test_watermark_uses_filter_complex_and_maps_label():
     assert argv.count("-i") == 2
 
 
+def test_two_watermarks_chain_distinct_labels_and_inputs():
+    # ep_for supports one image — build the assets dict by hand
+    edit = EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[WatermarkOp(asset_id="wm", position="top_left"),
+                    WatermarkOp(asset_id="badge", position="bottom_right")])
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+              "wm": Asset(path="logo.png", kind=AssetKind.IMAGE),
+              "badge": Asset(path="badge.png", kind=AssetKind.IMAGE)}
+    ep = plan_execution(edit, assets, None, None)
+    argv = build_argv(ep)
+    fc = argv[argv.index("-filter_complex") + 1]
+    # two overlay stages, one per image, chained through numbered pads
+    # (no other video op: the chain starts at v0)
+    assert "[1:v]format=rgba[wm1]" in fc
+    assert "[2:v]format=rgba[wm2]" in fc
+    assert "[0:v][wm1]overlay=" in fc
+    assert "[v0][wm2]overlay=" in fc
+    assert fc.endswith("[v1]")
+    # main clip first, then one image input per watermark, in op order
+    inputs = [argv[i + 1] for i, v in enumerate(argv) if v == "-i"]
+    assert inputs == ["clip.mp4", "logo.png", "badge.png"]
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert any(m.startswith("[v1") for m in maps)
+
+
+def test_two_watermarks_chain_behind_a_resize():
+    # the overlays must chain through the resize's output pad, not restart
+    # from [0:v]
+    edit = EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[ResizeOp(height=720),
+                    WatermarkOp(asset_id="wm", position="top_left"),
+                    WatermarkOp(asset_id="badge", position="bottom_right")])
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+              "wm": Asset(path="logo.png", kind=AssetKind.IMAGE),
+              "badge": Asset(path="badge.png", kind=AssetKind.IMAGE)}
+    ep = plan_execution(edit, assets, None, None)
+    argv = build_argv(ep)
+    fc = argv[argv.index("-filter_complex") + 1]
+    assert "[0:v]scale=-2:720[v0]" in fc
+    assert "[1:v]format=rgba[wm1]" in fc
+    assert "[v0][wm1]overlay=" in fc
+    assert "[2:v]format=rgba[wm2]" in fc
+    assert "[v1][wm2]overlay=" in fc
+    assert fc.endswith("[v2]")
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert any(m.startswith("[v2") for m in maps)
+
+
+def test_two_watermarks_scale_applies_per_image():
+    edit = EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[WatermarkOp(asset_id="wm", position="top_left"),
+                    WatermarkOp(asset_id="badge", position="bottom_right",
+                                scale_percent=50)])
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+              "wm": Asset(path="logo.png", kind=AssetKind.IMAGE),
+              "badge": Asset(path="badge.png", kind=AssetKind.IMAGE)}
+    ep = plan_execution(edit, assets, None, None)
+    argv = build_argv(ep)
+    fc = argv[argv.index("-filter_complex") + 1]
+    assert "[1:v]format=rgba[wm1]" in fc  # the unscaled one stays plain
+    assert "[2:v]format=rgba,scale=iw*50/100:ih*50/100[wm2]" in fc
+
+
+def test_output_onto_a_watermark_file_is_refused():
+    edit = EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[WatermarkOp(asset_id="wm"),
+                    WatermarkOp(asset_id="badge")])
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+              "wm": Asset(path="logo.png", kind=AssetKind.IMAGE),
+              "badge": Asset(path="badge.png", kind=AssetKind.IMAGE)}
+    with pytest.raises(PlanError, match="watermark file"):
+        plan_execution(edit, assets, None, "badge.png")
+
+
 def test_audio_removed():
     ep = ep_for(output=OutputSpec(container="mp4", video_codec="h264", audio_mode="remove"))
     argv = build_argv(ep)

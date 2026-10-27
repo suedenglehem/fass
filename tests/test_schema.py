@@ -82,12 +82,14 @@ def test_resize_defaults_to_preserve():
     assert op.aspect_ratio == "preserve"
 
 
-def test_at_most_one_watermark():
-    with pytest.raises(ValidationError):
-        plan(operations=[
-            WatermarkOp(asset_id="logo", position="top_left"),
-            WatermarkOp(asset_id="logo2", position="bottom_right"),
-        ])
+def test_multiple_watermarks_are_allowed():
+    # M12.WM: the old at-most-one rule is gone — several image overlays may
+    # chain (the planner builds one overlay per watermark)
+    p = plan(operations=[
+        WatermarkOp(asset_id="logo", position="top_left"),
+        WatermarkOp(asset_id="logo2", position="bottom_right"),
+    ])
+    assert [o.type for o in p.operations] == ["watermark", "watermark"]
 
 
 def test_operation_count_cap():
