@@ -18,9 +18,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# mediainfo: the Files tab's mediainfo inspect path (api.py) 503s when the
+# binary is absent — the base image ships only FFmpeg.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv ca-certificates \
+        python3 python3-pip python3-venv ca-certificates mediainfo \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
