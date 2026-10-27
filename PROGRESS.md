@@ -163,11 +163,12 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   all verified known/expected (16 freezedetect/silencedetect
   string-modeling + 9 9.0.1-evolution). Suite **1218 passed / 1
   skipped** (120 s).**
-  **Next:** (1) Push decision — 52 local commits (M11.0 → M11.4 +
-  docs) sit on tr4/i7 only (origin/main = aa0e534). (2) Open merge
-  questions from 2.7.0: histogram 1-letter aliases (register or
-  not), tinterlace docs-only `flags`, blockdetect/blurdetect `planes`
-  phrasing. (3) PRD-deferred scope still out: multiple watermarks,
+  **Next:** (1) PUSHED (2026-10-27, user's explicit "push it"):
+  origin/main = c949b9e (50 commits aa0e534..c949b9e fast-forward);
+  i7 ff-merged to origin/main (local state preserved). (2) Open
+  merge questions from 2.7.0: histogram 1-letter aliases (register
+  or not), tinterlace docs-only `flags`, blockdetect/blurdetect
+  `planes` phrasing. (3) PRD-deferred scope still out: multiple watermarks,
   HDR workflows, batch processing. (4) i7 fass-worker container still
   runs pre-rebuild code (image is new, worker process is not) —
   restart only when the user wants. M11 series otherwise DONE: all
