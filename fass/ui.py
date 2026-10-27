@@ -163,11 +163,12 @@ a { color: var(--accent); }
     <label for="instr">Instruction</label>
     <textarea id="instr" required placeholder="cut from 00:10 to 00:30, resize to 720p, and add my logo to the bottom-right corner"></textarea>
     <div class="row">
-      <div><label for="inp">Input video (-i a file from the input folder, or a stream URL)</label>
+      <div><label for="inp" id="lbl-inp">Input video (-i a file from the input folder, or a stream URL)</label>
         <input id="inp" required placeholder="-i clip.mp4 or rtmp://host:1935/live"></div>
-      <div><label for="out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)<span class="tip" data-tip="To chain ffmpeg processings, start the filename with /input/ — e.g. /input/step1.mp4 — and the result is written into the input folder instead of /output. The next run then picks it up by bare name (step1.mp4).">?</span></label>
+      <div><label for="out" id="lbl-out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)<span class="tip" data-tip="To chain ffmpeg processings, start the filename with /input/ — e.g. /input/step1.mp4 — and the result is written into the input folder instead of /output. The next run then picks it up by bare name (step1.mp4).">?</span></label>
         <input id="out" placeholder="out.mp4, /input/step1.mp4, or rtmp://host:1935/live"></div>
     </div>
+    <div id="cmp-hint" class="note" hidden>Quality comparison: the <b>reference</b> (undistorted) clip goes in the Input field, the <b>distorted</b> (processed) clip in Output — or, when Output is empty, as the first additional input. Nothing is written to a file: the VMAF / PSNR / SSIM score is printed in the run log (Log tab).</div>
     <div class="row">
       <div><label for="wm">Watermark image (optional)</label>
         <input id="wm" placeholder="logo.png"></div>
@@ -360,6 +361,25 @@ function showTab(t) {
 }
 
 /* ------------------------------------------------------------ command tab */
+/* quality-compare convention (the NLU's compare triggers): reference in
+   the Input field, distorted in Output — or, Output empty, the first
+   additional input. Nothing is written; the score lands in the run log. */
+const CMP_RX = /\bcompar(?:e[sd]?|ison|ing)\b|\bquality\\s+(?:loss|difference|degradation|drop|impact)\b|\blib-?vmaf\b|\bpsnr\b|\bssim\b/i;
+const INP_LBL = $('lbl-inp'), OUT_LBL = $('lbl-out');
+const INP_HTML = INP_LBL.innerHTML, OUT_HTML = OUT_LBL.innerHTML;
+function isCompare() { return CMP_RX.test($('instr').value); }
+function setCompareMode() {
+  const cmp = isCompare();
+  $('cmp-hint').hidden = !cmp;
+  INP_LBL.innerHTML = cmp
+    ? 'Reference (the undistorted clip — a file from the input folder)'
+    : INP_HTML;
+  OUT_LBL.innerHTML = cmp
+    ? 'Distorted (the processed clip — its name from the output folder, or leave empty and use an additional input)'
+    : OUT_HTML;
+}
+$('instr').addEventListener('input', setCompareMode);
+setCompareMode();
 let extraN = 0;
 function addExtra() {
   extraN += 1;
@@ -377,11 +397,36 @@ function addExtra() {
 }
 async function submit(e) {
   e.preventDefault();
-  const assets = { main: $('inp').value.trim() };
-  if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
+  const cmp = isCompare();
+  const assets = {};
+  let consumed = null; // data-id of the extra input used as the distorted
+  if (cmp) {
+    // compare convention: reference in Input, distorted in Output (or,
+    // Output empty, the first additional input); no output_filename —
+    // the metric score is printed in the run log
+    const inp = $('inp').value.trim();
+    const outv = $('out').value.trim();
+    if (outv) {
+      assets.main = outv;
+      assets.ref = { path: inp, kind: 'video' };
+    } else {
+      const first = [...document.querySelectorAll('.extra-inp')]
+        .find(i => i.value.trim());
+      if (first) {
+        consumed = first.dataset.id;
+        assets.main = first.value.trim();
+        assets.ref = { path: inp, kind: 'video' };
+      } else {
+        assets.main = inp; // no second file — the NLU will ask which
+      }
+    }
+  } else {
+    assets.main = $('inp').value.trim();
+    if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
+  }
   document.querySelectorAll('.extra-inp').forEach(i => {
     const v = i.value.trim();
-    if (!v) return;
+    if (!v || i.dataset.id === consumed) return;
     const kind = i.parentElement.querySelector('.extra-kind').value;
     assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };
   });
@@ -390,7 +435,7 @@ async function submit(e) {
     assets, target_shell: 'posix', adapter: $('ad').value, preflight: $('pf').checked,
     verbose: $('verbose').checked,
   };
-  if ($('out').value.trim()) body.output_filename = $('out').value.trim();
+  if (!cmp && $('out').value.trim()) body.output_filename = $('out').value.trim();
   $('res').hidden = false;
   $('res').innerHTML = '<span class="badge b-clar">working…</span>';
   try {

@@ -101,8 +101,14 @@ class CommandRequest(BaseModel):
                     "(http(s)://, rtmp(s)://, rtsp(s)://, srt://, udp://, rtp://, tcp://); "
                     "a value may be a plain string or {path, kind}; an input may be "
                     "written `-i <file>` (the web UI convention) — <file> is a name in "
-                    "the input folder ($FASS_INPUT_DIR / /input); "
-                    "must include 'main' (the input video)"
+                    "the input folder ($FASS_INPUT_DIR / /input), or a bare name that "
+                    "resolves to a previous run's result in the output folder "
+                    "($FASS_OUTPUT_DIR / /output); "
+                    "must include 'main' (the input video). For a quality comparison "
+                    "(vmaf/psnr/ssim), 'main' is the DISTORTED clip and the reference "
+                    "is another video asset (the web UI does this remap automatically: "
+                    "reference in the Input field, distorted in the Output field, or "
+                    "as the first additional input when Output is empty)"
     )
     output_filename: str | None = Field(
         default=None, max_length=1024,
@@ -112,7 +118,9 @@ class CommandRequest(BaseModel):
                     "the URL path extension, defaulting to mpegts); a name "
                     "starting with '/input/' is written into the input folder "
                     "instead of the output folder, so a later command can "
-                    "reference it by bare name (chained ffmpeg processings)"
+                    "reference it by bare name (chained ffmpeg processings). "
+                    "Leave unset for a quality comparison — nothing is written, "
+                    "the metric score is printed in the run log"
     )
     target_shell: Literal["posix"] = "posix"
     previous_plan: EditPlan | None = None

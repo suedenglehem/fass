@@ -13,7 +13,8 @@ import re
 from dataclasses import dataclass, field
 
 from fass.execute import resolve_input_name
-from fass.probe.ffprobe import MediaInfo, ffmpeg_available, probe_ffmpeg, probe_media
+from fass.probe.ffprobe import (MediaInfo, ffmpeg_available, probe_ffmpeg,
+                                probe_has_pts, probe_media)
 from fass.registry import (
     REGISTRY,
     audio_bsf_for_copy,
@@ -1045,9 +1046,10 @@ def plan_execution(
                 "removed in the same plan")
 
     # -- comparison reference (M10.4): resolve + probe the reference input --
-    # The comparison is a standalone analysis: the reference clip is the
-    # second input (pad 1), the main input stays pad 0, and the metric
-    # (psnr/ssim/libvmaf) compares them frame by frame into the log.
+    # The comparison is a standalone analysis in the Netflix vmaf docs'
+    # order: the reference clip is input 0, the main (distorted) input is
+    # input 1, and the metric (psnr/ssim/libvmaf) compares them frame by
+    # frame into the log (its pads take [distorted][reference]).
     compare = None
     for op in edit.ops_of("compare"):
         if op.reference == edit.input_id:
@@ -1098,6 +1100,17 @@ def plan_execution(
                 f"the main input has no video stream — {op.metric} compares "
                 "video frame by frame")
             continue
+        # 'setpts=PTS-STARTPTS' is only meaningful on streams that carry
+        # packet pts — a raw bitstream (a bare .hevc Annex B) demuxes
+        # without any, so probe both inputs before the graph is written.
+        # An unreadable file stays None (unknown) and keeps the docs'
+        # default.
+        if ref_media.has_pts is None:
+            ref_media.has_pts = probe_has_pts(
+                resolve_input_name(a.path))
+        if main_media.has_pts is None:
+            main_media.has_pts = probe_has_pts(
+                resolve_input_name(input_asset.path))
         compare = {
             "op": op, "main_media": main_media,
             "ref_asset": a, "ref_media": ref_media,
@@ -1744,9 +1757,11 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
     A stream destination or audio device is a contradiction — there is no
     data to carry.
 
-    ``compare`` (M10.4) switches the plan to a comparison: the reference clip
-    is input pad 1, the graph is the labeled metric chain from
-    ``_comparison_segments`` and the simple vf/af chains do not apply."""
+    ``compare`` (M10.4) switches the plan to a comparison in the Netflix
+    vmaf docs' command order: the reference clip is input 0, the main
+    (distorted) input 1, and the graph is the labeled metric chain from
+    ``_comparison_segments`` (pads [distorted][reference]) — the simple
+    vf/af chains do not apply."""
     dest = output_filename or edit.output_destination
     if dest and stream_scheme(dest) is not None:
         raise PlanError([
@@ -1760,11 +1775,16 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
         defaults.append(
             f"output filename '{output_filename}' ignored — a diagnostic "
             "run writes no file")
-    inputs = [_main_input(in_path)]
+    main = _main_input(in_path)
     if compare is not None:
-        inputs.append(InputSpec(compare["ref_asset"].path))
+        # The Netflix vmaf documentation's command order: the reference is
+        # input 0, the main (distorted) input 1 — '-i reference
+        # -i distorted'; the metric's pads are [distorted][reference].
+        inputs = [InputSpec(compare["ref_asset"].path), main]
+    else:
+        inputs = [main]
     if edit.trim is not None:
-        inputs[0].pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
+        main.pre_opts += ["-ss", fmt_num(edit.trim.start_seconds)]
     opts: list[str] = []
     if edit.trim is not None and edit.trim.is_bounded:
         opts += ["-t", fmt_num(edit.trim.duration_seconds)]
@@ -1776,9 +1796,10 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
         fcomplex = ";".join(_comparison_segments(compare, defaults, warnings))
         warnings.append(
             "diagnostic analysis — nothing is written to a file; "
-            f"the {compare['op'].metric} summary is in the run log "
-            f"(the reference '{compare['ref_asset'].path}' is the second "
-            "input, compared frame by frame against the main input)")
+            f"the {compare['op'].metric} score is in the run log "
+            f"(command order: the reference '{compare['ref_asset'].path}' "
+            "is the first input, the main (distorted) input the second — "
+            "compared frame by frame)")
     else:
         vf = ",".join(o.expr for o in edit.operations
                       if o.type == "filter" and o.domain == "video")
@@ -1830,26 +1851,54 @@ def _comparison_segments(compare: dict, defaults: list[str],
     """Labeled -filter_complex segments for a comparison (M10.4).
 
     ``compare`` is the plan_execution context: {'op', 'main_media',
-    'ref_asset', 'ref_media'}. The metric needs identical frame dimensions
-    on both pads, so the reference is scaled to the main's size when they
-    differ; rate and pixel-format mismatches are only noted (converting
-    them would resample the measured signal and distort the metric). The
-    last segment feeds [0:v] and the reference pad into the metric and
-    labels the output [cmp]."""
+    'ref_asset', 'ref_media'}. The command line follows the Netflix vmaf
+    documentation (resource/doc/ffmpeg.md): the reference is input 0
+    ('-i reference -i distorted'), and the metric's pads take
+    '[distorted][reference]' — so the main (distorted) input, pad 1,
+    feeds the metric first. The metric needs identical frame dimensions
+    on both pads, so the distorted input is scaled to the reference's
+    size when they differ (the doc's convention: the reference is the
+    ground truth); rate and pixel-format mismatches are only noted
+    (converting them would resample the measured signal and distort the
+    metric). 'setpts=PTS-STARTPTS' on a pad aligns the timelines the way
+    the doc's example does (filters synchronize on timestamps, not
+    frames) — but only for streams that HAVE packet pts: a raw bitstream
+    demuxes without any, so each pad is re-based only when its probe says
+    the stream carries pts (has_pts True or unknown; a confirmed
+    has_pts=False skips the filter and is noted). The last segment feeds
+    the two labeled pads into the metric and labels the output [cmp]."""
     op = compare["op"]
     main = compare["main_media"]
     ref = compare["ref_media"]
     metric = op.metric
     segs: list[str] = []
-    p1 = "[1:v]"
+    c1: list[str] = []
     if (main.width and main.height and ref.width and ref.height
             and (ref.width, ref.height) != (main.width, main.height)):
-        p1 = "[c1]"
-        segs.append(f"[1:v]scale={main.width}:{main.height}[c1]")
+        c1.append(f"scale={ref.width}:{ref.height}:flags=bicubic")
         warnings.append(
-            f"the reference is {ref.width}x{ref.height}, the main input is "
-            f"{main.width}x{main.height} — the reference is scaled to the "
-            "main's size (the metric compares identical dimensions)")
+            f"the main input is {main.width}x{main.height}, the reference "
+            f"is {ref.width}x{ref.height} — the main (distorted) input is "
+            "scaled to the reference's size (the metric compares identical "
+            "dimensions)")
+    if main.has_pts is False:
+        warnings.append(
+            "the main input carries no packet timestamps (raw stream) — "
+            "'setpts=PTS-STARTPTS' was skipped for it; frames are compared "
+            "in arrival order")
+    elif main.has_pts is not False:
+        c1.append("setpts=PTS-STARTPTS")
+    if c1:
+        segs.append(f"[1:v]{','.join(c1)}[c1]")
+    p0 = "[c1]" if c1 else "[1:v]"
+    if ref.has_pts is False:
+        warnings.append(
+            "the reference carries no packet timestamps (raw stream) — "
+            "'setpts=PTS-STARTPTS' was skipped for it; frames are compared "
+            "in arrival order")
+    if ref.has_pts is not False:
+        segs.append("[0:v]setpts=PTS-STARTPTS[c0]")
+    c0 = "[c0]" if ref.has_pts is not False else "[0:v]"
     if (main.fps and ref.fps and abs(main.fps - ref.fps) > 0.01):
         warnings.append(
             f"the reference runs at {fmt_num(ref.fps)} fps, the main input "
@@ -1874,7 +1923,7 @@ def _comparison_segments(compare: dict, defaults: list[str],
     tail = ""
     if opts:
         tail = "=" + ":".join(f"{k}={v}" for k, v in sorted(opts.items()))
-    segs.append(f"[0:v]{p1}{metric}{tail}[cmp]")
+    segs.append(f"{p0}{c0}{metric}{tail}[cmp]")
     return segs
 
 

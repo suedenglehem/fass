@@ -363,17 +363,30 @@ def resolve_input_name(name: str) -> str:
     inspection so a bare name that exists in the volume is probed and
     not reported "not found". Stream URLs, source specs and non-bare
     names pass through unchanged, as do bare names with no matching
-    file in the volume."""
+    file in the volume. A bare name that is not in the input volume but
+    exists in the output volume resolves there (a previous run's result —
+    the comparison convention: the distorted clip lives in /output)."""
     in_dir = _input_dir()
     if (
-        not in_dir
-        or stream_scheme(name) is not None
-        or is_source_spec(name)
-        or "/" in name
+        in_dir
+        and stream_scheme(name) is None
+        and not is_source_spec(name)
+        and "/" not in name
     ):
-        return name
-    joined = os.path.join(in_dir, name)
-    return joined if os.path.exists(joined) else name
+        joined = os.path.join(in_dir, name)
+        if os.path.exists(joined):
+            return joined
+    out_dir = _output_dir()
+    if (
+        out_dir
+        and stream_scheme(name) is None
+        and not is_source_spec(name)
+        and "/" not in name
+    ):
+        joined = os.path.join(out_dir, name)
+        if os.path.exists(joined):
+            return joined
+    return name
 
 
 def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
@@ -404,6 +417,22 @@ def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
                 out[i + 1] = os.path.join(in_dir, path)
                 bare_inputs[path] = os.path.join(in_dir, path)
                 notes.append(f"input '{path}' resolved to /input volume: {out[i + 1]}")
+            elif (
+                out_dir
+                and stream_scheme(path) is None
+                and not is_source_spec(path)
+                and "/" not in path
+                and os.path.exists(os.path.join(out_dir, path))
+            ):
+                # a bare name absent from the input volume but present in
+                # the output volume is a previous run's result — the
+                # comparison convention (the distorted clip lives in
+                # /output)
+                out[i + 1] = os.path.join(out_dir, path)
+                bare_inputs[path] = os.path.join(out_dir, path)
+                notes.append(
+                    f"input '{path}' resolved to the /output volume "
+                    f"(not in /input): {out[i + 1]}")
     if len(out) >= 2:
         dest = out[-1]
         if dest == "-":

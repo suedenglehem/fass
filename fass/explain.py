@@ -51,7 +51,10 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             else:
                 lines.append(f"Analyzed range: from {fmt_num(trim.start_seconds)}s to the end")
         if media is not None:
-            lines.append(f"Input: {media.width}x{media.height}, {media.duration:g}s, {media.video_codec}"
+            # raw bitstreams have no container duration
+            dur = (f"{media.duration:g}s" if media.duration is not None
+                   else "unknown duration")
+            lines.append(f"Input: {media.width}x{media.height}, {dur}, {media.video_codec}"
                          + ("" if media.has_audio else ", no audio stream"))
         return lines
 

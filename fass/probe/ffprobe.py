@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 
 _HDR_PIX_FMTS = {
@@ -48,6 +49,9 @@ class MediaInfo:
     subtitle_streams: int = 0
     rotation: int | None = None
     hdr: bool = False
+    # first video stream's packet pts (M12 compare): True/False from a
+    # bounded packet probe (probe_has_pts); None = not probed
+    has_pts: bool | None = None
 
 
 @dataclass
@@ -177,6 +181,59 @@ def probe_media(path: str, *, require_video: bool = True) -> MediaInfo | None:
     if info:
         info.path = path
     return info
+
+
+def probe_has_pts(path: str, sample: int = 8, timeout: float = 30.0) -> bool | None:
+    """Does the first video stream carry packet timestamps?
+
+    ``setpts=PTS-STARTPTS`` is only meaningful on streams that HAVE pts —
+    a raw bitstream (a bare .hevc Annex B file, for instance) demuxes
+    without any (ffprobe reports N/A for every packet), so the comparison
+    graph probes before it decides (M12 compare, Netflix vmaf docs order).
+    The probe is bounded: it reads the first ``sample`` packets of
+    ``ffprobe -v error -select_streams v:0 -show_entries
+    packet=pts,pts_time,dts,dts_time -of csv=p=0`` and stops — pts
+    presence is a stream-level property, and a bounded read keeps the
+    cost flat even on multi-hour files. Returns True when a sampled
+    packet has pts, False when sampled packets have none, None when
+    ffprobe is missing or the file cannot be read (unknown — the caller
+    keeps the docs' default).
+    """
+    if not ffprobe_available():
+        return None
+    try:
+        p = subprocess.Popen(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "packet=pts,pts_time,dts,dts_time",
+             "-of", "csv=p=0", path],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    watchdog = threading.Timer(timeout, p.kill)
+    watchdog.daemon = True
+    watchdog.start()
+    saw_packet = False
+    has_pts = False
+    try:
+        for i, line in enumerate(p.stdout or []):
+            if i >= sample:
+                break
+            if not line.strip():
+                continue
+            saw_packet = True
+            first = line.split(",", 1)[0].strip()
+            if first in ("", "N/A", "-1"):
+                continue
+            try:
+                if int(first) >= 0:
+                    has_pts = True
+            except ValueError:
+                pass
+    finally:
+        watchdog.cancel()
+        p.kill()
+        p.wait()
+    return has_pts if saw_packet else None
 
 
 _ffmpeg_info_cache: FfmpegInfo | None = None

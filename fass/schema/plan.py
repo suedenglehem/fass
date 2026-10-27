@@ -519,18 +519,24 @@ class CombinerOp(BaseModel):
 
 
 class CompareOp(BaseModel):
-    """Measure the quality difference between the main input and a
-    reference input with a comparison metric (the registry
+    """Measure the quality difference between the main input (the DISTORTED
+    clip) and a reference input with a comparison metric (the registry
     'needs_reference' table): psnr, ssim or libvmaf.
 
-    ``reference`` is the asset id of the reference clip — it is probed and
-    becomes the second input (pad 1); the main input is pad 0. The planner
-    builds a labeled -filter_complex graph ('[0:v][1:v]psnr[cmp]'-style)
-    that runs against the null muxer: nothing is written to a file, the
-    metric summary lands in the run log (M10.4, diagnostic pattern). At
-    most one comparison per plan; it is a standalone analysis — it cannot
-    be combined with a watermark, replaced audio, subtitles, a trim or a
-    custom filtergraph (planner)."""
+    ``reference`` is the asset id of the reference clip. The command line
+    follows the Netflix vmaf documentation (resource/doc/ffmpeg.md): the
+    reference is probed and becomes the FIRST input ('-i reference
+    -i distorted'), the main (distorted) input the second; the planner
+    builds a labeled -filter_complex graph whose metric pads take
+    '[distorted][reference]' — '[1:v]setpts=PTS-STARTPTS[c1];
+    [0:v]setpts=PTS-STARTPTS[c0]; [c1][c0]psnr[cmp]'-style, the distorted
+    pad feeding the metric first ('setpts=PTS-STARTPTS' only on pads
+    whose probe says the stream carries packet pts). It runs against the
+    null muxer: nothing is written to a file, the metric score lands in
+    the run log (M10.4, diagnostic pattern). At most one comparison per
+    plan; it is a standalone analysis — it cannot be combined with a
+    watermark, replaced audio, subtitles, a trim or a custom filtergraph
+    (planner)."""
 
     model_config = ConfigDict(extra="forbid")
 

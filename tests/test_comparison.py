@@ -1,14 +1,19 @@
 """M10.4 — quality comparison: psnr/ssim/libvmaf against a reference input.
 
-A comparison is a standalone diagnostic analysis: the reference clip is the
-second input (pad 1), the metric compares the two video streams frame by
-frame, and the summary lands in the run log — nothing is written to a file
-(the plan runs against the null muxer, M10.2 pattern).
+A comparison is a standalone diagnostic analysis in the Netflix vmaf
+documentation's command order: the reference clip is the FIRST input
+('-i reference -i distorted'), the main (distorted) input the second, the
+metric's pads take [distorted][reference], and the score lands in the run
+log — nothing is written to a file (the plan runs against the null muxer,
+M10.2 pattern). 'setpts=PTS-STARTPTS' re-bases each pad's timeline only
+when its probe says the stream carries packet pts (a raw bitstream demuxes
+without any).
 
 Layers, cheapest first:
 - registry: the 'needs_reference' table (psnr, ssim, libvmaf)
 - schema:   CompareOp inside the Operation union
-- planner:  the labeled [0:v][1:v]metric[cmp] graph, reference scaling and
+- probe:    probe_has_pts (bounded packet probe) — real ffmpeg needed
+- planner:  the labeled metric graph, distorted-to-reference scaling and
   rate/pix_fmt warnings, the libvmaf model environment, the standalone
   rejections (probes monkeypatched with fake MediaInfo — argv shape only)
 - NLU:      comparison phrasings at adapter.parse level (no files needed)
@@ -98,6 +103,14 @@ def _fc(argv):
     return argv[argv.index("-filter_complex") + 1]
 
 
+def _fc_shape(metric, opts=""):
+    """Expected filter_complex for same-size fakes whose has_pts is None
+    (not probed — the docs' default: both pads are re-based)."""
+    tail = f"={opts}" if opts else ""
+    return (f"[1:v]setpts=PTS-STARTPTS[c1];[0:v]setpts=PTS-STARTPTS[c0];"
+            f"[c1][c0]{metric}{tail}[cmp]")
+
+
 # ------------------------------------------------------------------ registry
 
 def test_registry_marks_the_comparison_metrics():
@@ -160,21 +173,27 @@ def test_comparison_plan_shape(monkeypatch):
     assert ep.output_opts == ["-f", "null"]
     assert ep.vf is None and ep.af is None
     assert ep.maps == ["[cmp]"]  # labeled graph outputs are not auto-mapped
-    assert [i.path for i in ep.inputs] == ["/tmp/main.mp4", "/tmp/ref.mp4"]
-    # same dimensions, rate and pixel format — the bare metric segment
-    assert ep.filter_complex == "[0:v][1:v]psnr[cmp]"
+    # the docs' command order: the reference is input 0, the main
+    # (distorted) input 1
+    assert [i.path for i in ep.inputs] == ["/tmp/ref.mp4", "/tmp/main.mp4"]
+    # same dimensions, rate and pixel format — the bare metric segment,
+    # the distorted pad feeding the metric first
+    assert ep.filter_complex == _fc_shape("psnr")
     assert any("nothing is written" in w for w in ep.warnings)
     assert any("compared frame by frame" in w for w in ep.warnings)
 
 
-def test_comparison_scales_the_reference_when_sizes_differ(monkeypatch):
+def test_comparison_scales_the_distorted_to_the_reference(monkeypatch):
     probes = _probes(
         **{"/tmp/ref.mp4": make_media(path="/tmp/ref.mp4",
                                       width=1280, height=720)})
     ep = _plan([CompareOp(metric="psnr", reference="ref")],
                monkeypatch, probes)
-    assert ep.filter_complex == "[1:v]scale=1920:1080[c1];[0:v][c1]psnr[cmp]"
-    assert any("scaled to the main's size" in w for w in ep.warnings)
+    # the main input (1920x1080) is scaled down to the reference's size
+    assert ep.filter_complex == (
+        "[1:v]scale=1280:720:flags=bicubic,setpts=PTS-STARTPTS[c1];"
+        "[0:v]setpts=PTS-STARTPTS[c0];[c1][c0]psnr[cmp]")
+    assert any("scaled to the reference's size" in w for w in ep.warnings)
     # the scaled graph still passes the argv gate's filtergraph validator
     assert execute.validate_argv(build_argv(ep)) == []
 
@@ -185,7 +204,7 @@ def test_comparison_warns_on_rate_and_pixel_format_mismatches(monkeypatch):
                                       pix_fmt="yuv420p10le")})
     ep = _plan([CompareOp(metric="ssim", reference="ref")],
                monkeypatch, probes)
-    assert ep.filter_complex == "[0:v][1:v]ssim[cmp]"
+    assert ep.filter_complex == _fc_shape("ssim")
     assert any("compared in arrival order" in w for w in ep.warnings)
     assert any("converts internally" in w for w in ep.warnings)
 
@@ -194,7 +213,7 @@ def test_comparison_metric_options_land_in_the_graph(monkeypatch):
     ep = _plan([CompareOp(metric="ssim", reference="ref",
                           options={"eof_action": "endall"})],
                monkeypatch, _probes())
-    assert ep.filter_complex == "[0:v][1:v]ssim=eof_action=endall[cmp]"
+    assert ep.filter_complex == _fc_shape("ssim", "eof_action=endall")
 
 
 def test_libvmaf_model_from_environment(monkeypatch):
@@ -202,8 +221,8 @@ def test_libvmaf_model_from_environment(monkeypatch):
     ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
                monkeypatch, _probes())
     # the filter takes a model specification, not a bare path
-    assert ep.filter_complex == (
-        "[0:v][1:v]libvmaf=model=path=/opt/models/vmaf_v0.6.1.pkl[cmp]")
+    assert ep.filter_complex == _fc_shape(
+        "libvmaf", "model=path=/opt/models/vmaf_v0.6.1.pkl")
     assert any("libvmaf model: /opt/models/vmaf_v0.6.1.pkl" in d
                for d in ep.defaults)
 
@@ -213,8 +232,8 @@ def test_libvmaf_model_dir_fills_the_default_model_name(monkeypatch):
     monkeypatch.setenv("FASS_VMAF_MODEL_DIR", "/opt/vmaf")
     ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
                monkeypatch, _probes())
-    assert ep.filter_complex == (
-        "[0:v][1:v]libvmaf=model=path=/opt/vmaf/vmaf_v0.6.1.pkl[cmp]")
+    assert ep.filter_complex == _fc_shape(
+        "libvmaf", "model=path=/opt/vmaf/vmaf_v0.6.1.pkl")
 
 
 def test_libvmaf_model_dir_resolves_the_shipped_format(monkeypatch, tmp_path):
@@ -225,13 +244,13 @@ def test_libvmaf_model_dir_resolves_the_shipped_format(monkeypatch, tmp_path):
     monkeypatch.setenv("FASS_VMAF_MODEL_DIR", str(tmp_path))
     ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
                monkeypatch, _probes())
-    assert ep.filter_complex == (
-        f"[0:v][1:v]libvmaf=model=path={tmp_path}/vmaf_v0.6.1.json[cmp]")
+    assert ep.filter_complex == _fc_shape(
+        "libvmaf", f"model=path={tmp_path}/vmaf_v0.6.1.json")
     (tmp_path / "vmaf_v0.6.1.pkl").write_text("{}", encoding="utf-8")
     ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
                monkeypatch, _probes())
-    assert ep.filter_complex == (
-        f"[0:v][1:v]libvmaf=model=path={tmp_path}/vmaf_v0.6.1.pkl[cmp]")
+    assert ep.filter_complex == _fc_shape(
+        "libvmaf", f"model=path={tmp_path}/vmaf_v0.6.1.pkl")
 
 
 def test_libvmaf_without_model_env_keeps_the_filter_default(monkeypatch):
@@ -239,7 +258,61 @@ def test_libvmaf_without_model_env_keeps_the_filter_default(monkeypatch):
     monkeypatch.delenv("FASS_VMAF_MODEL_DIR", raising=False)
     ep = _plan([CompareOp(metric="libvmaf", reference="ref")],
                monkeypatch, _probes())
-    assert ep.filter_complex == "[0:v][1:v]libvmaf[cmp]"
+    assert ep.filter_complex == _fc_shape("libvmaf")
+
+
+# ------------------------------------------------- probe-conditional setpts
+
+def test_setpts_skipped_for_a_stream_without_pts(monkeypatch):
+    # confirmed has_pts=False (a raw bitstream): the re-base is skipped
+    # for that pad and noted, the other pad keeps the docs' default
+    probes = _probes(
+        **{"/tmp/ref.mp4": make_media(path="/tmp/ref.mp4", has_pts=False)})
+    ep = _plan([CompareOp(metric="psnr", reference="ref")],
+               monkeypatch, probes)
+    # the distorted pad (input 1) is re-based; the reference (input 0) feeds
+    # the metric as [0:v] directly
+    assert ep.filter_complex == ("[1:v]setpts=PTS-STARTPTS[c1];"
+                                 "[c1][0:v]psnr[cmp]")
+    assert sum("no packet timestamps" in w for w in ep.warnings) == 1
+    assert any("the reference carries no packet timestamps" in w
+               for w in ep.warnings)
+    assert execute.validate_argv(build_argv(ep)) == []
+
+
+def test_setpts_skipped_for_both_when_neither_has_pts(monkeypatch):
+    probes = _probes(
+        **{"/tmp/main.mp4": make_media(path="/tmp/main.mp4", has_pts=False),
+           "/tmp/ref.mp4": make_media(path="/tmp/ref.mp4", has_pts=False)})
+    ep = _plan([CompareOp(metric="ssim", reference="ref")],
+               monkeypatch, probes)
+    assert ep.filter_complex == "[1:v][0:v]ssim[cmp]"
+    assert sum("no packet timestamps" in w for w in ep.warnings) == 2
+
+
+def test_setpts_present_when_the_probe_confirms_pts(monkeypatch):
+    probes = _probes(
+        **{"/tmp/main.mp4": make_media(path="/tmp/main.mp4", has_pts=True),
+           "/tmp/ref.mp4": make_media(path="/tmp/ref.mp4", has_pts=True)})
+    ep = _plan([CompareOp(metric="psnr", reference="ref")],
+               monkeypatch, probes)
+    assert ep.filter_complex == _fc_shape("psnr")
+
+
+def test_setpts_probe_only_runs_when_the_media_probe_left_it_unknown(
+        monkeypatch):
+    called = []
+    monkeypatch.setattr("fass.planner.planner.probe_has_pts",
+                        lambda p: called.append(p) or True)
+    # has_pts already True/False — no packet probe needed
+    _plan([CompareOp(metric="psnr", reference="ref")], monkeypatch, _probes(
+        **{"/tmp/main.mp4": make_media(path="/tmp/main.mp4", has_pts=True),
+           "/tmp/ref.mp4": make_media(path="/tmp/ref.mp4", has_pts=False)}))
+    assert called == []
+    # has_pts None — the packet probe runs for both inputs
+    _plan([CompareOp(metric="psnr", reference="ref")],
+          monkeypatch, _probes())
+    assert called == ["/tmp/ref.mp4", "/tmp/main.mp4"]
 
 
 def test_comparison_rejects_a_trim(monkeypatch):
@@ -539,13 +612,16 @@ def _run_compare(gen, instruction, main, ref_path, out_dir):
 
 
 @ pytestmark_media
-def test_e2e_psnr_scales_the_reference_and_logs_the_summary(gen, clips,
-                                                            tmp_path):
+def test_e2e_psnr_scales_the_distorted_to_the_reference(gen, clips,
+                                                        tmp_path):
     r, proc = _run_compare(gen, "compare a.mp4 against b.mp4 with psnr",
                            clips.a, clips.b, tmp_path)
-    # b is 1280x720 against a's 1920x1080 — the scale segment leads the graph
-    assert _fc(r.arguments) == "[1:v]scale=1920:1080[c1];[0:v][c1]psnr[cmp]"
-    assert any("scaled to the main's size" in w for w in r.warnings)
+    # a is 1920x1080 against b's 1280x720 — the main (distorted) input is
+    # scaled to the reference's size; both pads re-based (real mp4s have pts)
+    assert _fc(r.arguments) == (
+        "[1:v]scale=1280:720:flags=bicubic,setpts=PTS-STARTPTS[c1];"
+        "[0:v]setpts=PTS-STARTPTS[c0];[c1][c0]psnr[cmp]")
+    assert any("scaled to the reference's size" in w for w in r.warnings)
     # the metric summary lands in the run log at info level
     # (6.1 prints 'average:', other builds 'avg:' — accept both)
     assert "PSNR" in proc.stderr
@@ -558,9 +634,29 @@ def test_e2e_psnr_scales_the_reference_and_logs_the_summary(gen, clips,
 def test_e2e_ssim_same_size_needs_no_scale(gen, clips, tmp_path):
     r, proc = _run_compare(gen, "measure ssim of b.mp4 against c.mp4",
                            clips.b, clips.c, tmp_path)
-    assert _fc(r.arguments) == "[0:v][1:v]ssim[cmp]"
+    assert _fc(r.arguments) == (
+        "[1:v]setpts=PTS-STARTPTS[c1];[0:v]setpts=PTS-STARTPTS[c0];"
+        "[c1][c0]ssim[cmp]")
     assert "SSIM" in proc.stderr
     assert list(tmp_path.iterdir()) == []
+
+
+@ pytestmark_media
+def test_e2e_raw_bitstreams_skip_setpts(gen, clips, tmp_path):
+    # a raw Annex B bitstream demuxes without packet pts — 'setpts=
+    # PTS-STARTPTS' must be skipped for both pads, and the metric still
+    # runs (frames compared in arrival order)
+    raw = {}
+    for name in ("rawA.264", "rawB.264"):
+        out = tmp_path / name
+        _ffmpeg(["-i", str(clips.a), "-an", "-c:v", "copy", "-f", "h264",
+                 str(out)])
+        raw[name] = out
+    r, proc = _run_compare(gen, "compare rawA.264 against rawB.264 with psnr",
+                           raw["rawA.264"], raw["rawB.264"], tmp_path)
+    assert _fc(r.arguments) == "[1:v][0:v]psnr[cmp]"
+    assert sum("no packet timestamps" in w for w in r.warnings) == 2
+    assert "PSNR" in proc.stderr
 
 
 @ pytestmark_vmaf
