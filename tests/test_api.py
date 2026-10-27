@@ -782,3 +782,90 @@ def test_ui_has_the_files_tab():
     for needle in ("files-input", "files-output", "filemenu", "filemodal",
                    "loadFiles", "fileAction", "closeModal", "1st frame"):
         assert needle in html
+
+
+# --------------------------------------------- edited command (expert override)
+
+
+def _run_env(tmp_path, monkeypatch):
+    """Volumes + run dir + the execution gate open (FASS_ALLOW_EXECUTE=1) —
+    the /v1/runs fixture (mirrors tests/test_m6_api.py's cfg_env/run_env)."""
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    (tmp_path / "runs").mkdir(exist_ok=True)
+    monkeypatch.setenv(execute.RUN_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    return in_dir, out_dir
+
+
+def test_runs_command_override_runs_the_edited_argv(tmp_path, monkeypatch):
+    _run_env(tmp_path, monkeypatch)
+    r = client.post("/v1/runs", json={
+        "arguments": ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "-crf", "28", "o.mp4"],
+        "command": "ffmpeg -i a.mp4 -c:v libx264 o.mp4",
+    })
+    assert r.status_code == 200, r.text
+    argv = r.json()["run"]["argv"]
+    # the shlex-split of the EDITED string, not the posted arguments array
+    assert argv[:5] == ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264"]
+    assert "-crf" not in argv and "28" not in argv
+    # volume resolution of the output path is unchanged
+    assert argv[-1] == str(tmp_path / "out" / "o.mp4")
+
+
+def test_runs_command_unbalanced_quotes_422(tmp_path, monkeypatch):
+    _run_env(tmp_path, monkeypatch)
+    r = client.post("/v1/runs", json={
+        "arguments": ["ffmpeg", "-i", "a.mp4", "o.mp4"],
+        "command": 'ffmpeg -i "a.mp4 o.mp4',
+    })
+    assert r.status_code == 422
+    assert "quotes" in r.json()["detail"]
+    assert client.get("/v1/runs").json() == {"runs": []}  # nothing started
+
+
+def test_runs_command_failing_validation_422(tmp_path, monkeypatch):
+    _run_env(tmp_path, monkeypatch)
+    r = client.post("/v1/runs", json={
+        "arguments": ["ffmpeg", "-i", "a.mp4", "o.mp4"],
+        "command": "ffmpeg -i a.mp4 -not_an_option o.mp4",
+    })
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "failed validation" in detail and "-not_an_option" in detail
+    assert client.get("/v1/runs").json() == {"runs": []}  # the gate held
+
+
+def test_runs_multipass_cannot_be_edited(tmp_path, monkeypatch):
+    _run_env(tmp_path, monkeypatch)
+    steps = [["ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
+              "-c:v", "libx264", "step1.mp4"],
+             ["ffmpeg", "-i", "step1.mp4", "-c:v", "libx264", "o.mp4"]]
+    r = client.post("/v1/runs", json={
+        "arguments": steps[-1], "steps": steps, "command": "ffmpeg -i a.mp4 o.mp4"})
+    assert r.status_code == 422
+    assert "multi-pass" in r.json()["detail"]
+
+
+def test_runs_arguments_only_body_is_unchanged(tmp_path, monkeypatch):
+    """Regression: no command field (and a blank one) → today's behavior."""
+    _run_env(tmp_path, monkeypatch)
+    argv = ["ffmpeg", "-i", "a.mp4", "-c:v", "libx264", "o.mp4"]
+    r = client.post("/v1/runs", json={"arguments": argv})
+    assert r.status_code == 200, r.text
+    run = r.json()["run"]
+    assert run["argv"][:4] == argv[:4]
+    assert run["argv"][-1] == str(tmp_path / "out" / "o.mp4")
+    r2 = client.post("/v1/runs", json={"arguments": argv, "command": "   "})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["run"]["argv"] == run["argv"]
+
+
+def test_ui_command_tab_is_editable():
+    html = client.get("/").text
+    assert '<textarea class="cmd" id="cmd" rows="4" spellcheck="false">' in html
+    assert 'id="cmdorig"' in html  # the generated command, for the edit check
+    assert "re-validated server-side" in html
+    assert "body.command = text" in html  # sent only when the text was edited
+    # the copy button reads the textarea's live value (textContent would copy
+    # the pre-edit text — a textarea's child node never changes)
+    assert "writeText($('cmd').value)" in html

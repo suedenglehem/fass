@@ -70,6 +70,10 @@ button.ghost { background: none; border: 1px solid var(--border); color: var(--m
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
   padding: 10px 12px; overflow-x: auto; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
 .cmd { font-weight: 600; }
+textarea.cmd { font-family: ui-monospace, monospace; font-size: 13px; font-weight: 600;
+  width: 100%; min-height: 0; padding: 10px 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+  color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
 h2 { font-size: 14px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 h3 { font-size: 14px; margin: 18px 0 6px; }
 ul { margin: 4px 0; padding-left: 20px; }
@@ -490,11 +494,13 @@ function render(d) {
   let html = `<span class="badge ${badge}">${esc(d.status)}</span>`;
   if (d.status === 'ready') {
     html += `<h2>Command</h2>
-      <pre class="cmd" id="cmd">${esc(d.command)}</pre>
-      <button class="copy" onclick="navigator.clipboard.writeText($('cmd').textContent)">copy</button>
+      <textarea class="cmd" id="cmd" rows="4" spellcheck="false">${esc(d.command)}</textarea>
+      <pre id="cmdorig" hidden style="display:none">${esc(d.command)}</pre>
+      <button class="copy" onclick="navigator.clipboard.writeText($('cmd').value)">copy</button>
       <h2>Argument array (shell-safe)</h2><pre>${esc(JSON.stringify(d.arguments, null, 2))}</pre>
       ${EXEC_ENABLED
         ? `<button id="runbtn" onclick="runCmd()">▶ Run now</button> <span id="rune" class="note"></span>
+           <p class="note">editable — the command is re-validated server-side before it runs</p>
            <pre id="cmdargs" hidden style="display:none">${esc(JSON.stringify(d.arguments))}</pre>`
         : '<p class="note">execution is disabled on this deployment (FASS_ALLOW_EXECUTE unset) — copy the command and run it yourself</p>'}
       <h2>What it does</h2>${lists(d.summary)}
@@ -517,12 +523,17 @@ function render(d) {
 }
 async function runCmd() {
   const argv = JSON.parse($('cmdargs').textContent);
+  const body = { arguments: argv, verbose: $('verbose').checked };
+  const text = $('cmd').value;
+  // an expert edit is sent as `command` (shlex-split + revalidated server-side);
+  // an untouched textarea keeps the exact generated argv, as before
+  if (text.trim() !== $('cmdorig').textContent.trim()) body.command = text;
   const btn = $('runbtn');
   btn.disabled = true; btn.textContent = 'starting…';
   try {
     const r = await fetch('/v1/runs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ arguments: argv, verbose: $('verbose').checked }),
+      body: JSON.stringify(body),
     });
     const data = await r.json();
     if (!r.ok) {

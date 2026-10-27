@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -141,7 +142,9 @@ class RunRequest(BaseModel):
     """POST /v1/runs body (M6): the argv ARRAY from a ready command —
     never a shell string. M10.5: a multi-pass plan posts its steps
     (every pass's argv, in execution order, the final pass last) and
-    arguments stays the FINAL step's argv."""
+    arguments stays the FINAL step's argv. An expert may hand-edit the
+    rendered command in the web UI and send it as `command`: it is
+    shlex-split server-side and runs through the same validation gate."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -162,6 +165,11 @@ class RunRequest(BaseModel):
         default=False,
         description="write this run's log to the output folder's log/ "
                     "directory (the command was generated with verbose=true)",
+    )
+    command: str | None = Field(
+        default=None,
+        description="expert override of the rendered command — shlex-split "
+                    "server-side, still validated by start_run",
     )
 
     @model_validator(mode="after")
@@ -577,13 +585,26 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/runs")
     def start_run(body: RunRequest):
+        argv = body.arguments
+        if body.command is not None and body.command.strip():
+            # expert override from the Command tab's editable textarea: the
+            # edited string is split server-side (no shell involved) and goes
+            # through the SAME validate_argv gate as the generated argv
+            if body.steps:
+                raise HTTPException(
+                    422, "a multi-pass run cannot be edited as a single command")
+            try:
+                argv = shlex.split(body.command, posix=True)
+            except ValueError as e:
+                raise HTTPException(
+                    422, f"edited command has unbalanced quotes: {e}")
         try:
             if body.steps:
                 run = execute.start_run_sequence(
                     body.steps, timeout=body.timeout, verbose=body.verbose)
             else:
                 run = execute.start_run(
-                    body.arguments, timeout=body.timeout, verbose=body.verbose)
+                    argv, timeout=body.timeout, verbose=body.verbose)
         except PermissionError as e:
             raise HTTPException(403, str(e))
         except ValueError as e:
