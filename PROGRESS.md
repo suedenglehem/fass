@@ -5,7 +5,58 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-26, M11.2 in progress):** **M11.1 COMPLETE**
+- **Last state (2026-10-27, M12 COMPLETE — all mandated work done):**
+  **M12 = the PRD-deferred scope (watermarks / HDR / batch) is all
+  on main.** VMAF/compare convention b8ed8ff (Netflix vmaf docs CLI
+  order: reference input 0, distorted input 1; pads
+  [distorted][reference]; distorted scaled to reference size;
+  -f null -; scores in run log only, web-UI Log tab; setpts
+  probe-conditional — only for pads whose probe carries pts).
+  **M12.WM ea9919e** — multiple watermarks: N image overlays chain
+  in plan order (inputs 1..N); rules.py `_detect_watermarks`
+  (every image the request refers to becomes one op — explicit
+  mention wins, else every bound image; one position phrase per
+  watermark in text order, rest bottom-right); plan.py validator
+  renamed `_at_most_one_single_use_op` (watermark exempt); E2E on
+  titan.mp4 with two images; suite 1233/1. **M12.BATCH 9967441**
+  (job j_65e7374aef SUCCEEDED on tr4-secondary; integrated,
+  disposition accepted) — `--batch FILE|DIR …` + `--batch-out DIR`:
+  one instruction over a directory's top-level video files (sorted)
+  or an explicit list, sequential per-file pipeline runs, a failing
+  file reported + skipped, exit 0 only if all succeeded; rejects
+  positional/-o/--previous/--metadata; instruction-after-files
+  parses (trailing-token disambiguation); single-file CLI path
+  unchanged; suite 1254/1. **M12.HDR 8c2e11a** (job j_ba4899bb09 —
+  work good, job record FAILED/invalid_result: outcome
+  'success_pending_review' outside the enum + missing criterion
+  keys + scope_violations [".venv"] → dispatch_integrate REFUSED
+  by the server gate "only succeeded jobs can be integrated";
+  manually reviewed + merged, worktree retained — 8c2e11a is the
+  integration record) — ToneMapOp (no options); NLU `_TONEMAP_RX`/
+  `_detect_tonemap` (tone-map words or hdr↔sdr pairings ≤60 chars),
+  gated on probe (PQ smpte2084 / HLG arib-std-b67); planner chain
+  `format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p`;
+  default 8-bit Rec.709 output, `main10` 10-bit re-encode keeps the
+  HDR; HDR10+/Dolby Vision named-unsupported; conflicts:
+  audio-mode ops, subtitles mode, stabilize; registry 2.8.0
+  (tonemap, min_version 4.2); tests/test_tonemap.py (24); worker
+  E2E on i7 docker 9.0.1 + re-verified on tr4 6.1.1 (synthesized
+  HDR10 main10 10-bit PQ source → 8-bit SDR h264, chain +
+  disclosure correct); suite **1278 passed / 1 skipped**.
+  **README job 6bca1a3** (j_0214afe7db SUCCEEDED on i7; integrated,
+  accepted) — quality-comparison section + stream allowlist rtp +
+  spec link; worker was told NOT to document the unshipped M12
+  features. **M12 docs close-out (with this update)** — README
+  (shape line, Watermarks multiple, new HDR→SDR + Batch bullets) +
+  docs/DEVELOPMENT.md (CLI table --batch/--batch-out, feature
+  bullets M12.WM/HDR/BATCH, out-of-scope example fixed, roadmap
+  M11.1→[x] + M11.2/3/4 [x] + M12 [x], "deferred (PRD §5)" line
+  removed). i7 docker quirk: jrottenberg:9.0 ENTRYPOINT is ffmpeg
+  → pass fass argv[1:]. Dispatcher drift: three jobs now (c27a0d8,
+  j_3d4505da56-a1, j_ba4899bb09) left good work behind a false
+  "failed" via non-schema result vocabulary — recommend the result
+  contract in the cc-worker profile. **M11 series, COMPLETE (prior
+  state): M11.1 COMPLETE
   (181c1e5 retrieval core + fass-rag service; 0ccdb7f §9.1 benchmark, ALL
   9 gates green — exact_top1 1.0, recall8 0.9095, warm_p95 ~43 ms).
   **M11.2 commits landed on main:** d60c167 §6.6 RagConfig + FASS_RAG_*
@@ -163,19 +214,23 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   all verified known/expected (16 freezedetect/silencedetect
   string-modeling + 9 9.0.1-evolution). Suite **1218 passed / 1
   skipped** (120 s).**
-  **Next:** (1) PUSHED (2026-10-27, user's explicit "push it"):
-  origin/main = c949b9e (50 commits aa0e534..c949b9e fast-forward);
-  i7 ff-merged to origin/main (local state preserved). (2) Open
-  merge questions from 2.7.0: histogram 1-letter aliases (register
-  or not), tinterlace docs-only `flags`, blockdetect/blurdetect
-  `planes` phrasing. (3) PRD-deferred scope still out: multiple watermarks,
-  HDR workflows, batch processing. (4) i7 fass-worker container still
-  runs pre-rebuild code (image is new, worker process is not) —
-  restart only when the user wants. M11 series otherwise DONE: all
-  PRD gates measured, both battery halves 21/21. Standing: advisory
-  evidence only — the registry/builder/argv gate stays sovereign;
-  treat evidence_status 'supported' with skepticism (M11.1
-  calibration note).
+  **Next (user-decision items only — the mandated M-series + RAG
+  PRD work is fully done):** (1) 2.7.0 merge questions: histogram
+  1-letter aliases (register or not), tinterlace docs-only `flags`,
+  blockdetect/blurdetect `planes` phrasing. (2) i7 fass-worker
+  container still runs pre-rebuild code (image is new, worker
+  process is not) — restart only when the user wants. (3) Minor
+  optional: gaps/ note on auto-adapter 401-no-fallback on tr4 (no
+  ANTHROPIC_API_KEY → E2E must use `--adapter rules`); dispatcher
+  cc-worker result-format drift note. Context: PUSHED 2026-10-27
+  (user's explicit "push it") — origin/main = 844943c (pushed to
+  c949b9e, then to 844943c, the "push landed" docs commit);
+  unpushed since: b8ed8ff, ea9919e, 9967441, 8c2e11a, 6bca1a3 +
+  the M12 close-out commit. M11 series DONE: all PRD gates
+  measured, both battery halves 21/21. Standing: advisory evidence
+  only — the registry/builder/argv gate stays sovereign; treat
+  evidence_status 'supported' with skepticism (M11.1 calibration
+  note).
 - **M1–M9+BSF + M10.0–M10.5 + M11.0 shipped (M10.5 dual-build
   verified, M11.0 committed that milestone). M10.5 two-pass
   vidstab COMPLETE 2026-10-26** (on tr4):
@@ -406,16 +461,16 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 
 ---
 
-## 1. Where we are (verified 2026-10-25)
+## 1. Where we are (verified 2026-10-27, post-M12)
 
 | fact | value |
 |---|---|
-| git | `main` = **2ce5e95** (M11.4: gaps drift 31→25, 2026-10-27); `origin/main` = **aa0e534** (M10.5) — everything after is LOCAL ONLY, push only when asked. Unpushed since aa0e534: the whole M11 arc — M11.0 corpus foundation (36510a8, e1ff741, c9e4f55, 0081cd3), parser 1.2 (58b889c), M11.1A (88b1f7b, 181c1e5), M10.6 battery + fixes (fb2bc82, b989e31, a3528f5, c866f64, 88cd63b, 6ff28f1, 801ec1e), M11.1B (0ccdb7f), M10.7 web (bcb60e8, merge c27a0d8), M11.2 (d60c167, 1621b8b, 63a2a35, 56324af, d005578, 9bd4401, 09060a3, 5704ff0, merge 97c0552, bb9bcc0, 15a0baa, 5308bd7, 38ce046), M11.3 (adb8c60, f13ae07, d47f96e, 10b1fe5, 0116554, b122e36, f2a1dd8), M11.4 (1d543a6, 4a6a891, 5c34d01, 2ce5e95) |
+| git | `main` = **6bca1a3** (README quality-comparison workflow + stream allowlist + spec link, 2026-10-27) + the M12 close-out docs commit (this segment); `origin/main` = **844943c** (PUSHED 2026-10-27 on the user's explicit "push it": first to c949b9e, then to 844943c the "push landed" docs commit — the whole M11 arc 36510a8…2ce5e95 is inside it) — everything after is LOCAL ONLY, push only when asked. Unpushed since 844943c: b8ed8ff (compare: Netflix vmaf order + probe-conditional setpts), ea9919e (M12.WM multiple watermarks), 9967441 (M12.BATCH batch mode), 8c2e11a (M12.HDR HDR→SDR tone-mapping), 6bca1a3 (README docs job) + the M12 close-out docs commit |
 | working tree | clean except untracked `.resume` (per-machine — leave alone), `drafts/` + `gaps/` (working dirs — keep untracked), and 3 stray `media/` files (Beauty_...HEVC_RAW.hevc, src01_hrc00/01_576x324.yuv — NOT from our work, leave untracked/uncommitted); RAG corpus data under rag/corpus/* is gitignored (rebuilt by rag/tools/build_corpus.sh, recipe rag/corpus/BUILD-RECIPE.md); rag/benchmark/results.json gitignored |
-| test baseline | **1218 passed / 1 skipped** (120 s, tr4 host 6.1.1, 2026-10-27) — includes 25 M10.7 webinfo tests, the RAG benchmark gate run (skipif-guarded on the gitignored corpus), 18 rag/author tests, 2 gaps drift regression tests, 13 held-out shape tests |
+| test baseline | **1278 passed / 1 skipped** (146 s, tr4 host 6.1.1, 2026-10-27, post-M12.HDR) — includes 25 M10.7 webinfo tests, the RAG benchmark gate run (skipif-guarded on the gitignored corpus), 18 rag/author tests, 2 gaps drift regression tests, 13 held-out shape tests, +24 M12.WM multi-watermark tests, M12.BATCH tests, 24 M12.HDR tonemap tests (tests/test_tonemap.py) |
 | local machine | **session machine = tr4 (b760one)**; `/dd2/andrei/fass`, host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3, `media/titan.mp4` (20 s test clip). vLLM: tr4-primary 127.0.0.1:8091 (qwen3.8-27b — the ablation endpoint, healthy) + tr4-secondary 127.0.0.1:8080 (swift-1.5-iq3_xxs — weak); fass-rag service live on 127.0.0.1:8100 (pid **1918855** — restarted 2026-10-27 00:4x after the ablation finished; old pid 959120 killed by exact pid) |
 | i7 (192.168.0.33) | `ssh i7`; repo mirror at the SAME path `/dd2/andrei/fass` (HEAD **5354cc7** per the M10.0 push; not re-probed this session; true git mirror, github remote); host ffmpeg **6.1.1-3ubuntu5**; `.venv` present (pytest 9.1.1); docker deployment: containers **fass** + **fass-worker** (image `fass:latest`, FFmpeg **9.0.1**). was **OFFLINE 2026-10-26** (no route to host; dispatcher backend offline) — i7's role (docker 9.0.1 E2E) temporarily taken over by tr4 rebuilding the same Dockerfile; **vLLM backend back ONLINE 2026-10-27** (192.168.0.33:8080, qwen3.8-27b, 230k ctx, per dispatcher health) |
-| tr4 (192.168.0.30) | `ssh tr4`; hostname **b760one**; repo mirror at the SAME path `/dd2/andrei/fass`, HEAD **5354cc7** (synced from i7 2026-10-25; suite **683 passed / 86 s**), host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3; docker runs **vllm-qwen38-27b-dual-max** + **facecat-db** (no fass containers); 3 GPUs (3090, 3080 Ti, 3090); **ONLINE 2026-10-26 → now the SESSION MACHINE (2026-10-27)** — local main at **2ce5e95** (M11.0–M11.4 arc all local; synced from origin at 4ff3393 earlier); suite **1218/1** verified here 2026-10-27; docker/ untouched (canonical tracked compose; rag overlay docker/compose.rag.yaml, profiles ["rag"]); docker runs vllm-qwen38-27b-dual-max (:8080/:8091) + facecat-db — do NOT touch; fass-rag :8100 (pid 1918855); ablation COMPLETE 880/880 (results at /dd2/andrei/ablation-run1/; /tmp copy may be gone post-reboot) |
+| tr4 (192.168.0.30) | `ssh tr4`; hostname **b760one**; repo mirror at the SAME path `/dd2/andrei/fass`, HEAD **5354cc7** (synced from i7 2026-10-25; suite **683 passed / 86 s**), host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3; docker runs **vllm-qwen38-27b-dual-max** + **facecat-db** (no fass containers); 3 GPUs (3090, 3080 Ti, 3090); **ONLINE 2026-10-26 → now the SESSION MACHINE (2026-10-27)** — local main at **6bca1a3** + M12 close-out commit (M11 arc synced from origin at 4ff3393 earlier, pushed as c949b9e); suite **1278/1** verified here 2026-10-27 (post-M12.HDR, 146 s); docker/ untouched (canonical tracked compose; rag overlay docker/compose.rag.yaml, profiles ["rag"]); docker runs vllm-qwen38-27b-dual-max (:8080/:8091) + facecat-db — do NOT touch; fass-rag :8100 (pid 1918855); ablation COMPLETE 880/880 (results at /dd2/andrei/ablation-run1/; /tmp copy may be gone post-reboot) |
 
 Milestone history (all committed): M1 CLI+5 ops (162 tests) → M2 FastAPI web
 (178) → M3a multi-inputs (218) → M3b stream I/O (265) → M4 all 8 FFmpeg
@@ -889,38 +944,53 @@ and forgotten), #318/#316 (forgotten, same chain).
 
 ## 8. Pending user decisions + next unfinished task
 
-**Next unfinished task (2026-10-27 ~00:55, post-reboot):**
-**M11.4 is COMPLETE — §9.2 verdict: NO-GO → ship arm 3
-(llm_schemas) + static doc_ref citations.** All 880 ablation arms
-done (run 2 pid 1774958 finished; report.md/report.json written);
-verdict computed by /dd2/andrei/m114_gonogo.py against the
-pre-registered rule (arm 4 must beat arm 3 by ≥ +0.05 held-out
-PARAPHRASE param_acc with no held-out regression): paraphrase
-param_acc arm3=1.0 arm4=1.0 → delta 0.0 → NO-GO; no regressions
-(arm 4 ≥ arm 3 on every held-out axis). **No code change needed:**
-RagConfig.enabled defaults False (RAG opt-in), the LLM path already
-uses the schemas block, citations already derive from static
-registry doc_ref (derive_citations with rag_result=None); arm 1
-rules stays the default either way. §9.5 budgets all measured
-(warm p95 27 ms, cold 33 ms, evidence 4000ch, RAG overhead
-−3.1 s mean / −69.1 s p95, RAG mem 70 MB — all PASS; LLM-arm
-overall p95 73–82 s NOT met by local qwen3.8-27b, recorded per PRD
-"now measured"). §9.4 gates: suite 1218/1 + battery host 6.1.1
-21/21; **i7 9.0.1 docker half DEFERRED** — sync staged via bundle
-/dd2/andrei/fass-m11-arc.bundle (4ff3393..00c9120, 50 commits; i7
-main 4ff3393 = verified ancestor; origin/main still aa0e534, push =
-user decision) → scp + fetch + ff-only merge on i7 (back up i7's
-untracked PROGRESS.md + ffmpeg-assistant-rag-prd.md first;
-docker/compose.yaml untouched), then
-scripts/m10_battery.sh docker on media/titan.mp4 per filter
-category. Artifacts reboot-proof at /dd2/andrei/{ablation-run1,
-rag-budgets}/ + /dd2/andrei/m114_gonogo.py; rag service live pid
-1918855 (old 959120 killed by exact pid after the run finished).
-Remaining: (1) i7 9.0.1 battery after sync/push; (2) push decision
-(20+ commits M11.0→M11.4 local-only); (3) open merge questions:
-histogram 1-letter aliases, tinterlace docs-only `flags`,
-blockdetect/blurdetect `planes` phrasing; (4) PRD-deferred scope:
-multiple watermarks, HDR workflows, batch processing.
+**Next unfinished task (2026-10-27, M12 COMPLETE — close-out commit in flight):**
+**M11 series COMPLETE** (the ~00:55 block above remains the M11
+record; its two "remaining" items are superseded — i7 9.0.1 battery
+ran 21/21 zero-skips and landed as c949b9e, and origin/main was
+pushed 2026-10-27 on the user's explicit "push it": first to c949b9e,
+then to 844943c (the "push landed" docs commit), i7 synced). M12 =
+the PRD-deferred scope (multiple watermarks, HDR workflows, batch
+processing) — ALL LANDED:
+- **VMAF/compare convention — COMMITTED b8ed8ff.** Compare follows
+  the Netflix vmaf docs CLI form: `-i reference -i distorted`,
+  metric pads `[distorted][reference]` (c1/c0), distorted scaled to
+  reference size, `-f null -`, score in run log only (web-UI Log
+  tab). setpts is probe-conditional (probe_has_pts(), ffprobe
+  packet csv, first 8 packets): raw bitstreams skip it with a
+  warning, compared in arrival order. Suite 1223 passed / 1 skipped
+  (tr4 6.1.1); i7 9.0.1 docker battery 4/4. i7 docker quirk:
+  jrottenberg:9.0 ENTRYPOINT = ffmpeg → pass fass argv[1:].
+- **M12.WM (multiple watermarks) — COMMITTED ea9919e.**
+  Schema: `_at_most_one_watermark` → `_at_most_one_single_use_op`
+  (watermark exempt from the at-most-one rule); planner: wm_paths
+  list, wm_n/wm_total ordinals, one overlay per watermark in input
+  order, overwrite guard; NLU `_detect_watermarks` plural rewrite —
+  an image named in the request binds, with none named every bound
+  image is used, one position phrase per watermark in text order,
+  the rest default bottom-right; tests/test_schema.py test flipped
+  to test_multiple_watermarks_are_allowed; suite 1233/1; two-
+  watermark E2E smoke passed.
+- **Dispatcher jobs — MERGED.**
+  M12.BATCH j_65e7374aef: SUCCEEDED → dispatch_integrate
+  accepted → committed 9967441 (suite 1254/1). M12.HDR
+  j_ba4899bb09: job record failed invalid_result only (result-JSON
+  formatting: outcome 'success_pending_review' outside the enum,
+  acceptance_criteria missing 'criterion' keys; scope_violations
+  [".venv"]) — the work itself was complete + E2E-verified;
+  dispatch_integrate REFUSED (server gate: only succeeded jobs can
+  be integrated, no override) → manually reviewed + merged; commit
+  8c2e11a is the integration record, worktree retained; tr4 6.1.1
+  re-verified (registry 2.8.0 with tonemap; suite 1278/1 after).
+  Third case of the cc-worker result-vocabulary drift (after c27a0d8
+  and j_3d4505da56) — recommend adding the result-schema contract
+  to the cc-worker profile prompt.
+- **After merges (this segment):** M12 close-out — README +
+  docs/DEVELOPMENT + HANDOFF + PROGRESS updated, commit, /savework
+  per standing mandate. The RAG PRD (M11.0–M11.4) is already DONE,
+  so the mandated scope is fully complete; what remains are
+  user-decision items only (see "Decisions pending" + the Next
+  block at the top).
 
 **Decisions pending:**
 1. **channelsplit** — defer multi-output export (current plan: in-graph only),

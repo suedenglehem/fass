@@ -35,10 +35,10 @@ answer, never a silent partial plan.
 
 ## What it understands
 
-**Shape**: N typed inputs — video, audio, image, local capture sources,
-plus one optional watermark image (the web UI has a "+ add input" row for
-each) → one output that is a file **or** a stream destination. Multiple
-inputs is what makes "replace the audio with song.mp3" work.
+**Shape**: N typed inputs — video, audio, image, local capture sources
+(the web UI has a "+ add input" row for each) → one output that is a file
+**or** a stream destination. Multiple inputs is what makes "replace the
+audio with song.mp3" and "watermark it with a and b" work.
 
 - **Trim / cut** (frame-accurate), **resize** (aspect-preserving, exact
   dims, letterbox), **grayscale**, **crop** (center), **rotate** (quarter
@@ -106,9 +106,20 @@ inputs is what makes "replace the audio with song.mp3" work.
 - **Muxer / format options** — `+faststart`, HLS segment settings
   (`hls_time`, segment type), MPEG-TS flags, MP3 ID3 tags, …, validated
   against the plan's actual output container
-- **One static watermark** (preset positions, margin, percent scale),
+- **Watermarks** — one or several static images (preset positions, margin,
+  percent scale): the first binds with `--watermark`, each extra one with
+  `--asset name=image:file`; they overlay in the order the plan lists them;
   **audio replacement** from a second bound input, **audio keep / remove** —
   and compositions of any of the above, in the order stated
+- **HDR → SDR tone-mapping** — `tone map this HDR clip to SDR`: detected
+  from probe metadata (PQ / HLG transfer), built as
+  `format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p` — the
+  default output is 8-bit Rec.709, and a 10-bit `main10` re-encode keeps
+  the HDR. HDR10+ and Dolby Vision are rejected explicitly
+- **Batch mode** — `fass "resize to 720p" --batch clips/` (or an explicit
+  file list) runs the same instruction over every top-level video file in a
+  directory, one at a time; a failing file is reported and skipped, and
+  `--batch-out DIR` sends every result into one folder
 - **Subtitles** — bind an srt / ass / ssa / vtt file; **burned** into the
   video by default (libass, forces a re-encode) or muxed as a **selectable
   soft track** (MP4 / MOV / MKV — compatible with stream-copy)

@@ -45,8 +45,10 @@ applied, warnings, and the validation level. `--json` emits the full
 |---|---|
 | `instruction` / `input` (positional) | what to do; the input video |
 | `-o, --output` | output filename (must not equal the input) |
-| `--watermark IMG` | bind the watermark image (asset id `watermark`) |
+| `--watermark IMG` | bind the first watermark image (asset id `watermark`); extra watermarks go through `--asset` |
 | `--asset id=path` | bind any extra asset (the model only ever sees ids) |
+| `--batch FILE\|DIR …` | one instruction over many files: a directory's top-level video files or an explicit list, run sequentially; a failing file is reported and skipped (mutually exclusive with positional input, `-o`, `--previous`, `--metadata`) |
+| `--batch-out DIR` | batch mode: write every file's output into DIR (default: each plan's own output name) |
 | `--adapter auto\|rules\|llm` | `rules` is offline/deterministic (default without `ANTHROPIC_API_KEY`); `llm` uses the Anthropic API with the same schema validation |
 | `--previous plan.json` | revision: change only what the new instruction asks |
 | `--metadata probe.json` | pre-collected ffprobe JSON (skips local probing) |
@@ -132,9 +134,35 @@ assets are local paths or allowlisted stream URLs the client binds.
 - **Audio resample** — `resample to 44.1 kHz`, `downmix to mono`: `-ar`
   sample rate and/or `-ac` channels (1 / 2 / 6).
 - **Grayscale** — `hue=s=0`, audio kept.
-- **One static watermark** — preset positions (corners/center), margin,
-  percent scale; labeled `filter_complex` + `overlay`, `eof_action=repeat` so a
-  single-frame image never bounds the video.
+- **Watermarks (M12.WM)** — one or several static images, preset positions
+  (corners/center), margin, percent scale. The first binds `--watermark`
+  (asset id `watermark`), each extra one `--asset name=image:file`; every
+  image the request refers to becomes one `watermark` op, each with its own
+  input, chained in plan order on the labeled `filter_complex` + `overlay`
+  graph (`eof_action=repeat` so a single-frame image never bounds the video).
+  An image named in the request binds; with none named, every bound image
+  asset is used. With several, each position phrase in text order is
+  assigned to the next watermark; the rest fall back to bottom-right with a
+  note.
+- **HDR → SDR tone-mapping (M12.HDR)** — `tone map this HDR clip to SDR`:
+  triggered by tone-map words or an hdr↔sdr / hdr↔rec-709 pairing in the
+  request, and gated on probe metadata (PQ `smpte2084` or HLG `arib-std-b67`
+  transfer). The chain is `format=gbrpf32le,tonemap=tonemap=hable:desat=0,
+  format=yuv420p` (FFmpeg 4.2+). The default output is 8-bit Rec.709; a
+  10-bit `main10` re-encode keeps the HDR. HDR10+ and Dolby Vision are
+  explicitly unsupported (named rejection, not a partial plan). Conflicts:
+  audio-mode ops (replace/keep/remove), subtitles mode, stabilize.
+- **Batch mode (M12.BATCH)** — `--batch FILE|DIR …` runs the same
+  instruction over a directory's top-level video files (sorted) or an
+  explicit file list, one file at a time: each file gets its own pipeline
+  run (probe → plan → argv → execute), a rejected or failing file is
+  reported and skipped, the loop continues, and the process exits 0 only
+  when every file succeeded. Shared assets (`--watermark` / `--asset`)
+  apply to every file; `-o`, `--previous`, `--metadata` and a positional
+  input are rejected (each names ONE file). `--batch-out DIR` sends every
+  result into one folder; `--json` prints the per-file report. An
+  instruction placed AFTER the file list (`fass --batch a.mp4 b.mp4
+  "resize"`) parses too — the trailing token becomes the instruction.
 - **Audio replacement** — `replace the audio with song.mp3`, `use this file
   as the soundtrack`: binds a bound audio file (CLI `--asset id=path`, web UI
   "+ add input"), maps its first audio stream (`-map N:a:0` + `-shortest`),
@@ -231,7 +259,7 @@ assets are local paths or allowlisted stream URLs the client binds.
 Ambiguity is a first-class result: `needs_clarification` with specific
 questions (`make it smaller`, `make it exactly 5 MB`, `re-encode lossless`,
 `keep the last 10 seconds` without a known duration). Out-of-scope requests
-(`extract to mp3`, `extract the subtitles`, `add a second watermark`)
+(`extract to mp3`, `extract the subtitles`, `remove the watermark`)
 return `unsupported` with the reason and the support summary —
 **never a silent partial plan**.
 
@@ -421,11 +449,19 @@ docker/models/README.md.
 - [x] M11.0 RAG corpus foundation — pinned corpora (6.1.1 + 9.0.1
   docs), parser 1.1, structure-first chunker, ingest CLI with
   immutable generations (`rag/`; 36 tests)
-- [ ] M11.1 retrieval API — FTS5 lexical baseline + exact component
+- [x] M11.1 retrieval API — FTS5 lexical baseline + exact component
   lookup + fass-rag service, §9.1 retrieval benchmark (gates: top-1
   ≥95%, Recall@8 ≥90%, citation traceability 100%), lexical-vs-hybrid
-  decision recorded
-- [ ] deferred (PRD §5): multiple watermarks, HDR workflows, batch
-  processing
+  decision recorded — all gates PASS (top-1 1.0, Recall@8 0.9095)
+- [x] M11.2 fass integration — advisory evidence layer (RagConfig
+  opt-in, evidence block, citations, §9.3 safety gates, deployment,
+  UI Sources panel + RAG tab)
+- [x] M11.3 registry authoring — rag/author + rag/gaps, parser rounds
+  1–3, registry 2.6.0/2.7.0 (100 filters)
+- [x] M11.4 ablation + verdicts — 880-arm run, §9.2 NO-GO (ship arm 3
+  + static doc_ref), §9.4/§9.5 all budgets measured and green
+- [x] M12.WM multiple watermarks — N image overlays chain in plan order
+- [x] M12.BATCH batch mode — one instruction over many files (`--batch`)
+- [x] M12.HDR HDR→SDR tone-mapping — detect, plan, build, gate
 
 Spec: `ffmpeg-assistant-prd.md`
