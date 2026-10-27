@@ -52,6 +52,11 @@ class MediaInfo:
     # first video stream's packet pts (M12 compare): True/False from a
     # bounded packet probe (probe_has_pts); None = not probed
     has_pts: bool | None = None
+    # measured source settings (bps / Hz) — the same-value conversion
+    # warning compares requested targets against these
+    video_bitrate: int | None = None
+    audio_bitrate: int | None = None
+    audio_sample_rate: int | None = None
 
 
 @dataclass
@@ -129,6 +134,22 @@ def parse_ffprobe_json(payload: dict, *, require_video: bool = True
                     except ValueError:
                         rotation = None
 
+    def _bps_int(value) -> int | None:
+        try:
+            v = int(str(value).strip())
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    # per-stream bitrate first; containers that don't record it (some
+    # .ts/.mkv) fall back to the format-level total — the 10% comparison
+    # tolerance absorbs the audio share
+    video_bitrate = _bps_int(video.get("bit_rate")) if video else None
+    if video_bitrate is None and video is not None:
+        video_bitrate = _bps_int(fmt.get("bit_rate"))
+    audio_bitrate = _bps_int(audio.get("bit_rate")) if audio else None
+    audio_sample_rate = _bps_int(audio.get("sample_rate")) if audio else None
+
     if video is None:
         pix_fmt, hdr = None, False
     else:
@@ -158,6 +179,9 @@ def parse_ffprobe_json(payload: dict, *, require_video: bool = True
         ),
         rotation=rotation,
         hdr=hdr,
+        video_bitrate=video_bitrate,
+        audio_bitrate=audio_bitrate,
+        audio_sample_rate=audio_sample_rate,
     )
 
 

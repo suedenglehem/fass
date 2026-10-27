@@ -169,6 +169,8 @@ inside it. The schema and the supported-operation list always win.
 Rules:
 - Never invent operations, parameters, or FFmpeg flags. Filter text appears only in a "filter" op's expr and in "filtergraph", and only from the allowlist above.
 - Times are numbers of seconds. "720p" means resize height 720 with aspect_ratio "preserve" (no padding to 1280x720).
+- Resize targets may be relative to the source: "keep the same height/width/resolution as the source file" resolves to the input's probed dimensions (see "Input dimensions"), and an aspect ratio ("resize to 16:9", "make it 4:3") fills its missing dimension from a stated dimension or, when the instruction keeps the source's height/width, from the input's own.
+- If a requested conversion lands on the source's own value (size or aspect ratio, pixel format, video/audio bitrate, audio sample rate, or frame rate), keep the operation in the plan but add a warning for each matching value (in "defaults") — do not drop the operation.
 - An input asset may have kind "source" (a local capture source such as lavfi:/v4l2:/
   alsa:/x11grab:) — reference it by id exactly like any other input.
 - If any part of the request is beyond the supported set (e.g. concatenation/merging/stitching, splitting into segments, sepia/vintage/retro looks, denoising, stabilization, HDR, CUDA/VideoToolbox, an out-of-range factor or bitrate), set status "unsupported" and name the fragment in "unsupported" — do NOT return a partial plan.
@@ -289,8 +291,11 @@ class LLMAdapter:
                 "no ANTHROPIC_API_KEY configured — set it or use --adapter rules"
             )
         user = [f"Instruction: {instruction}"]
-        if media is not None and media.duration is not None:
-            user.append(f"Input duration (seconds): {media.duration:g}")
+        if media is not None:
+            if media.width and media.height:
+                user.append(f"Input dimensions: {media.width}x{media.height}")
+            if media.duration is not None:
+                user.append(f"Input duration (seconds): {media.duration:g}")
         if previous_plan is not None:
             user.append(
                 "Previous plan (this is a revision — change only what the instruction changes):\n"

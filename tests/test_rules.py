@@ -1065,3 +1065,159 @@ def test_audio_mode_keeps_audio_only_filters(gen):
     assert out["container"] == "mp3"
     f = [o for o in r.plan["operations"] if o["type"] == "filter"]
     assert f and f[0]["domain"] == "audio"
+
+
+# ------------------------------------------------------------
+# Source-relative resize: the instruction references the SOURCE's
+# own dimensions, resolved from the probe instead of asking.
+
+
+def _resize_target(plan):
+    rs = ops_by_type(plan).get("resize")
+    if not rs:
+        return None
+    r = rs[0]
+    return (r.get("width"), r.get("height"), r.get("aspect_ratio"))
+
+
+def test_resize_aspect_keep_source_height(gen):
+    m = make_media(width=1280, height=720)
+    r = gen("resize video to 4:3, keep the same height as in source file",
+            "clip.mp4", media=m)
+    assert r.status == "ready"
+    assert _resize_target(r.plan) == (960, 720, "exact")
+    assert any("height kept from the source" in d for d in r.defaults)
+
+
+def test_resize_aspect_uses_source_height_by_default(gen):
+    # 'resize to 16:9' with no explicit height keeps the probed height.
+    m = make_media(width=320, height=240)
+    r = gen("resize to 16:9", "clip.mp4", media=m)
+    assert r.status == "ready"
+    assert _resize_target(r.plan) == (428, 240, "exact")
+    assert any("keeps the source height 240" in d for d in r.defaults)
+
+
+def test_resize_keep_source_width(gen):
+    m = make_media(width=1280, height=720)
+    r = gen("keep the same width as the source file and make it 4:3",
+            "clip.mp4", media=m)
+    assert r.status == "ready"
+    assert _resize_target(r.plan) == (1280, 960, "exact")
+
+
+def test_resize_to_same_resolution_as_source(gen):
+    m = make_media(width=1280, height=720)
+    r = gen("resize to the same resolution as the source file",
+            "clip.mp4", media=m)
+    assert r.status == "ready"
+    assert _resize_target(r.plan) == (1280, 720, "exact")
+    assert any("matches the source's own size" in d for d in r.defaults)
+
+
+def test_resize_aspect_without_probe_clarifies(gen):
+    # No probe → the source height is unknown → ask, don't guess.
+    r = gen("resize to 16:9", "clip.mp4")
+    assert r.status == "needs_clarification"
+
+
+def test_resize_source_ref_without_probe_clarifies(gen):
+    r = gen("keep the same height as the source file", "clip.mp4")
+    assert r.status == "needs_clarification"
+
+
+def test_timecode_not_treated_as_resize(gen):
+    # 'trim 0:30 to 1:00' has digits that must NOT read as WxH.
+    m = make_media(width=1280, height=720)
+    r = gen("trim 0:30 to 1:00", "clip.mp4", media=m)
+    assert r.status == "ready"
+    assert "resize" not in ops_by_type(r.plan)
+
+
+def test_resize_after_cut_keeps_source_dims(gen):
+    m = make_media(width=640, height=360)
+    r = gen("cut from 00:10 to 00:30 and resize to 16:9", "clip.mp4", media=m)
+    assert r.status == "ready"
+    assert _resize_target(r.plan) == (640, 360, "exact")
+    assert any("matches the source's own size" in d for d in r.defaults)
+
+
+# ------------------------------------------------------------
+# Same-value warnings: a conversion to the source's OWN value warns
+# (the op stays in the plan — warn-only, never dropped).
+
+
+def _warns(r, frag):
+    return any(frag in d for d in r.defaults)
+
+
+def _full_media():
+    return make_media(width=1280, height=720, fps=25.0, pix_fmt="yuv420p",
+                      video_bitrate=2_386_000, audio_bitrate=127_000,
+                      audio_sample_rate=48000)
+
+
+def test_warn_video_bitrate_same(gen):
+    r = gen("cbr 2.4 Mbps", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "video bitrate 2400k matches")
+
+
+def test_no_warn_video_bitrate_different(gen):
+    r = gen("cbr 1.5 Mbps", "clip.mp4", media=_full_media())
+    assert not _warns(r, "video bitrate 1500k matches")
+
+
+def test_warn_audio_bitrate_same(gen):
+    r = gen("re-encode audio to aac 128 kbps", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "audio bitrate 128k matches")
+
+
+def test_no_warn_audio_bitrate_different(gen):
+    r = gen("re-encode audio to aac 96 kbps", "clip.mp4", media=_full_media())
+    assert not _warns(r, "audio bitrate 96k matches")
+
+
+def test_warn_sample_rate_same(gen):
+    r = gen("resample audio to 48k", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "48000 Hz is the source's own")
+
+
+def test_no_warn_sample_rate_different(gen):
+    r = gen("resample audio to 44.1k", "clip.mp4", media=_full_media())
+    assert not _warns(r, "44100 Hz is the source's own")
+
+
+def test_warn_pixel_format_same(gen):
+    r = gen("convert to yuv420p", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "pixel format yuv420p is the source's own")
+
+
+def test_warn_fps_same_keeps_filter(gen):
+    r = gen("set it to 25 fps", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "25 fps matches the source's own")
+    assert any(o["type"] == "filter" and o["expr"].startswith("fps=fps=")
+               for o in r.plan["operations"])
+
+
+def test_no_warn_fps_different(gen):
+    r = gen("set it to 24 fps", "clip.mp4", media=_full_media())
+    assert not _warns(r, "24 fps matches the source's own")
+
+
+def test_warn_geometry_same_keeps_resize(gen):
+    r = gen("resize to 1280x720", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "matches the source's own size")
+    assert "resize" in ops_by_type(r.plan)  # warn-only: op retained
+
+
+def test_warn_geometry_720p_same_keeps_resize(gen):
+    r = gen("resize to 720p", "clip.mp4", media=_full_media())
+    assert r.status == "ready"
+    assert _warns(r, "matches the source's own size")
+    assert "resize" in ops_by_type(r.plan)

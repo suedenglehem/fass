@@ -73,8 +73,10 @@ from fass.schema import (
 )
 
 SUPPORTED_SUMMARY = (
-    "Supported: resize (e.g. '720p', '1280x720'), cropping to exact "
-    "dimensions ('crop to 1280x720'), trim ('cut from 00:10 to 00:30', "
+    "Supported: resize (e.g. '720p', '1280x720', an aspect ratio like "
+    "'resize to 16:9' or 'make it 4:3', or the source's own dimensions "
+    "like 'keep the same height as the source file'), cropping "
+    "to exact dimensions ('crop to 1280x720'), trim ('cut from 00:10 to 00:30', "
     "'the first 20 seconds'), speed changes ('make it 2x faster', 'half "
     "speed'), rotation ('rotate 90 degrees'), grayscale, flipping/mirroring "
     "('flip horizontally'), HDR→SDR tone-mapping ('tone map this HDR video "
@@ -127,7 +129,9 @@ SUPPORTED_SUMMARY = (
     "be a stream ('stream this to rtmp://host:1935/live', 'publish to "
     "https://host/out.m3u8', 'send it to udp://127.0.0.1:5004') or a local "
     "audio device ('play the audio to alsa:hw:0') — the destination's "
-    "scheme fixes the output format."
+    "scheme fixes the output format. A conversion to the source's own "
+    "values (size, pixel format, video/audio bitrate, sample rate, frame "
+    "rate) is flagged with a warning."
 )
 
 # ---------------------------------------------------------------- time
@@ -276,11 +280,85 @@ _RESIZE_PHRASES = [
 ]
 
 
-def _detect_resize(t: str, exclude: list[tuple[int, int]] | None = None):
-    """Return (ResizeOp|None, clarification|None).
+def _even(n: int) -> int:
+    return n if n % 2 == 0 else n + 1
+
+
+_ASPECT_RX = re.compile(r"(?<![\d:.])(\d{1,2}(?:\.\d+)?)\s*:\s*(\d{1,2})(?![\d:])")
+_ASPECT_CTX = re.compile(
+    r"\bresize\b|\bscal\w*\b|\baspect\b|\bratio\b|\bconvert\w*\b|\bmake\s+it\b")
+# 'display/sample aspect ratio' (setdar/setsar) is a stream-metadata filter,
+# not a geometry resize — its N:M must not be read as a resize target.
+_SAR_DAR_RX = re.compile(
+    r"\b(?:display|sample)\s+aspect\s+ratio\b|\bsetdar\b|\bsetsar\b", re.I)
+
+
+def _detect_aspect(t: str, exclude: list[tuple[int, int]] | None = None):
+    """'resize to 4:3' / 'make it 16:9' / 'aspect ratio 2.35:1' → (4.0, 3.0).
+
+    A bare N:M is usually a timecode, so a resize/aspect context word is
+    required, numbers with a leading zero are rejected ('00:10'), and each
+    side is capped at 24 (real ratios top out at 21:9) — '2:30' stays a
+    timecode, not a ratio. A display/sample aspect ratio (setdar/setsar) is
+    a different filter and never a resize target."""
+    if _SAR_DAR_RX.search(t):
+        return None
+    if not _ASPECT_CTX.search(t):
+        return None
+    for m in _ASPECT_RX.finditer(t):
+        if any(not (m.end() <= s or m.start() >= e) for s, e in (exclude or [])):
+            continue
+        a, b = m.group(1), m.group(2)
+        if a[0] == "0" or b[0] == "0":
+            continue
+        aw, ah = float(a), float(b)
+        if not (1 <= aw <= 24 and 1 <= ah <= 24):
+            continue
+        return (aw, ah)
+    return None
+
+
+_SRC_H_RX = re.compile(
+    r"\b(?:keep|retain|maintain)\s+(?:the\s+)?(?:same\s+)?height\b"
+    r"|\b(?:the\s+)?(?:same\s+)?(?:source|input|original|current|native)\s+(?:file|clip|video|input)?\s+height\b"
+    r"|\b(?:source|input|original)\s*(?:file|clip|video)?\s*['’]s\s+height\b"
+    r"|\bheight\s+(?:of|as|from)\s+(?:the\s+)?(?:source|input|original|file|clip|video|it)\b",
+    re.I)
+_SRC_W_RX = re.compile(
+    r"\b(?:keep|retain|maintain)\s+(?:the\s+)?(?:same\s+)?width\b"
+    r"|\b(?:the\s+)?(?:same\s+)?(?:source|input|original|current|native)\s+(?:file|clip|video|input)?\s+width\b"
+    r"|\b(?:source|input|original)\s*(?:file|clip|video)?\s*['’]s\s+width\b"
+    r"|\bwidth\s+(?:of|as|from)\s+(?:the\s+)?(?:source|input|original|file|clip|video|it)\b",
+    re.I)
+_SRC_RES_RX = re.compile(
+    r"\b(?:keep|retain|maintain)\s+(?:the\s+)?(?:same\s+)?(?:original\s+)?(?:resolution|dimensions?|source\s+size|input\s+size)\b"
+    r"|\b(?:the\s+)?(?:same\s+)?(?:source|input|original|current|native)\s+(?:file|clip|video|input)?\s*['’]?\s*(?:resolution|dimensions?|size)\b"
+    r"|\b(?:source|input|original)\s*(?:file|clip|video)?\s*['’]s\s+(?:resolution|dimensions?|size)\b"
+    r"|\b(?:resolution|dimensions?|size)\s+(?:of|as|from)\s+(?:the\s+)?(?:source|input|original|file|clip|video|it)\b",
+    re.I)
+
+
+def _source_dim_refs(t: str) -> tuple[bool, bool, bool]:
+    """Source-relative dimension references: (resolution, width, height) —
+    True when the instruction names the input's own value ('keep the same
+    height as the source file'). Resolved against the probe in
+    _detect_resize; without a probe they ask for the explicit value."""
+    return (bool(_SRC_RES_RX.search(t)),
+            bool(_SRC_W_RX.search(t)),
+            bool(_SRC_H_RX.search(t)))
+
+
+def _detect_resize(t: str, exclude: list[tuple[int, int]] | None = None,
+                   media=None):
+    """Return (ResizeOp|None, clarification|None, note|None).
 
     ``exclude`` lists (start, end) spans already claimed by another detector
-    (crop dimensions) — a WxH inside one of them is not a resize target."""
+    (crop dimensions) — a WxH inside one of them is not a resize target.
+    ``media`` (the probed input, when available) augments the instruction
+    with the source's own properties: 'keep the same height as the source
+    file' becomes the input's probed height, and an aspect-ratio target
+    ('resize to 16:9') fills its missing dimension from the source's height
+    unless a width is stated. ``note`` says what was filled in."""
     heights: list[tuple[int, int, int]] = []  # (value, span_start, span_end)
     for m in re.finditer(r"(?<![\d.])(\d{2,5})\s*p\b", t, re.I):
         heights.append((int(m.group(1)), m.start(), m.end()))
@@ -301,12 +379,118 @@ def _detect_resize(t: str, exclude: list[tuple[int, int]] | None = None):
     if len(values) > 1:
         return None, Clarification(
             question=f"you mentioned {len(values)} different heights ({', '.join(str(v) + 'p' for v in values)}) — which one?"
-        )
-    if wh:
-        return ResizeOp(width=int(wh.group(1)), height=int(wh.group(2))), None
-    if values:
-        return ResizeOp(height=values[0]), None
-    return None, None
+        ), None
+
+    width = int(wh.group(1)) if wh else None
+    height = int(wh.group(2)) if wh else None
+    if height is None and values:
+        height = values[0]
+
+    src_res, src_w, src_h = _source_dim_refs(t)
+    aspect = _detect_aspect(t, exclude=exclude)
+
+    if (width is None and height is None and aspect is None
+            and not (src_res or src_w or src_h)):
+        return None, None, None
+
+    notes: list[str] = []
+    if media is not None:
+        if src_w and width is None and media.width:
+            width = media.width
+            notes.append(f"width kept from the source: {width}")
+        if src_h and height is None and media.height:
+            height = media.height
+            notes.append(f"height kept from the source: {height}")
+        if src_res and width is None and height is None \
+                and media.width and media.height:
+            width, height = media.width, media.height
+            notes.append(f"resolution kept from the source: {width}x{height}")
+
+    exact = bool(src_res and wh is None)
+    if aspect is not None:
+        aw, ah = aspect
+        if width is not None and height is None:
+            height = _even(int(round(width * ah / aw)))
+            exact = True
+            notes.append(f"height computed from {aw:g}:{ah:g} at width {width}")
+        elif height is not None and width is None:
+            width = _even(int(round(height * aw / ah)))
+            exact = True
+            notes.append(f"width computed from {aw:g}:{ah:g} at height {height}")
+        elif width is None and height is None:
+            if media is not None and media.height:
+                height = media.height
+                width = _even(int(round(height * aw / ah)))
+                exact = True
+                notes.append(
+                    f"aspect {aw:g}:{ah:g} keeps the source height {height}")
+            else:
+                return None, Clarification(
+                    question=(f"resize to {aw:g}:{ah:g} — to what height? "
+                              "(state a height, or 'keep the source height' "
+                              "with a probed input)")), None
+    if width is None and height is None:
+        # a source reference with no probe to resolve it against
+        return None, Clarification(
+            question="the input's dimensions aren't known here (no probe) — "
+                     "which exact dimensions (e.g. '960x720')?"), None
+    return (ResizeOp(width=width, height=height,
+                     aspect_ratio="exact" if exact else "preserve"),
+            None, "; ".join(notes) if notes else None)
+
+
+def _same_value_notes(media, resize=None, pixel_format: str | None = None,
+                      video_bitrate_kbps: int | None = None,
+                      audio_bitrate_kbps: int | None = None,
+                      resample=None, fps_target: float | None = None) -> list[str]:
+    """Warnings for conversions to the source's OWN values (the user's ask:
+    don't silently re-encode to identical settings). The ops stay in the
+    plan — the warning tells the user the conversion is expected to be
+    a no-op in that respect. Bitrates compare within 10% (probed values are
+    measured, requested ones nominal); fps within 0.5% (29.97 ≈ 30)."""
+    if media is None:
+        return []
+    out: list[str] = []
+    if resize is not None and media.width and media.height:
+        mw, mh = media.width, media.height
+        if (resize.width == mw and resize.height == mh) or (
+                resize.width is None and resize.height == mh
+                and resize.aspect_ratio == "preserve") or (
+                resize.height is None and resize.width == mw
+                and resize.aspect_ratio == "preserve"):
+            out.append(
+                f"the resize target matches the source's own size "
+                f"({mw}x{mh}) — the conversion is expected to keep the "
+                f"same dimensions")
+    if pixel_format and media.pix_fmt and pixel_format == media.pix_fmt:
+        out.append(
+            f"pixel format {pixel_format} is the source's own — no chroma "
+            f"conversion will actually happen")
+    if video_bitrate_kbps and getattr(media, "video_bitrate", None):
+        src_k = media.video_bitrate / 1000
+        if abs(video_bitrate_kbps - src_k) <= 0.1 * src_k:
+            out.append(
+                f"video bitrate {video_bitrate_kbps}k matches the source's "
+                f"(~{round(src_k)}k) — the conversion is expected to keep "
+                f"the same bitrate")
+    if audio_bitrate_kbps and getattr(media, "audio_bitrate", None):
+        src_k = media.audio_bitrate / 1000
+        if abs(audio_bitrate_kbps - src_k) <= 0.1 * src_k:
+            out.append(
+                f"audio bitrate {audio_bitrate_kbps}k matches the source's "
+                f"(~{round(src_k)}k) — the conversion is expected to keep "
+                f"the same bitrate")
+    if resample is not None and resample.sample_rate and \
+            getattr(media, "audio_sample_rate", None) == resample.sample_rate:
+        out.append(
+            f"{resample.sample_rate} Hz is the source's own sample rate — "
+            f"the conversion is expected to keep it")
+    if fps_target and media.fps and \
+            abs(fps_target - media.fps) <= 0.005 * media.fps:
+        out.append(
+            f"{fps_target:g} fps matches the source's own frame rate "
+            f"(~{media.fps:g}) — the conversion is expected to keep it")
+    return out
 
 
 # ---------------------------------------------------------------- crop
@@ -2314,7 +2498,8 @@ class RulesAdapter:
             t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
         trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
         crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
-        resize, resize_clar = _detect_resize(t_det, exclude=crop_spans)
+        resize, resize_clar, resize_note = _detect_resize(
+            t_det, exclude=crop_spans, media=media)
         speed, speed_clar, speed_frag = _detect_speed(t_det)
         rotate, rotate_clar, rotate_frag, rotate_note = _detect_rotate(t_det)
         audio_resample, rs_clar, rs_frag = _detect_resample(t_det)
@@ -2718,6 +2903,25 @@ class RulesAdapter:
         notes: list[str] = []
         if trim_note:
             notes.append(trim_note)
+        if resize_note:
+            notes.append(resize_note)
+        # fps target: read back from the plan's own fps filter — the fps
+        # phrasing is claimed (blanked) by the transform-filter detector
+        # before this point, so a text scan never sees it.
+        fps_target: float | None = None
+        for o in plan.operations:
+            if o.type == "filter" and o.domain == "video" \
+                    and o.expr.startswith("fps=fps="):
+                try:
+                    fps_target = float(o.expr.removeprefix("fps=fps="))
+                except ValueError:
+                    pass
+                break
+        notes.extend(_same_value_notes(
+            media, resize=resize_before_gpu, pixel_format=pixel_format,
+            video_bitrate_kbps=video_bitrate,
+            audio_bitrate_kbps=audio_bitrate,
+            resample=audio_resample, fps_target=fps_target))
         if plan.trim is not None and plan.trim.stream_copy:
             notes.append(
                 "stream-copy cut (no re-encode): -ss/-t with -c copy — video "

@@ -354,6 +354,23 @@ def generate(
         return resp
     resp.adapter = adapter.name
 
+    # Source-relative NLU needs the input's probed properties BEFORE
+    # parse: 'keep the same height as the source file', aspect-ratio math
+    # and the same-value warnings all compare against the probe. Only
+    # local files can be probed (MVP: no uploads) — a stream input leaves
+    # media None and the NLU asks for the explicit value instead.
+    probed_id: str | None = None
+    if media is None and ffprobe_available():
+        for aid in ("main", *assets):
+            a = assets.get(aid)
+            if a is None:
+                continue
+            candidate = Path(resolve_input_name(a.path))
+            if candidate.exists():
+                media = probe_media(str(candidate))
+                probed_id = aid
+                break
+
     # RAG retrieval (M11.2 §6.3): LLM path only — the rules adapter never
     # calls the service (PRD §6.5), and RAG is opt-in. Fail-open:
     # retrieve() degrades to a RAG-less generation, it never raises.
@@ -411,11 +428,20 @@ def generate(
     # Optional local inspection: only for files that
     # exist on this machine — the MVP never uploads media. A bare name
     # resolves against the deployment's input volume, as the executor
-    # does at run time.
+    # does at run time. The planner's metadata must describe the plan's
+    # INPUT asset, so when the pre-parse probe hit a different asset
+    # (e.g. 'main' while the plan's input is another id) the probe is
+    # re-pointed at the actual input.
     if media is None and ffprobe_available():
         candidate = Path(resolve_input_name(assets[edit.input_id].path))
         if candidate.exists():
             media = probe_media(str(candidate))
+    elif probed_id is not None and edit.input_id != probed_id:
+        input_asset = assets.get(edit.input_id)
+        if input_asset is not None:
+            candidate = Path(resolve_input_name(input_asset.path))
+            if candidate.exists():
+                media = probe_media(str(candidate)) or media
 
     try:
         _reconcile_output_destination(edit, output_filename, result.defaults, resp)
