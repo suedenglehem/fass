@@ -538,6 +538,23 @@ def test_real_lavfi_run(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_log_footer_records_command_and_duration(tmp_path, monkeypatch):
+    # Every run appends the command it ran and the wall-clock duration to
+    # the END of its own log file.
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    run = execute.start_run(_lavfi_argv("1"))
+    st = _wait(run.id)
+    assert st["status"] == "success", st
+    log = execute._log_file(run.id).read_text(encoding="utf-8")
+    assert "# command:" in log
+    assert "# duration:" in log
+    # The footer lives at the end: the last two non-empty lines are it.
+    tail = [l for l in log.splitlines() if l.strip()][-2:]
+    assert tail[0].startswith("# command:")
+    assert tail[1].startswith("# duration:")
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
 def test_chained_processings_share_input_folder(monkeypatch):
     # The chaining flow: the first processing writes into the input folder
     # ('/input/step1.mp4'), the second picks the result up by bare name.

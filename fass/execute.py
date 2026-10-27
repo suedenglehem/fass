@@ -785,7 +785,9 @@ def start_run(argv: list[str], timeout: float | None = None,
         _ACTIVE[run_id] = proc
     _save(run)
     threading.Thread(
-        target=_watch, args=(run_id, proc, logf, timeout, cwd, ladder),
+        target=_watch,
+        args=(run_id, proc, logf, timeout, cwd, ladder, run.command,
+              time.monotonic()),
         daemon=True,
     ).start()
     return run
@@ -848,14 +850,44 @@ def start_run_sequence(argvs: list[list[str]],
     _save(run)
     threading.Thread(
         target=_watch_sequence,
-        args=(run_id, resolved, cwd, timeout, logf, notes),
+        args=(run_id, resolved, cwd, timeout, logf, notes,
+              [render_posix(a) for a in resolved], time.monotonic()),
         daemon=True,
     ).start()
     return run
 
 
+def _log_footer(logf, commands: list[str], t0: float | None) -> None:
+    """Self-contained log tail: the command(s) that ran plus the wall time.
+
+    Written to the shared log after the process has exited. The child
+    wrote through its own (inherited) fd, so the Python object's position
+    is still 0 — seek to the end before appending, or the footer clobbers
+    the start of the log."""
+    if not commands and t0 is None:
+        return
+    try:
+        lines: list[str] = []
+        if commands:
+            if len(commands) == 1:
+                lines.append(f"# command: {commands[0]}")
+            else:
+                for i, c in enumerate(commands, 1):
+                    lines.append(f"# command step {i}/{len(commands)}: {c}")
+        if t0 is not None:
+            lines.append(f"# duration: {time.monotonic() - t0:.1f}s")
+        if lines:
+            logf.seek(0, 2)
+            logf.write(("\n" + "\n".join(lines) + "\n").encode("utf-8"))
+            logf.flush()
+    except (OSError, ValueError):
+        pass
+
+
 def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
-                    timeout: float | None, logf, notes: list[str]) -> None:
+                    timeout: float | None, logf, notes: list[str],
+                    commands: list[str] | None = None,
+                    t0: float | None = None) -> None:
     """Run the steps one at a time into the shared log; the first
     non-zero exit (or a timeout, or a stop) finalizes the run. _ACTIVE
     holds the CURRENT step's process, so stop_run kills whichever step
@@ -888,6 +920,7 @@ def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
             status = "success"
     finally:
         _update(run_id, status=status, exit_code=rc, notes=notes + progress)
+        _log_footer(logf, commands or [], t0)
         logf.close()
         with _LOCK:
             _ACTIVE.pop(run_id, None)
@@ -895,7 +928,8 @@ def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
 
 
 def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
-           cwd=None, ladder: dict | None = None) -> None:
+           cwd=None, ladder: dict | None = None,
+           command: str | None = None, t0: float | None = None) -> None:
     try:
         if timeout:
             try:
@@ -919,6 +953,7 @@ def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
                 if note:
                     _append_note(run_id, note)
     finally:
+        _log_footer(logf, [command] if command else [], t0)
         logf.close()
         with _LOCK:
             _ACTIVE.pop(run_id, None)
