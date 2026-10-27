@@ -336,6 +336,15 @@ def _rotate_expr(op: RotateOp) -> str:
     return _ROTATE_FILTERS[(op.angle, op.clockwise)]
 
 
+# M12.HDR: the fixed HDR→SDR tone-mapping chain (registry filter 'tonemap').
+# tonemap needs float RGB planar input (format=gbrpf32le) and lands on 8-bit
+# SDR (format=yuv420p); hable is the general-purpose curve, desat=0 keeps the
+# chroma. The curve parameters are the filter's built-in defaults — M12 does
+# not expose them (the op carries no options, like StabilizeOp).
+_TONEMAP_CHAIN = "format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p"
+_TONEMAP_10BIT_FMTS = ("yuv420p10le", "yuv422p10le", "yuv444p10le")
+
+
 def _setpts_expr(op: SpeedOp) -> str:
     # factor 2 -> PTS/2 (half the duration); factor 0.5 -> PTS/0.5 (twice)
     return f"setpts=PTS/{fmt_num(op.factor)}"
@@ -447,6 +456,8 @@ def build_video_chain(operations: list, defaults: list[str],
                 parts.append(_rotate_expr(o))
             elif o.type == "speed":
                 parts.append(_setpts_expr(o))
+            elif o.type == "tonemap":
+                parts.append(_TONEMAP_CHAIN)
             elif o.type == "filter" and o.domain == "video":
                 # FilterOp.expr is label-free (schema-validated) — it splices
                 # straight into the -vf chain in user-specified order.
@@ -477,6 +488,8 @@ def build_video_chain(operations: list, defaults: list[str],
             segs.append(f"{src}{_rotate_expr(o)}[{out}]")
         elif o.type == "speed":
             segs.append(f"{src}{_setpts_expr(o)}[{out}]")
+        elif o.type == "tonemap":
+            segs.append(f"{src}{_TONEMAP_CHAIN}[{out}]")
         elif o.type == "filter" and o.domain == "video":
             segs.append(f"{src}{o.expr}[{out}]")
         elif o.type == "subtitles":
@@ -1224,11 +1237,34 @@ def plan_execution(
                 "cannot be combined with stabilization — stabilize first, "
                 "then run the analysis on the result")
 
+    # -- tone-mapping (M12.HDR): HDR -> SDR chain ---------------------------
+    # A single-pass video-chain edit (unlike the two-pass stabilize): it
+    # composes with resize/crop/rotate/speed/watermark/subtitles in user
+    # order, forces a re-encode (it is an operation — forced_ops covers it),
+    # and lands the output on 8-bit SDR. A 10-bit pixel format contradicts
+    # the tone-map (that is the passthrough request, not this one).
+    if edit.ops_of("tonemap"):
+        if out.mode != "video":
+            errors.append(
+                "tone-mapping produces a video clip — it cannot target an "
+                f"{out.mode} output (export a video container, e.g. mp4)")
+        if out.pixel_format in _TONEMAP_10BIT_FMTS:
+            errors.append(
+                f"tone-mapping lands on 8-bit SDR — the {out.pixel_format} "
+                "pixel format contradicts it (drop the 10-bit request, or "
+                "re-encode without tone-mapping to keep the 10-bit HDR)")
+        for o in edit.bitstream_filters or []:
+            errors.append(
+                f"the bitstream filter '{o.name}' runs on the compressed "
+                "stream (stream copy) — tone-mapping re-encodes the video, "
+                "so the two are not compatible")
+            break
+
     # -- mode-specific operation restrictions --------------------------------
     if out.mode == "audio":
         for o in edit.operations:
             if o.type in ("resize", "grayscale", "watermark", "subtitles",
-                          "crop", "rotate"):
+                          "crop", "rotate", "tonemap"):
                 errors.append(
                     f"operation '{o.type}' is a video edit — an audio-only output "
                     "has no video (supported: speed change, audio resample, "
@@ -1258,7 +1294,7 @@ def plan_execution(
             chain_ops = sorted({
                 o.type for o in edit.operations
                 if o.type in ("resize", "grayscale", "crop", "rotate", "speed",
-                              "watermark", "subtitles")
+                              "watermark", "subtitles", "tonemap")
                 or (o.type == "filter" and o.domain == "video")
             })
             for t in chain_ops:
@@ -1342,6 +1378,36 @@ def plan_execution(
             note = _version_note(f"filter '{op.metric}'", spec["min_version"])
             if note:
                 warnings.append(note)
+    if edit.ops_of("tonemap") and "tonemap" not in disclosed:
+        # the tone-map chain is planner-built (not a FilterOp), so the
+        # filter-op disclosure loop above never sees it — disclose the
+        # registry entry (presence + min_version) here
+        disclosed.add("tonemap")
+        spec = filter_spec("tonemap") or {}
+        if ff is not None and "tonemap" not in ff.filters:
+            warnings.append(
+                "filter 'tonemap' is not available in the local FFmpeg "
+                "build — the command will fail to start")
+        if spec.get("min_version"):
+            note = _version_note("tone-mapping (filter 'tonemap')",
+                                 spec["min_version"])
+            if note:
+                warnings.append(note)
+        # probe-based honesty about the source (M12.HDR): the chain is built
+        # as requested; the note says what the probe says about its HDR-ness
+        if metadata is not None and metadata.hdr:
+            defaults.append(
+                "tone-mapping the HDR input (BT.2020 primaries / PQ "
+                "transfer) to Rec.709 SDR (8-bit)")
+        elif metadata is not None:
+            warnings.append(
+                "the input carries no HDR color metadata (BT.2020 primaries "
+                "/ PQ transfer / 10-bit) — tone-mapping an SDR source "
+                "washes out the image")
+        else:
+            defaults.append(
+                "no media metadata provided — tone-mapping assumes an HDR "
+                "(BT.2020/PQ) source")
 
     # -- diagnostic analysis (M10.2): null muxer, log level info, no file --
     if diagnostic:
@@ -1395,7 +1461,8 @@ def plan_execution(
         video_ops = sorted({
             o.type for o in edit.operations
             if o.type in ("resize", "crop", "rotate", "speed", "grayscale",
-                          "watermark", "subtitles", "filter", "combine")
+                          "watermark", "subtitles", "filter", "combine",
+                          "tonemap")
         })
         if video_ops:
             raise PlanError([
@@ -2253,9 +2320,19 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
         )
     # Pixel-format conversion (scaler component): the codec default unless
     # the plan names one (validated against the registry matrix in plan_execution).
-    pix_fmt = edit.output.pixel_format or vc["pix_fmt"]
+    # M12.HDR: HEVC main10 is the 10-bit profile — the 8-bit codec default
+    # cannot carry it, so a bare main10 profile selects the 10-bit format.
+    main10_fmt = (edit.output.pixel_format is None
+                  and edit.output.video_codec == "h265"
+                  and vco.get("profile") == "main10")
+    pix_fmt = edit.output.pixel_format or ("yuv420p10le" if main10_fmt else vc["pix_fmt"])
     opts += ["-pix_fmt", pix_fmt]
-    if pix_fmt != vc["pix_fmt"]:
+    if main10_fmt:
+        defaults.append(
+            f"main10 profile encodes 10-bit — pixel format yuv420p10le "
+            f"(the {edit.output.video_codec} default {vc['pix_fmt']} is 8-bit)"
+        )
+    elif pix_fmt != vc["pix_fmt"]:
         defaults.append(
             f"pixel format {pix_fmt} instead of the {edit.output.video_codec} "
             f"default {vc['pix_fmt']}"
@@ -2565,9 +2642,20 @@ def _metadata_warnings(ep: ExecutionPlan, edit: EditPlan, metadata: MediaInfo | 
         return
     if edit.output.mode == "video":
         if metadata.hdr:
-            ep.warnings.append(
-                "input looks like HDR; the SDR presets will convert it — check the output before distributing"
-            )
+            if edit.ops_of("tonemap"):
+                pass  # the tone-map plan states its own conversion note
+            elif ep.mode == "copy":
+                ep.defaults.append(
+                    "the input is HDR (BT.2020/PQ); the stream copy carries "
+                    "its color metadata through unchanged")
+            elif edit.output.pixel_format in _TONEMAP_10BIT_FMTS:
+                ep.defaults.append(
+                    "the input is HDR (BT.2020/PQ); the 10-bit output "
+                    "preserves its color metadata (HDR passthrough)")
+            else:
+                ep.warnings.append(
+                    "input looks like HDR; the SDR presets will convert it — check the output before distributing"
+                )
         if metadata.rotation:
             ep.warnings.append(
                 f"input carries rotation metadata ({metadata.rotation}°); the decoded geometry may differ "

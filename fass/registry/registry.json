@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.7.0",
+  "registry_version": "2.8.0",
   "description": "Product-supported FFmpeg capabilities (PRD FR-3). Source of truth for what fass may build. Actual encoder/filter/muxer availability depends on the installed FFmpeg build — check with `fass env` or `--preflight`.",
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
@@ -1964,6 +1964,31 @@
         "needs_reference": true,
         "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-126", "anchor": "Examples-126", "title": "Video Filters > ssim > Examples"},
         "aliases": ["ssim", "structural similarity", "quality loss", "compare against the original"],
+        "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
+      },
+      "tonemap": {
+        "description": "Tone-map HDR (PQ/HLG, BT.2020) video to SDR (BT.709): 'tonemap=tonemap=hable:desat=0' — needs float RGB input, pair it with format=gbrpf32le before and format=yuv420p after.",
+        "options": {
+          "tonemap": {
+            "kind": "choice",
+            "description": "tonemap algorithm selection (default none)",
+            "values": [
+              "none",
+              "linear",
+              "gamma",
+              "clip",
+              "reinhard",
+              "hable",
+              "mobius"
+            ]
+          },
+          "param": { "kind": "number", "description": "tonemap parameter (default nan)" },
+          "desat": { "kind": "number", "description": "desaturation strength (default 2)" },
+          "peak": { "kind": "number", "description": "signal peak override in nits (default 0 = detect from the stream's metadata)" }
+        },
+        "min_version": "4.2",
+        "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#tonemap", "anchor": "tonemap", "title": "Video Filters > tonemap"},
+        "aliases": ["tone map", "tonemap", "hdr to sdr", "tone mapping", "hdr10 to sdr", "rec 709"],
         "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true}
       },
       "trim": {

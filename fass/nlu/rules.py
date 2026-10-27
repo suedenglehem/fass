@@ -65,6 +65,7 @@ from fass.schema import (
     StabilizeOp,
     SpeedOp,
     SubtitleOp,
+    ToneMapOp,
     TrimSpec,
     UnsupportedPart,
     WatermarkOp,
@@ -75,7 +76,10 @@ SUPPORTED_SUMMARY = (
     "dimensions ('crop to 1280x720'), trim ('cut from 00:10 to 00:30', "
     "'the first 20 seconds'), speed changes ('make it 2x faster', 'half "
     "speed'), rotation ('rotate 90 degrees'), grayscale, flipping/mirroring "
-    "('flip horizontally'), blur, sharpening, fading in/out, a text overlay "
+    "('flip horizontally'), HDR→SDR tone-mapping ('tone map this HDR video "
+    "to SDR', 'convert HDR to SDR', 'tonemap to Rec.709' — lands on 8-bit "
+    "Rec.709; a 10-bit 'main10' re-encode keeps the HDR), blur, sharpening, "
+    "fading in/out, a text overlay "
     "('add the text \"hello\"') and named FFmpeg filters ('use the loudnorm "
     "filter', 'apply eq=contrast=1.2', or a full filtergraph: 'use the "
     "graph [0:v]split=2[a][b]'); audio keep/remove, resampling ('resample "
@@ -345,6 +349,33 @@ def _detect_stabilize(t: str) -> tuple[StabilizeOp | None, tuple[int, int] | Non
     if m is None:
         return None, None
     return StabilizeOp(), (m.start(), m.end())
+
+
+# ---------------------------------------------------------------- tone-map (M12.HDR)
+
+_TONEMAP_RX = re.compile(
+    r"\btone[\s-]?map\w*\b"
+    r"|\btonemap\w*\b"
+    r"|\bhdr\d*\b[^.;]{0,60}?\bsdr\b"
+    r"|\bsdr\b[^.;]{0,60}?\bhdr\d*\b"
+    r"|\bhdr\d*\b[^.;]{0,60}?\brec[\s.-]?709\b"
+    r"|\brec[\s.-]?709\b[^.;]{0,60}?\bhdr\d*\b",
+    re.I,
+)
+
+
+def _detect_tonemap(t: str) -> tuple[ToneMapOp | None, tuple[int, int] | None]:
+    """'tone map this HDR video to SDR' / 'convert HDR to SDR' /
+    'tonemap to Rec.709' / 'make this HDR10 video SDR' -> ToneMapOp
+    (M12.HDR; the planner builds the fixed tonemap chain and lands the
+    output on 8-bit SDR). Returns (op, span) — the span is masked out in
+    parse() so 'HDR'/'SDR'/'tonemap' never re-read as a filter expression
+    (the bare 'tonemap' name is a registry filter — routing it here builds
+    the full chain, which a bare FilterOp('tonemap') could not run)."""
+    m = _TONEMAP_RX.search(t)
+    if m is None:
+        return None, None
+    return ToneMapOp(), (m.start(), m.end())
 
 
 # ---------------------------------------------------------------- speed
@@ -1378,14 +1409,22 @@ def _video_codec_option_defaults(t: str, opts: dict[str, str],
                              f"CRF {crf} ignored (set a video bitrate instead)")
     if encoder and "profile" not in opts and _detect_profile(t) is None:
         m = re.search(r"\bprofile\s+([a-z][a-z0-9_]*)\b", t, re.I)
+        name = None
         if m:
             name = m.group(1).lower()
-            if name not in ("baseline", "main", "high"):
-                spec = codec_option_specs(encoder).get("profile")
-                if spec and (spec.get("kind") != "choice"
-                             or name in spec.get("values", [])):
-                    opts["profile"] = name
-                    notes.append(f"encoder profile set to {name}")
+            if name in ("baseline", "main", "high"):
+                name = None  # the video_profile field owns these
+        elif re.search(r"\bmain[\s-]?10\b", t, re.I):
+            # M12.HDR: HEVC's 10-bit profile is named bare ('as HEVC
+            # main10'); the spec check below keeps it off encoders that
+            # have no main10 form.
+            name = "main10"
+        if name:
+            spec = codec_option_specs(encoder).get("profile")
+            if spec and (spec.get("kind") != "choice"
+                         or name in spec.get("values", [])):
+                opts["profile"] = name
+                notes.append(f"encoder profile set to {name}")
     return notes
 
 
@@ -1946,7 +1985,10 @@ UNSUPPORTED_PATTERNS: list[tuple[re.Pattern, str]] = [
     # stabilization is supported (M10.5, two-pass vidstab — the detector
     # runs in parse() and masks its span out of the unsupported scan)
     (re.compile(r"\bdenois\w*\b", re.I), "denoising"),
-    (re.compile(r"\bhdr\b|\btone[\s-]?map\w*\b", re.I), "HDR workflows"),
+    # HDR→SDR tone-mapping and 10-bit HDR passthrough are supported (M12 —
+    # the tonemap detector runs in parse()); the premium extensions stay out
+    (re.compile(r"\bdolby[\s-]?vision\b|\bhdr\s*10\s*(?:\+|plus)", re.I),
+     "HDR10+ / Dolby Vision"),
     # gpu/nvenc (M6) and qsv/quick sync (M8) are supported; the other
     # hardware-encoding stacks stay out
     (re.compile(r"\bcuda\b|\bvideotoolbox\b", re.I), "CUDA / VideoToolbox hardware acceleration"),
@@ -2144,6 +2186,14 @@ class RulesAdapter:
         if stab_span is not None:
             s0, s1 = stab_span
             t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
+        # M12.HDR: tone-mapping claims its trigger words up front (the
+        # planner builds the fixed tonemap chain for the op; masking keeps
+        # 'tonemap' from also reading as a bare named filter and 'HDR10'
+        # from reading as a pixel-format request)
+        tonemap, tm_span = _detect_tonemap(t_det)
+        if tm_span is not None:
+            s0, s1 = tm_span
+            t_det = t_det[:s0] + " " * (s1 - s0) + t_det[s1:]
         trim, trim_note, trim_clar = _resolve_trim(t_det, media.duration if media else None)
         crop, crop_clar, crop_frag, crop_spans = _detect_crop(t_det)
         resize, resize_clar = _detect_resize(t_det, exclude=crop_spans)
@@ -2335,11 +2385,12 @@ class RulesAdapter:
         if mode == "audio" and (audio == "remove" or resize is not None
                                 or crop is not None or rotate is not None
                                 or watermarks or grayscale
-                                or stabilize is not None
+                                or stabilize is not None or tonemap is not None
                                 or filtergraph or video_filters):
             mode_conflict = Clarification(
                 question=("an audio-only output cannot carry video edits "
-                          "(resize, crop, rotation, stabilization, effects) "
+                          "(resize, crop, rotation, stabilization, "
+                          "tone-mapping, effects) "
                           "or a removed audio track — did you mean a video "
                           "export with those audio settings, or a plain audio "
                           "extraction?"))
@@ -2347,7 +2398,7 @@ class RulesAdapter:
                                       or resize is not None or crop is not None
                                       or rotate is not None or watermarks
                                       or grayscale or speed is not None
-                                      or stabilize is not None
+                                      or stabilize is not None or tonemap is not None
                                       or audio_resample is not None
                                       or audio_replace is not None
                                       or filters or filtergraph):
@@ -2503,6 +2554,11 @@ class RulesAdapter:
                 # position is cosmetic — the planner builds the two-pass
                 # vidstab execution (detect pass + transform pass)
                 ops.append(stabilize)
+            if tonemap is not None:
+                # position is cosmetic — the planner splices the fixed
+                # tonemap chain (format=gbrpf32le,tonemap,format=yuv420p)
+                # into the video chain at this point
+                ops.append(tonemap)
             if audio_replace is not None:
                 ops.append(audio_replace)
             if audio_resample is not None:
@@ -2554,6 +2610,7 @@ class RulesAdapter:
             if trim is None and resize is None and crop is None and speed is None \
                     and rotate is None and audio_resample is None and not watermarks \
                     and combine is None and compare is None and stabilize is None \
+                    and tonemap is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
                     and audio != "remove" and audio_replace is None and subtitle is None \

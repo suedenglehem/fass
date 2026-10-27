@@ -574,11 +574,27 @@ class StabilizeOp(BaseModel):
     type: Literal["stabilize"] = "stabilize"
 
 
+class ToneMapOp(BaseModel):
+    """Tone-map HDR video (HDR10/PQ, HLG, BT.2020) down to SDR (BT.709, 8-bit).
+
+    The planner builds the fixed tone-mapping chain
+    (``format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p`` —
+    registry filter ``tonemap``) and lands the output on the codec's 8-bit
+    pixel format; the tone-mapping curve parameters are the filter's
+    built-in defaults (M12). The op is a video-chain edit (like grayscale):
+    it composes with resize/crop/rotate/speed/watermark/subtitles in
+    user-specified order, and it forces a video re-encode."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["tonemap"] = "tonemap"
+
+
 Operation = Annotated[
     Union[
         ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, SubtitleOp,
         CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp, CombinerOp,
-        CompareOp, StabilizeOp,
+        CompareOp, StabilizeOp, ToneMapOp,
     ],
     Field(discriminator="type"),
 ]
@@ -644,7 +660,7 @@ class EditPlan(BaseModel):
         # 1..N in that order.
         for op_type in ("audio_replace", "subtitles", "crop",
                         "speed", "rotate", "audio_resample", "combine",
-                        "compare", "stabilize"):
+                        "compare", "stabilize", "tonemap"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:
                 raise ValueError(f"the MVP supports at most one {op_type} operation")
         return self

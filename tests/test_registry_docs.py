@@ -1,4 +1,4 @@
-"""M11.2 §6.1 — registry 2.7.0 documentation fields.
+"""M11.2 §6.1 — registry 2.8.0 documentation fields.
 
 Every allowlisted filter entry carries, appended last:
 
@@ -6,7 +6,7 @@ Every allowlisted filter entry carries, appended last:
 - aliases:      reviewed natural-language phrases naming the filter
 - provenance:   {corpus_id, option_source, verified_builds, reviewed}
 
-plus registry_version == "2.7.0".  Shape checks run over the raw JSON;
+plus registry_version == "2.8.0".  Shape checks run over the raw JSON;
 the loader accessors (doc_ref / filter_aliases / doc_ref_map) are checked
 for consistency against the same data, not against hardcoded strings.
 """
@@ -30,12 +30,13 @@ def _entries():
 
 
 def test_registry_version():
-    assert REGISTRY["registry_version"] == "2.7.0"
+    assert REGISTRY["registry_version"] == "2.8.0"
 
 
 def test_all_entries_have_doc_fields():
     # 87 (2.5.0) + 3 (M11.3 diagnostic pilot) + 10 (M11.4 review merge)
-    assert len(FILTER_NAMES) == 100
+    # + 1 (M12.HDR tonemap)
+    assert len(FILTER_NAMES) == 101
     seen = set()
     for domain, name, spec in _entries():
         seen.add(name)
@@ -107,7 +108,7 @@ def test_filter_aliases_unknown_is_empty():
 def test_doc_ref_map_covers_all_filters():
     m = doc_ref_map()
     assert set(m) == FILTER_NAMES
-    assert len(m) == 100
+    assert len(m) == 101
     for name, ref in m.items():
         assert ref == doc_ref(name)
 
