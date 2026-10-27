@@ -28,6 +28,8 @@ EXAMPLES = [
     'fass "cut the first 5 seconds and send it to udp://127.0.0.1:5004" clip.mp4   # stream out',
     'fass "resize to 720p" rtmp://host:1935/live              # stream in',
     'fass "replace the audio" clip.mp4 --asset music=audio:song.mp3',
+    'fass "resize to 720p" --batch clips/            # batch: one instruction, every file',
+    'fass "resize to 720p" --batch a.mp4 b.mp4 --batch-out out/ --execute',
     "fass probe clip.mp4          # local media metadata",
     "fass env                     # local FFmpeg build capabilities",
 ]
@@ -119,8 +121,22 @@ def _generate_cli(argv: list[str]) -> int:
     p.add_argument("--preflight", action="store_true", help="check the local FFmpeg build")
     p.add_argument("--json", action="store_true", help="print the full JSON response")
     p.add_argument("--execute", action="store_true", help="DEV: run the generated command locally")
+    p.add_argument("--batch", nargs="+", metavar="FILE|DIR",
+                   help="M12: run the SAME instruction over a directory "
+                        "(its top-level video files) or an explicit file list, "
+                        "one file at a time; a failing file is reported and skipped")
+    p.add_argument("--batch-out", metavar="DIR",
+                   help="batch mode: write every file's output into DIR "
+                        "(default: each plan's own output name)")
     p.add_argument("--version", action="version", version=f"fass {__version__}")
     args = p.parse_args(argv)
+
+    if args.batch and args.instruction is None and len(args.batch) > 1:
+        # "fass --batch a.mp4 b.mp4 \"instruction\"": argparse's greedy
+        # nargs='+' swallows the trailing instruction, so the last token is
+        # the instruction and the rest are the targets. The instruction-first
+        # form below parses natively and is untouched.
+        args.instruction, args.batch = args.batch[-1], args.batch[:-1]
 
     if not args.instruction:
         p.print_help()
@@ -128,6 +144,9 @@ def _generate_cli(argv: list[str]) -> int:
         for e in EXAMPLES:
             print(f"  {e}")
         return 0
+
+    if args.batch:
+        return _batch_cli(args)
 
     assets = _build_assets(args)
     if "main" not in assets:
@@ -175,6 +194,60 @@ def _generate_cli(argv: list[str]) -> int:
                 return rc
         return 0
     return EXIT_CODES.get(resp.status, 1)
+
+
+def _batch_cli(args) -> int:
+    """Batch mode (M12): one instruction, many files — see fass/batch.py.
+
+    The pipeline runs once per file, sequentially, in sorted filename order;
+    a rejected or failing file is reported and skipped, the loop continues,
+    and the process exits 0 only when every file succeeded. Shared assets
+    (--watermark / --asset) apply to every file; -o, --previous and --metadata
+    each name ONE file, so batch mode rejects them instead of guessing."""
+    from fass import batch as bt
+
+    if args.input:
+        print("error: batch mode takes no positional input — the files come from --batch",
+              file=sys.stderr)
+        return 2
+    if args.output:
+        print("error: batch mode takes no -o (one output cannot serve many inputs); "
+              "each file uses its own output name, or pass --batch-out DIR",
+              file=sys.stderr)
+        return 2
+    if args.previous:
+        print("error: batch mode takes no --previous (a revision plan names one file)",
+              file=sys.stderr)
+        return 2
+    if args.metadata:
+        print("error: batch mode takes no --metadata (probe metadata names one file); "
+              "batch mode probes each file itself", file=sys.stderr)
+        return 2
+
+    files = bt.collect_files(args.batch)
+    if not files:
+        print("error: no input files — a directory target contributes only its "
+              "top-level video files", file=sys.stderr)
+        return 2
+
+    extras = _build_assets(args)
+    extras.pop("main", None)
+
+    def build_assets(path: str) -> dict:
+        assets = {"main": Asset(path=path, kind=guess_kind(path))}
+        assets.update(extras)
+        return assets
+
+    report = bt.run_batch(
+        args.instruction, files, build_assets,
+        output_dir=args.batch_out, adapter_name=args.adapter,
+        preflight_check=args.preflight, execute=args.execute,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        bt.print_report(report)
+    return report.exit_code
 
 
 def _subcommand(argv: list[str]) -> int:
