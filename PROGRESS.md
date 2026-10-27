@@ -217,12 +217,16 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   **Next (user-decision items only — the mandated M-series + RAG
   PRD work is fully done):** (1) 2.7.0 merge questions: histogram
   1-letter aliases (register or not), tinterlace docs-only `flags`,
-  blockdetect/blurdetect `planes` phrasing. (2) i7 fass-worker
-  container still runs pre-rebuild code (image is new, worker
-  process is not) — restart only when the user wants. (3) Minor
+  blockdetect/blurdetect `planes` phrasing. (2) Minor
   optional: gaps/ note on auto-adapter 401-no-fallback on tr4 (no
   ANTHROPIC_API_KEY → E2E must use `--adapter rules`); dispatcher
-  cc-worker result-format drift note. Context: PUSHED 2026-10-27
+  cc-worker result-format drift note. (3) Rebuild fass:latest from
+  current main — image cc5eda7 was built from 7866a93 (pre-M12), so
+  the i7 deployment does not run batch/watermarks/tonemap yet.
+  (DONE 2026-10-27, user-requested: i7 fass-worker RECREATED from
+  the current fass:latest cc5eda7/2.7.0 — it sat on 58b9eba7/2.2.0
+  from 10-25; `docker compose up -d --force-recreate fass-worker`;
+  healthz verified fass→worker:8001 = {"ok":true}.) Context: PUSHED 2026-10-27
   (user's explicit "push it") — origin/main = 237d554 (844943c..
   237d554, 6 commits fast-forward: b8ed8ff, ea9919e, 9967441,
   8c2e11a, 6bca1a3, 237d554); i7 mirror ff-merged from origin
@@ -470,7 +474,7 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 | working tree | clean except untracked `.resume` (per-machine — leave alone), `drafts/` + `gaps/` (working dirs — keep untracked), and 3 stray `media/` files (Beauty_...HEVC_RAW.hevc, src01_hrc00/01_576x324.yuv — NOT from our work, leave untracked/uncommitted); RAG corpus data under rag/corpus/* is gitignored (rebuilt by rag/tools/build_corpus.sh, recipe rag/corpus/BUILD-RECIPE.md); rag/benchmark/results.json gitignored |
 | test baseline | **1278 passed / 1 skipped** (146 s, tr4 host 6.1.1, 2026-10-27, post-M12.HDR) — includes 25 M10.7 webinfo tests, the RAG benchmark gate run (skipif-guarded on the gitignored corpus), 18 rag/author tests, 2 gaps drift regression tests, 13 held-out shape tests, +24 M12.WM multi-watermark tests, M12.BATCH tests, 24 M12.HDR tonemap tests (tests/test_tonemap.py) |
 | local machine | **session machine = tr4 (b760one)**; `/dd2/andrei/fass`, host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3, `media/titan.mp4` (20 s test clip). vLLM: tr4-primary 127.0.0.1:8091 (qwen3.8-27b — the ablation endpoint, healthy) + tr4-secondary 127.0.0.1:8080 (swift-1.5-iq3_xxs — weak); fass-rag service live on 127.0.0.1:8100 (pid **1918855** — restarted 2026-10-27 00:4x after the ablation finished; old pid 959120 killed by exact pid) |
-| i7 (192.168.0.33) | `ssh i7`; repo mirror at the SAME path `/dd2/andrei/fass` (HEAD **5354cc7** per the M10.0 push; not re-probed this session; true git mirror, github remote); host ffmpeg **6.1.1-3ubuntu5**; `.venv` present (pytest 9.1.1); docker deployment: containers **fass** + **fass-worker** (image `fass:latest`, FFmpeg **9.0.1**). was **OFFLINE 2026-10-26** (no route to host; dispatcher backend offline) — i7's role (docker 9.0.1 E2E) temporarily taken over by tr4 rebuilding the same Dockerfile; **vLLM backend back ONLINE 2026-10-27** (192.168.0.33:8080, qwen3.8-27b, 230k ctx, per dispatcher health) |
+| i7 (192.168.0.33) | `ssh i7`; repo mirror at the SAME path `/dd2/andrei/fass` (HEAD **5354cc7** per the M10.0 push; not re-probed this session; true git mirror, github remote); host ffmpeg **6.1.1-3ubuntu5**; `.venv` present (pytest 9.1.1); docker deployment: containers **fass** + **fass-worker** (image `fass:latest` = cc5eda7/registry 2.7.0, built from 7866a93 pre-M12; FFmpeg **9.0.1** — worker recreated onto the current image 2026-10-27 on user request, healthz ok from the fass container). was **OFFLINE 2026-10-26** (no route to host; dispatcher backend offline) — i7's role (docker 9.0.1 E2E) temporarily taken over by tr4 rebuilding the same Dockerfile; **vLLM backend back ONLINE 2026-10-27** (192.168.0.33:8080, qwen3.8-27b, 230k ctx, per dispatcher health) |
 | tr4 (192.168.0.30) | `ssh tr4`; hostname **b760one**; repo mirror at the SAME path `/dd2/andrei/fass`, HEAD **5354cc7** (synced from i7 2026-10-25; suite **683 passed / 86 s**), host ffmpeg **6.1.1-3ubuntu5**, `.venv` Python 3.12.3; docker runs **vllm-qwen38-27b-dual-max** + **facecat-db** (no fass containers); 3 GPUs (3090, 3080 Ti, 3090); **ONLINE 2026-10-26 → now the SESSION MACHINE (2026-10-27)** — local main at **6bca1a3** + M12 close-out commit (M11 arc synced from origin at 4ff3393 earlier, pushed as c949b9e); suite **1278/1** verified here 2026-10-27 (post-M12.HDR, 146 s); docker/ untouched (canonical tracked compose; rag overlay docker/compose.rag.yaml, profiles ["rag"]); docker runs vllm-qwen38-27b-dual-max (:8080/:8091) + facecat-db — do NOT touch; fass-rag :8100 (pid 1918855); ablation COMPLETE 880/880 (results at /dd2/andrei/ablation-run1/; /tmp copy may be gone post-reboot) |
 
 Milestone history (all committed): M1 CLI+5 ops (162 tests) → M2 FastAPI web
