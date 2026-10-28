@@ -5,4 +5,4 @@ Small compiler with an LLM at the front:
                 -> deterministic planner/builder -> argv list -> POSIX render
 """
 
-__version__ = "1.137036"
+from fass.version import __version__

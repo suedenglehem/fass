@@ -35,6 +35,7 @@ def _clear_rag_env(monkeypatch):
 def test_defaults():
     cfg = FassConfig()
     assert cfg.llm.provider == "anthropic"
+    assert cfg.llm.timeout == 10
     assert cfg.streaming.enabled is False
     assert cfg.streaming.host_address == DEFAULT_HOST_ADDRESS
     assert cfg.gpu.enabled is False
@@ -81,6 +82,57 @@ def test_unknown_field_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("FASS_CONFIG", str(p))
     # extra=forbid on the whole tree: a stray key is a validation error,
     # and the loader degrades to defaults (the UI is the place to fix it)
+    assert load_config() == FassConfig()
+
+
+# ------------------------------------------------ llm connection timeout
+
+
+def test_llm_timeout_default():
+    assert LLMConfig().timeout == 10
+    assert FassConfig().llm.timeout == 10
+
+
+def test_llm_timeout_bounds():
+    assert LLMConfig(timeout=1).timeout == 1
+    assert LLMConfig(timeout=300).timeout == 300
+    with pytest.raises(ValueError):
+        LLMConfig(timeout=0)
+    with pytest.raises(ValueError):
+        LLMConfig(timeout=301)
+
+
+def test_llm_timeout_roundtrip(tmp_path, monkeypatch):
+    p = tmp_path / "config.json"
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    cfg = FassConfig(llm=LLMConfig(provider="openai", host="172.17.0.1",
+                                   port=8080, model="m", timeout=42))
+    save_config(cfg)
+    assert json.loads(p.read_text())["llm"]["timeout"] == 42
+    assert load_config() == cfg
+    assert load_config().llm.timeout == 42
+
+
+def test_llm_timeout_absent_in_an_older_config(tmp_path, monkeypatch):
+    # a config.json seeded before the timeout existed keeps loading, and the
+    # field takes its default (10 s)
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"llm": {"provider": "openai", "host": "172.17.0.1",
+                                     "port": 8080, "api_key": "", "model": "m"}}),
+                 encoding="utf-8")
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    cfg = load_config()
+    assert cfg.llm.host == "172.17.0.1"
+    assert cfg.llm.timeout == 10
+
+
+def test_llm_timeout_out_of_range_falls_back(tmp_path, monkeypatch):
+    # a hand-edited config with an impossible timeout is a validation error:
+    # the loader degrades to defaults (same rule as any other bad field)
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"llm": {"provider": "openai", "timeout": 999}}),
+                 encoding="utf-8")
+    monkeypatch.setenv("FASS_CONFIG", str(p))
     assert load_config() == FassConfig()
 
 

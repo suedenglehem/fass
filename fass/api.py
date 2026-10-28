@@ -106,10 +106,14 @@ class CommandRequest(BaseModel):
                     "resolves to a previous run's result in the output folder "
                     "($FASS_OUTPUT_DIR / /output); "
                     "must include 'main' (the input video). For a quality comparison "
-                    "(vmaf/psnr/ssim), 'main' is the DISTORTED clip and the reference "
-                    "is another video asset (the web UI does this remap automatically: "
-                    "reference in the Input field, distorted in the Output field, or "
-                    "as the first additional input when Output is empty)"
+                    "(vmaf/psnr/ssim), 'main' is the REFERENCE (the source in the "
+                    "input folder) and the DISTORTED clip is auto-detected in the "
+                    "output folder (same basename as main, else the only video, "
+                    "else the newest top-level video); bind an asset named "
+                    "'distorted' to name the distorted file explicitly, or bind a "
+                    "second video asset as the reference for the classic flow "
+                    "(then 'main' is the distorted clip; the web UI binds "
+                    "'distorted' from its Output field)"
     )
     output_filename: str | None = Field(
         default=None, max_length=1024,
@@ -170,6 +174,14 @@ class RunRequest(BaseModel):
         default=None,
         description="expert override of the rendered command — shlex-split "
                     "server-side, still validated by start_run",
+    )
+    serve_http: bool = Field(
+        default=False,
+        description="the output is destined for the fass-http sidecar "
+                    "(M13.6): a bare local playlist (hls/dash) is placed "
+                    "in the per-run stream dir {output}/http/<run-id>/ "
+                    "so its segments cannot collide with other runs — "
+                    "GET /v1/streams lists what the sidecar serves",
     )
 
     @model_validator(mode="after")
@@ -566,9 +578,11 @@ def create_app() -> FastAPI:
             adapter = LLMAdapter(
                 api_key=llm.api_key or None, model=llm.model or None,
                 provider="openai", host=llm.host or None, port=llm.port or None,
+                timeout=llm.timeout,
             )
         else:
-            adapter = LLMAdapter(api_key=llm.api_key or None, model=llm.model or None)
+            adapter = LLMAdapter(api_key=llm.api_key or None, model=llm.model or None,
+                                 timeout=llm.timeout)
         if not adapter.available():
             raise HTTPException(
                 422,
@@ -605,7 +619,8 @@ def create_app() -> FastAPI:
                     body.steps, timeout=body.timeout, verbose=body.verbose)
             else:
                 run = execute.start_run(
-                    argv, timeout=body.timeout, verbose=body.verbose)
+                    argv, timeout=body.timeout, verbose=body.verbose,
+                    serve_http=body.serve_http)
         except PermissionError as e:
             raise HTTPException(403, str(e))
         except ValueError as e:
@@ -726,6 +741,42 @@ def create_app() -> FastAPI:
             return {"dir": dir, "exists": False, "files": []}
         files.sort(key=lambda f: f["mtime"], reverse=True)
         return {"dir": dir, "exists": True, "files": files}
+
+    @app.get("/v1/streams")
+    def streams_list():
+        """The http-served stream tree (M13.6): every .m3u8 (kind 'hls')
+        and .mpd (kind 'dash') playlist under the output volume's http/
+        subdir, recursive, newest first — the per-run dirs the http-
+        destined runs write into (execute.http_serve_dir). path is
+        relative to the output volume (http/<run-id>/x.m3u8) and url is
+        the configured streaming.http_base_url prefixed to it — the
+        fass-http sidecar mounts the WHOLE output volume at its htdocs
+        root, so the URL is served as-is. An unmounted output volume
+        answers an empty list (like /v1/files)."""
+        out_dir = execute._output_dir()
+        base = load_config().streaming.http_base_url
+        entries: list[tuple[float, Path]] = []
+        root = Path(out_dir) / "http" if out_dir else None
+        if root is not None and root.is_dir():
+            for p in root.rglob("*"):
+                if not p.is_file() or p.suffix.lower() not in (".m3u8", ".mpd"):
+                    continue
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                entries.append((st.st_mtime, p))
+        entries.sort(key=lambda e: e[0], reverse=True)
+        streams: list[dict] = []
+        for _, p in entries:
+            rel = p.relative_to(Path(out_dir)).as_posix()
+            streams.append({
+                "name": p.name,
+                "kind": "hls" if p.suffix.lower() == ".m3u8" else "dash",
+                "path": rel,
+                "url": f"{base.rstrip('/')}/{rel}" if base else None,
+            })
+        return {"streams": streams, "http_base_url": base}
 
     @app.get("/v1/files/inspect")
     def files_inspect(dir: str = "input", file: str = "", tool: str = "ffprobe"):

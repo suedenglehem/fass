@@ -1,8 +1,17 @@
-"""M10.4 — quality comparison: psnr/ssim/libvmaf against a reference input.
+"""M10.4 / M14 — quality comparison: psnr/ssim/libvmaf between a reference
+and a distorted clip.
+
+Convention (the user decision of 2026-10-28): the MAIN asset is the
+REFERENCE (the source in the input folder) and the DISTORTED clip is the
+transcoded file in the output folder, auto-detected (same basename as
+main, else the only video, else the newest top-level video); an asset
+bound as 'distorted' names it explicitly. The M10.4 explicit-reference
+flow stays: a second video asset bound as the reference makes the main
+input the distorted clip.
 
 A comparison is a standalone diagnostic analysis in the Netflix vmaf
 documentation's command order: the reference clip is the FIRST input
-('-i reference -i distorted'), the main (distorted) input the second, the
+('-i reference -i distorted'), the distorted clip the second, the
 metric's pads take [distorted][reference], and the score lands in the run
 log — nothing is written to a file (the plan runs against the null muxer,
 M10.2 pattern). 'setpts=PTS-STARTPTS' re-bases each pad's timeline only
@@ -25,6 +34,7 @@ Layers, cheapest first:
 
 from __future__ import annotations
 
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -51,6 +61,7 @@ from fass.schema import (
     SubtitleOp,
     TrimSpec,
     WatermarkOp,
+    guess_kind,
 )
 
 from tests.conftest import make_media
@@ -536,6 +547,183 @@ def test_comparison_revision_replaces_the_previous_metric():
 
 def test_supported_summary_mentions_comparisons():
     assert "quality difference" in SUPPORTED_SUMMARY
+
+
+# ------------------------------------------- M14 flip: reference = main,
+# ------------------------------------------- distorted = the output folder
+
+def _out_volume(tmp_path, monkeypatch, *names):
+    """A fake output volume: top-level files with increasing mtimes (the
+    last name is the newest)."""
+    monkeypatch.setenv("FASS_OUTPUT_DIR", str(tmp_path))
+    for i, name in enumerate(names):
+        p = tmp_path / name
+        p.write_text("x", encoding="utf-8")
+        os.utime(p, (1000 + i, 1000 + i))
+    return tmp_path
+
+
+def _main_assets(main="titan.mp4", **named):
+    out = {"main": Asset(path=main, kind=AssetKind.VIDEO)}
+    for aid, path in named.items():
+        out[aid] = Asset(path=path, kind=guess_kind(path))
+    return out
+
+
+def _cmp_op(r):
+    comps = [o for o in r.plan.operations if o.type == "compare"]
+    assert len(comps) == 1, r.plan.operations
+    return comps[0]
+
+
+def test_auto_detect_prefers_the_same_basename(tmp_path, monkeypatch):
+    # 'other.mp4' is newer, but 'titan.mkv' shares the main input's
+    # basename — the transcoded clip keeps its name, so it wins
+    out = _out_volume(tmp_path, monkeypatch, "titan.mkv", "other.mp4",
+                      "notes.txt")
+    assets = _main_assets()
+    r = _parse("compute vmaf score", assets)
+    assert r.status == "ready", (r.status, r.clarifications, r.unsupported)
+    op = _cmp_op(r)
+    assert op.metric == "libvmaf"
+    assert op.reference == "main"
+    assert op.distorted == "distorted"
+    assert assets["distorted"].path == str(out / "titan.mkv")
+
+
+def test_auto_detect_takes_the_single_video_file(tmp_path, monkeypatch):
+    out = _out_volume(tmp_path, monkeypatch, "transcoded.webm", "run.log")
+    assets = _main_assets()
+    r = _parse("compute the psnr of the transcoded clip", assets)
+    assert r.status == "ready", (r.status, r.clarifications, r.unsupported)
+    op = _cmp_op(r)
+    assert op.metric == "psnr"
+    assert op.reference == "main" and op.distorted == "distorted"
+    assert assets["distorted"].path == str(out / "transcoded.webm")
+
+
+def test_auto_detect_takes_the_newest_video(tmp_path, monkeypatch):
+    out = _out_volume(tmp_path, monkeypatch, "first.mp4", "second.mp4")
+    assets = _main_assets()
+    r = _parse("compute ssim score", assets)
+    assert r.status == "ready", (r.status, r.clarifications, r.unsupported)
+    assert _cmp_op(r).metric == "ssim"
+    assert assets["distorted"].path == str(out / "second.mp4")
+
+
+def test_auto_detect_does_not_scan_subdirectories(tmp_path, monkeypatch):
+    (tmp_path / "http").mkdir()
+    (tmp_path / "http" / "titan.mp4").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("FASS_OUTPUT_DIR", str(tmp_path))
+    r = _parse("compute vmaf score", _main_assets())
+    assert r.status == "needs_clarification"
+    assert "distorted" in r.clarifications[0].question
+
+
+def test_auto_detect_asks_for_the_distorted_clip(tmp_path, monkeypatch):
+    _out_volume(tmp_path, monkeypatch, "notes.txt")
+    r = _parse("compute vmaf score", _main_assets())
+    assert r.status == "needs_clarification"
+    q = r.clarifications[0].question
+    # the question asks for the DISTORTED file, never the reference
+    assert "distorted" in q and "compared against" in q
+    assert "--asset" in (r.clarifications[0].hint or "")
+
+
+def test_bound_distorted_asset_names_the_distorted_clip():
+    assets = _main_assets(distorted="/output/titan.mp4")
+    r = _parse("compute vmaf score", assets)
+    assert r.status == "ready", (r.status, r.clarifications, r.unsupported)
+    op = _cmp_op(r)
+    assert op.reference == "main" and op.distorted == "distorted"
+
+
+def test_bound_bare_distorted_name_is_pinned_to_the_output(tmp_path,
+                                                           monkeypatch):
+    # a bare name resolves against the INPUT folder first — the distorted
+    # clip must be pinned to the output folder so the same-basename file
+    # cannot collide with the reference
+    out = _out_volume(tmp_path, monkeypatch, "titan.mp4")
+    assets = _main_assets(distorted="titan.mp4")
+    r = _parse("compute vmaf score", assets)
+    assert r.status == "ready", (r.status, r.clarifications, r.unsupported)
+    assert assets["distorted"].path == str(out / "titan.mp4")
+
+
+def test_new_convention_argv_order(monkeypatch):
+    # main is the reference (input 0), the distorted asset is input 1
+    assets = _assets(distorted="/tmp/dist.mp4")
+    probes = _probes(**{"/tmp/dist.mp4": make_media(path="/tmp/dist.mp4")})
+    ep = _plan([CompareOp(metric="psnr", reference="main",
+                          distorted="distorted")],
+               monkeypatch, probes, assets=assets)
+    assert [i.path for i in ep.inputs] == ["/tmp/main.mp4", "/tmp/dist.mp4"]
+    assert ep.filter_complex == _fc_shape("psnr")
+    assert ep.maps == ["[cmp]"]
+    assert execute.validate_argv(build_argv(ep)) == []
+
+
+def test_new_convention_scales_the_distorted(monkeypatch):
+    # the distorted clip (1280x720) is scaled to the reference's size
+    assets = _assets(distorted="/tmp/dist.mp4")
+    probes = _probes(**{"/tmp/dist.mp4": make_media(
+        path="/tmp/dist.mp4", width=1280, height=720)})
+    ep = _plan([CompareOp(metric="psnr", reference="main",
+                          distorted="distorted")],
+               monkeypatch, probes, assets=assets)
+    assert ep.filter_complex == (
+        "[1:v]scale=1920:1080:flags=bicubic,setpts=PTS-STARTPTS[c1];"
+        "[0:v]setpts=PTS-STARTPTS[c0];[c1][c0]psnr[cmp]")
+    assert any("scaled to the reference's size" in w for w in ep.warnings)
+    assert execute.validate_argv(build_argv(ep)) == []
+
+
+def test_new_convention_distorted_must_be_bound(monkeypatch):
+    with pytest.raises(PlanError, match="distorted asset id"):
+        _plan([CompareOp(metric="psnr", reference="main",
+                         distorted="ghost")],
+              monkeypatch, _probes(),
+              assets=_assets(distorted="/tmp/dist.mp4"))
+
+
+def test_api_compute_vmaf_score_auto_detects(tmp_path, monkeypatch):
+    """Acceptance: 'compute vmaf score' with only the main asset returns
+    ready — no clarification — with the reference FIRST (Netflix order)."""
+    from fastapi.testclient import TestClient
+
+    from fass.api import app
+
+    inp, out = tmp_path / "in", tmp_path / "out"
+    inp.mkdir(), out.mkdir()
+    (inp / "titan.mp4").write_text("x", encoding="utf-8")
+    (out / "titan.mp4").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("FASS_INPUT_DIR", str(inp))
+    monkeypatch.setenv("FASS_OUTPUT_DIR", str(out))
+    monkeypatch.setattr("fass.pipeline.probe_media",
+                        lambda p, **kw: make_media(path=p))
+    monkeypatch.setattr("fass.pipeline.ffprobe_available", lambda: True)
+    monkeypatch.setattr("fass.pipeline.ffmpeg_available", lambda: False)
+    monkeypatch.setattr("fass.planner.planner.probe_media",
+                        lambda p, require_video=True: make_media(path=p))
+    monkeypatch.setattr("fass.planner.planner.probe_has_pts", lambda p: True)
+    r = TestClient(app).post("/v1/commands", json={
+        "instruction": "compute vmaf score",
+        "assets": {"main": "titan.mp4"},
+        "adapter": "rules",
+    })
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready", d
+    argv = d["arguments"]
+    assert argv[0] == "ffmpeg"
+    inputs = [argv[i + 1] for i, tok in enumerate(argv) if tok == "-i"]
+    # the reference (main) first, the distorted clip (output folder) second
+    assert inputs == ["titan.mp4", str(out / "titan.mp4")]
+    fc = argv[argv.index("-filter_complex") + 1]
+    assert "libvmaf" in fc and fc.endswith("[cmp]")
+    assert argv[argv.index("-map") + 1] == "[cmp]"
+    assert argv[-3:] == ["-f", "null", "-"]
+    assert execute.validate_argv(argv) == []
 
 
 # ------------------------------------------------------------------- media

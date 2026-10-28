@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 
+from fass.execute import _output_dir
 from fass.probe.ffprobe import MediaInfo
 from fass.planner.planner import _overlay_xy
 from fass.registry import (
@@ -39,6 +40,7 @@ from fass.registry import (
     sample_rates,
     speed_limits,
     stream_output_info,
+    stream_scheme,
     video_codec_option_keys,
     video_codecs_for,
     video_encoder_name,
@@ -70,6 +72,7 @@ from fass.schema import (
     UnsupportedPart,
     VariantSpec,
     WatermarkOp,
+    is_source_spec,
 )
 
 SUPPORTED_SUMMARY = (
@@ -92,8 +95,10 @@ SUPPORTED_SUMMARY = (
     "audio-only output ('extract the audio to mp3', 'make it a wav'); "
     "dumping the input's subtitles to a file ('dump the subtitles to vtt'); "
     "container conversion to any supported container (mp4, mov, mkv, webm, "
-    "mpeg-ts, flv, hls, dash, avi, mxf, vob, asf, 3gp, dv, gif, webp, mp3, mp2, "
-    "m4a, aac, ogg, flac, wav, aiff, mka, opus); video encoding (H.264, "
+    "mpeg-ts, flv, hls, dash, tee, avi, mxf, vob, asf, 3gp, dv, gif, webp, mp3, mp2, "
+    "m4a, aac, ogg, flac, wav, aiff, mka, opus); tee multi-output — one encode "
+    "writing HLS and DASH together ('hls and dash at the same time', 'both hls "
+    "and dash', 'tee to hls and dash'); video encoding (H.264, "
     "H.265, VP9, ProRes, MPEG-2, MPEG-4, MJPEG) at quality presets or a "
     "target bitrate (video: 'cbr 10 Mbps'; audio: 'mp2 128k'), pixel "
     "format, encoder profile (H.264 baseline/high, ProRes 422/4444) and "
@@ -866,9 +871,22 @@ _WORD_TO_VIDEO_CONTAINER = {
     "mov": "mov", "m4v": "mp4", "mp4": "mp4", "dv": "dv",
 }
 
+# M13.5: the tee muxer writes several outputs from ONE encode. Naming both
+# segmented containers joined by 'and' (in either order, with the usual
+# 'both' / 'at the same time' / 'tee to' phrasings) selects tee with hls +
+# dash branches — the same-encode multi-output model (2026-10-27 decision:
+# muxer-level multi-output, as channelsplit was resolved).
+_TEE_PAIR_RX = re.compile(
+    r"(?<![\w./-])hls\b[^.!?\n]{0,40}?(?:\band\b|\bplus\b|&|,)[^.!?\n]{0,40}?(?<![\w./-])dash\b"
+    r"|(?<![\w./-])dash\b[^.!?\n]{0,40}?(?:\band\b|\bplus\b|&|,)[^.!?\n]{0,40}?(?<![\w./-])hls\b",
+    re.I,
+)
+
 
 def _detect_container(t: str) -> tuple[str | None, str | None]:
     """Return (container, unsupported_fragment) — video-capable containers."""
+    if _TEE_PAIR_RX.search(t):
+        return "tee", None
     m = _VIDEO_CONTAINER_RX.search(t)
     if not m:
         return None, None
@@ -1321,13 +1339,16 @@ def _detect_format_options(t: str, container: str | None) -> dict[str, str]:
             out[key] = value
     if "movflags" in specs and re.search(r"\bfast\s?start\b", t, re.I):
         out["movflags"] = "faststart"
-    if container == "hls" and "hls_time" in specs:
+    # tee (M13.5) shares the HLS branch's options: the live/window/segment
+    # phrasings below apply to it too (the planner routes them into the
+    # [f=hls] branch of the bracket template)
+    if container in ("hls", "tee") and "hls_time" in specs:
         m = re.search(
             r"\b(\d+)\s*second(?:s)?\s+(?:of\s+)?segments?\b"
             r"|\bsegments?\s+(?:of\s+)?(\d+)\b", t, re.I)
         if m:
             out["hls_time"] = m.group(1) or m.group(2)
-    if container == "hls":
+    if container in ("hls", "tee"):
         # live HLS (M13.2): a rolling event playlist — explicit phrasing
         # only, never the default (the default stays a full vod list)
         live = re.search(r"\blive\b[^\n.!?]{0,24}\bhls\b", t, re.I)
@@ -2065,13 +2086,20 @@ def _detect_combiner(t: str, assets: dict):
 
 # ------------------------------------------------- comparison (M10.4)
 
-# A quality comparison measures the difference between the main input and a
-# reference input with one of the registry 'needs_reference' metrics
+# A quality comparison measures the difference between a reference clip
+# and a distorted clip with one of the registry 'needs_reference' metrics
 # (psnr, ssim, libvmaf). Triggers: the compare/comparison verb, a quality-
 # loss phrasing (jargon: 'quality loss' means psnr/ssim), or a bare metric
-# word (naming the metric implies the analysis). The reference is the bound
-# (or the sole other eligible) media file; the claimed spans are blanked
-# length-preservingly like the combiner's.
+# word (naming the metric implies the analysis). The claimed spans are
+# blanked length-preservingly like the combiner's.
+#
+# Convention (the user decision of 2026-10-28): the main asset is the
+# REFERENCE — the source in the input folder — and the DISTORTED clip is
+# the transcoded file in the output folder, auto-detected (an asset bound
+# as 'distorted' names it directly). 'compute vmaf score' with only the
+# main asset must produce a plan, not a question about the reference.
+# The M10.4 explicit-reference flow stays for users who bind a second
+# video asset as the reference: main = distorted, reference = that asset.
 _COMPARE_RX = re.compile(
     r"\bcompare(?:d|s)?\b|\bcompar(?:ison|ing|e)\b"
     r"|\bquality\s+(?:loss|difference|degradation|drop|impact)\b", re.I)
@@ -2079,9 +2107,82 @@ _PSNR_RX = re.compile(r"\bpsnr\b", re.I)
 _SSIM_RX = re.compile(r"\bssim\b", re.I)
 _VMAF_RX = re.compile(r"\blib-?vmaf\b|\bvmaf\b", re.I)
 
+# the asset id the adapter injects (and the web UI binds) for the
+# distorted clip of the new-convention comparison
+_DISTORTED_ID = "distorted"
+
+# video container extensions from the registry matrix — the files a
+# transcode run leaves in the output folder. Stream manifests (hls/dash)
+# and the image-sequence 'containers' are not video clips; logs,
+# playlists and side-files are not matched by extension at all.
+_DISTORTED_EXTS = frozenset(
+    ext
+    for name, row in REGISTRY["matrix"].items()
+    if row.get("video") and name not in ("hls", "dash", "rtsp", "srt",
+                                          "gif", "webp")
+    for ext in REGISTRY["containers"][name]["extensions"]
+)
+
+
+def _detect_distorted(main_path: str) -> str | None:
+    """Find the distorted clip of a quality comparison in the deployment's
+    output folder ($FASS_OUTPUT_DIR / /output — the same resolution the
+    runner uses). Top-level regular files only (subdirectories like the
+    HLS 'http/' tree are not scanned); a video file whose basename
+    matches the main input's wins (the transcoded clip keeps its name),
+    else a single video file, else the most recently modified. Returns
+    the absolute path (unambiguous for the runner's bare-name resolution
+    — a same-basename file must not resolve back into the input folder),
+    or None when the folder is absent/unreadable or holds no video."""
+    out_dir = _output_dir()
+    if not out_dir:
+        return None
+    try:
+        videos = [e for e in os.scandir(out_dir)
+                  if e.is_file()
+                  and os.path.splitext(e.name)[1].lstrip(".").lower()
+                  in _DISTORTED_EXTS]
+    except OSError:
+        return None
+    if not videos:
+        return None
+    main_base = os.path.splitext(os.path.basename(main_path))[0].lower()
+    same = [e for e in videos
+            if os.path.splitext(e.name)[0].lower() == main_base]
+    chosen = max(same or videos, key=lambda e: e.stat().st_mtime)
+    return os.path.join(out_dir, chosen.name)
+
+
+def _compare_op(metric: str, assets: dict, t: str,
+                spans: list[tuple[int, int]],
+                notes: list[str]) -> CompareOp:
+    """Build the new-convention comparison: the main asset is the
+    reference (input 0), the distorted clip is the bound asset (input 1).
+    A bare distorted name is pinned to the output folder — the runner
+    resolves bare names against the input folder first, and the
+    transcoded clip usually carries the main input's basename."""
+    a = assets[_DISTORTED_ID]
+    if ("/" not in a.path and stream_scheme(a.path) is None
+            and not is_source_spec(a.path)):
+        out_dir = _output_dir()
+        cand = os.path.join(out_dir, a.path) if out_dir else ""
+        if cand and os.path.exists(cand):
+            a = Asset(path=cand, kind=a.kind)
+            assets[_DISTORTED_ID] = a
+    base = os.path.basename(a.path)
+    bm = re.search(re.escape(base), t, re.I)
+    if bm and not any(x <= bm.start() < y for x, y in spans):
+        spans.append(bm.span())
+    notes.append(
+        f"'{base}' from the output folder is the distorted clip; the main "
+        "input is the reference")
+    return CompareOp(metric=metric, reference="main",
+                     distorted=_DISTORTED_ID)
+
 
 def _detect_compare(t: str, assets: dict):
-    """M10.4: a quality comparison against a reference input.
+    """M10.4 / M14: a quality comparison between the reference (the main
+    asset) and the distorted clip (the output folder).
     Returns (CompareOp|None, clarification|None, note|None, spans,
     unsupported_fragment|None)."""
     main_id = "main"
@@ -2111,6 +2212,12 @@ def _detect_compare(t: str, assets: dict):
         return None, Clarification(
             question=("which quality metric — PSNR (signal-to-noise ratio) "
                       "or SSIM (structural similarity)?")), None, spans, None
+    # the new convention with an explicitly bound distorted clip (the web
+    # UI's Output field, or an API asset named 'distorted')
+    dist = assets.get(_DISTORTED_ID)
+    if dist is not None and dist.kind in _VIDEO_KINDS:
+        op = _compare_op(metric, assets, t, spans, notes)
+        return op, None, "; ".join(notes) or None, spans, None
     aid, note = _bind_combiner_input(t, assets, main_id, _VIDEO_KINDS)
     if note:
         notes.append(note)
@@ -2126,13 +2233,28 @@ def _detect_compare(t: str, assets: dict):
                     f"comparing with '{base}' — it is an "
                     f"{others[0].kind.value} file and the comparison metric "
                     "needs video from both inputs")
-        q = ("which file is the reference for the comparison?" if cands
-             else "which file should the main input be compared against?")
+            # no second asset at all: the main input is the reference and
+            # the distorted clip is auto-detected in the output folder
+            main_asset = assets.get(main_id)
+            found = _detect_distorted(
+                main_asset.path if main_asset is not None else "")
+            if found is not None:
+                assets[_DISTORTED_ID] = Asset(
+                    path=found, kind=AssetKind.VIDEO)
+                op = _compare_op(metric, assets, t, spans, notes)
+                return op, None, "; ".join(notes) or None, spans, None
+            q = ("which file should the main input be compared against? "
+                 "The main input is the reference — name the distorted "
+                 "clip (a file from the output folder).")
+            return (None, Clarification(
+                question=q,
+                hint=("the output folder holds no video file to compare "
+                      "against — transcode the clip first, or bind the "
+                      "distorted file (e.g. --asset distorted=out.mp4) and "
+                      "refer to it in the request")),
+                None, spans, None)
         return (None, Clarification(
-            question=q, hint=(
-                None if cands else
-                "bind another file (e.g. --asset ref=ref.mp4) and refer to "
-                "it in the request")),
+            question="which file is the reference for the comparison?"),
             None, spans, None)
     base = os.path.basename(assets[aid].path)
     bm = re.search(re.escape(base), t, re.I)
@@ -2869,7 +2991,8 @@ class RulesAdapter:
                 ops.append(combine)
             if compare is not None:
                 # position is cosmetic — the planner builds the comparison
-                # graph (reference as pad 1, metric against the null muxer)
+                # graph (reference as input 0, distorted as input 1, the
+                # metric against the null muxer)
                 ops.append(compare)
             if stabilize is not None:
                 # position is cosmetic — the planner builds the two-pass

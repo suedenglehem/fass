@@ -36,6 +36,7 @@ def test_get_config_defaults(cfg_env):
     assert r.status_code == 200
     d = r.json()
     assert d["config"]["llm"]["provider"] == "anthropic"
+    assert d["config"]["llm"]["timeout"] == 10
     assert d["config"]["streaming"]["enabled"] is False
     assert "compose" in d
     assert d["docker"]["manage"] is False
@@ -109,6 +110,46 @@ def test_llm_test_unconfigured(cfg_env):
         "llm": {"provider": "openai", "host": "", "port": 8080,
                 "model": "m"}})
     assert r.status_code == 422
+
+
+def test_put_config_llm_timeout_survives(cfg_env):
+    # the Config tab owns the timeout: PUT persists it, a fresh GET reads it back
+    body = {"llm": {"provider": "openai", "host": "172.17.0.1", "port": 8080,
+                    "model": "m", "timeout": 25}}
+    r = client.put("/v1/config", json=body)
+    assert r.status_code == 200
+    assert r.json()["config"]["llm"]["timeout"] == 25
+    assert client.get("/v1/config").json()["config"]["llm"]["timeout"] == 25
+
+
+def test_put_config_llm_timeout_bounds(cfg_env):
+    assert client.put("/v1/config", json={
+        "llm": {"provider": "openai", "timeout": 0}}).status_code == 422
+    assert client.put("/v1/config", json={
+        "llm": {"provider": "openai", "timeout": 301}}).status_code == 422
+
+
+def test_llm_test_applies_the_timeout_and_reports_a_hang_cleanly(cfg_env, monkeypatch):
+    # the test button runs the request under the configured budget, and a
+    # timed-out endpoint comes back as a readable 400 (no bare hang)
+    import socket
+
+    from fass.nlu import llm as llm_mod
+
+    seen = []
+
+    def fake(req, timeout=None):
+        seen.append(timeout)
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    r = client.post("/v1/config/llm-test", json={
+        "use_unsaved": True,
+        "llm": {"provider": "openai", "host": "127.0.0.1", "port": 8080,
+                "model": "m", "timeout": 2}})
+    assert seen == [2]
+    assert r.status_code == 400
+    assert "unreachable" in r.json()["detail"]
 
 
 # ------------------------------------------------------------- runs

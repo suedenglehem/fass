@@ -30,7 +30,9 @@ environment-based, see [Execution](#execution).
 From the repo root:
 
 ```sh
-./docker/install.sh            # asks for the input/output/log/config folders
+./docker/install.sh            # asks for the input/output/log/config folders,
+                               # the LLM endpoint (+ API key, timeout), and
+                               # the http stream port
 ./docker/install.sh --yes      # defaults: <repo>/media/{input,output,log},
                                # <repo>/docker-data/config
 ```
@@ -38,7 +40,10 @@ From the repo root:
 The script creates the folders, records them in **`docker/.env`** (compose
 interpolates `${FASS_INPUT_DIR}` etc.; defaults are repo-relative) and in
 the **`config.json` volumes section** (the Config tab's store), then builds
-and starts the stack. The LLM model is NOT asked — set it in the Config tab.
+and starts the stack. It also writes `FASS_HTTP_PORT` (the fass-http
+sidecar's host port, default `8080` — see
+[HTTP streams](#http-streams-m136)) and creates `<output>/http`.
+The LLM model is NOT asked — set it in the Config tab.
 
 After install the **Config tab owns the paths**: Apply re-creates the
 container from `config.json`, and `launcher.sh` re-syncs `docker/.env` from
@@ -80,6 +85,10 @@ Config tab afterwards.
 
 `GET/PUT /v1/config` behind the UI. Four sections:
 
+The bottom of the tab prints the deployment's identity: the container's
+ffmpeg build line (first line of `ffmpeg -version`, lib* versions
+stripped) above the fass version string.
+
 ### Volumes
 
 Host folders for `/input`, `/output`, `/log`. This is documentation + the
@@ -103,6 +112,12 @@ automatically (the UI paths stay simple).
   port, proto (tcp/udp). These must be mirrored in the compose file's
   `ports:` list (see the commented examples in `docker/compose.yaml`); the
   compose preview under the tab shows the exact lines to paste.
+- **http base URL** — the base of the fass-http sidecar's stream URLs
+  (`http://<host>:<port>`, seeded by install.sh from the host address and
+  `FASS_HTTP_PORT`). `GET /v1/streams` builds each playlist's URL as
+  `<base>/http/<path>`. Changing the URL is config-only (reloaded per
+  request); changing the port itself means editing `docker/.env` + a
+  compose up.
 
 **Receiving a stream** (camera → fass): map e.g. `5000:5000/udp`; the camera
 pushes to `<host-ip>:5000`; the instruction can say "from the stream on
@@ -134,6 +149,11 @@ always available as fallback and needs nothing):
   endpoint (strata, vLLM, llama.cpp, …): **host, port, api key, model id**.
   From inside the container, a host-side server is reached through the
   bridge gateway: host `172.17.0.1`.
+- **timeout** — the LLM connection timeout in seconds (default `10`,
+  range `1..300`): a hung provider fails the generation with
+  `LLM provider unreachable: timed out` instead of blocking it.
+  `docker/install.sh` asks for it (`--timeout`); the Config tab has the
+  field.
 
   **strata on the host (the test setup):** provider `openai`, host
   `172.17.0.1`, port `8080`, api key *empty*, model `qwen3.8-27b`. Thinking models are handled: if the model exhausts
@@ -237,6 +257,86 @@ is retired) and the fass service is wired to it via `FASS_RAG_ENABLED=1` +
   (socket mount, `FASS_DOCKER_MANAGE=1`, GPU pin). Merge the `fass-rag`
   service block and the two `FASS_RAG_*` env lines into it **by hand** —
   never overwrite the file from the repo.
+
+## Tee multi-output (M13.5)
+
+`hls and dash at the same time` (also `both hls and dash`, `tee to hls
+and dash`, either order) selects the **tee** muxer: ONE encode writing
+both segmented outputs in a single command. The destination is FFmpeg's
+bracket template —
+
+```
+-f tee [f=hls]stream.m3u8|[f=dash]stream.mpd
+```
+
+— each branch carries its muxer and options INSIDE the brackets
+(colon-separated: `[f=hls:hls_list_size=10:hls_playlist_type=event]…`),
+never as separate `-key value` flags. The live/window/segment phrasings
+route into the hls branch, the `dash_*` options into the dash branch;
+the tee muxer accepts what its branches accept (registry group union
+`tee = hls + dash + tee`). A tee run is not http-served — the
+destination is a template, not one playlist (see
+[HTTP streams](#http-streams-m136)).
+
+## Quality metrics (VMAF / PSNR / SSIM)
+
+The comparison convention: the **reference** is the source — the main
+asset, a file in the input folder — and the **distorted** clip is the
+transcoded file in the output folder. `compute vmaf score` with only
+the main asset generates the command directly; the distorted clip is
+auto-detected in the output folder (same basename as the main wins,
+else the only video file, else the newest top-level video;
+subdirectories like `http/` are not scanned). The command follows the
+Netflix vmaf docs order — reference is input 0, distorted input 1, the
+metric writes to the run log, nothing is written to a file:
+
+```
+ffmpeg -i titan.mp4 -i /output/titan.webm -filter_complex '…libvmaf…[cmp]' -map [cmp] -f null -
+```
+
+Explicit bindings override the auto-detection: bind a second video
+asset (the M10.4 flow — main = distorted, the asset = reference), or
+name the distorted clip as the `distorted` asset (the web UI's Output
+field does this). When the output folder holds no video, the
+clarification asks for the distorted file.
+
+## HTTP streams (M13.6)
+
+HLS/DASH runs destined for browser playback are served by the
+**fass-http** sidecar — a plain `httpd:2.4-alpine` static server that is
+part of the default deployment: `docker compose -f docker/compose.yaml
+up -d` brings it up together with fass (no profile, no overlay).
+
+- The **whole output volume** is mounted read-only at the sidecar's
+  htdocs root, so a file at `{output}/http/<run-id>/stream.m3u8` is
+  served at `http://<host>:<port>/http/<run-id>/stream.m3u8` — the URL
+  maps 1:1 onto the file, nothing is rewritten.
+- The sidecar's host port comes from `docker/.env`
+  (`FASS_HTTP_PORT`, default `8080` — fass owns `8000`, fass-rag stays
+  internal on `8100` and is not published). `docker/install.sh` asks
+  for it, writes it to `.env`, and creates the `<output>/http/`
+  folder.
+- A run destined for http serving writes its playlist into a **per-run
+  subdir** `{output}/http/<run-id>/`, and ffmpeg runs with that dir as
+  its working directory so the segments land beside the playlist. The
+  per-run dirs are the DASH/HLS segment-name collision fix: the muxers
+  name their segments independent of the playlist file
+  (`init-stream0.m4s`, `chunk-stream0-00001.m4s`, `segment0.ts`, …), so
+  two runs sharing one directory clobber each other's segments.
+- `GET /v1/streams` lists the playlists found under the output
+  volume's `http/` subdir (`.m3u8` → kind `hls`, `.mpd` → kind `dash`),
+  newest first, each with its full URL — built from the config's
+  `streaming.http_base_url` (see the Config tab's Streaming section).
+
+**Who owns what:** the Config tab's **Apply** recreates the fass
+container only (the fass-worker swap) — it cannot create or restart
+fass-http, which is owned by the host-side `compose up`
+(`docker/launcher.sh start|rebuild`). A first-time sidecar, or a changed
+`FASS_HTTP_PORT`, takes effect on the next start/rebuild. `launcher.sh`
+re-syncs `docker/.env` from `config.json` before every up and preserves
+every non-volume line, so `FASS_HTTP_PORT` (like `FASS_GPU`) survives.
+On i7's live compose the fass-http block is merged **by hand**, like
+the fass-rag block.
 
 ## Development vs deployment
 

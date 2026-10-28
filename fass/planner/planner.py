@@ -29,6 +29,7 @@ from fass.registry import (
     extension_for,
     filter_spec,
     filtergraph_output_labels,
+    format_option_errors,
     gpu_coder,
     input_format_for,
     output_device_for,
@@ -1064,51 +1065,71 @@ def plan_execution(
                 "an audio combiner produces the output audio — it cannot be "
                 "removed in the same plan")
 
-    # -- comparison reference (M10.4): resolve + probe the reference input --
+    # -- comparison inputs (M10.4 / M14): resolve + probe both sides ------
     # The comparison is a standalone analysis in the Netflix vmaf docs'
-    # order: the reference clip is input 0, the main (distorted) input is
-    # input 1, and the metric (psnr/ssim/libvmaf) compares them frame by
-    # frame into the log (its pads take [distorted][reference]).
+    # order: the reference clip is input 0, the distorted clip is input 1,
+    # and the metric (psnr/ssim/libvmaf) compares them frame by frame into
+    # the log (its pads take [distorted][reference]).
+    # Convention flip (the user decision of 2026-10-28): when the op
+    # carries a 'distorted' asset, the MAIN asset is the reference (the
+    # source in the input folder) and the bound asset is the transcoded
+    # distorted clip; without one, the M10.4 explicit-reference shape
+    # stands — the reference asset is input 0, the main input the
+    # distorted clip.
     compare = None
     for op in edit.ops_of("compare"):
-        if op.reference == edit.input_id:
-            errors.append(
-                "the comparison reference must be a different file than the "
-                "main input (the metric measures the difference between the "
-                "two)")
-            continue
-        a = assets.get(op.reference)
-        if a is None:
-            errors.append(
-                f"comparison reference asset id '{op.reference}' is not in "
-                "the asset map")
-            continue
-        if a.kind not in (AssetKind.VIDEO, AssetKind.SOURCE):
-            errors.append(
-                f"comparison reference '{a.path}' must be a media file "
-                "(image, subtitle and stream references are not supported "
-                "yet)")
-            continue
-        if stream_scheme(a.path) is not None:
-            errors.append(
-                f"comparison reference '{a.path}' is a stream — the "
-                "reference must be a local file (it is probed for layout)")
-            continue
+        if input_asset is None:
+            continue  # the asset-map error is raised above
+        if op.distorted:
+            dist_asset = assets.get(op.distorted)
+            if dist_asset is None:
+                errors.append(
+                    f"comparison distorted asset id '{op.distorted}' is not "
+                    "in the asset map")
+                continue
+            if dist_asset.kind not in (AssetKind.VIDEO, AssetKind.SOURCE):
+                errors.append(
+                    f"comparison distorted clip '{dist_asset.path}' must be "
+                    "a media file (image, subtitle and stream references are "
+                    "not supported yet)")
+                continue
+            if stream_scheme(dist_asset.path) is not None:
+                errors.append(
+                    f"comparison distorted clip '{dist_asset.path}' is a "
+                    "stream — the distorted clip must be a local file (it is "
+                    "probed for layout)")
+                continue
+            ref_asset = input_asset  # the main asset IS the reference
+        else:
+            if op.reference == edit.input_id:
+                errors.append(
+                    "the comparison reference must be a different file than "
+                    "the main input (the metric measures the difference "
+                    "between the two)")
+                continue
+            ref_asset = assets.get(op.reference)
+            if ref_asset is None:
+                errors.append(
+                    f"comparison reference asset id '{op.reference}' is not "
+                    "in the asset map")
+                continue
+            if ref_asset.kind not in (AssetKind.VIDEO, AssetKind.SOURCE):
+                errors.append(
+                    f"comparison reference '{ref_asset.path}' must be a "
+                    "media file (image, subtitle and stream references are "
+                    "not supported yet)")
+                continue
+            if stream_scheme(ref_asset.path) is not None:
+                errors.append(
+                    f"comparison reference '{ref_asset.path}' is a stream — "
+                    "the reference must be a local file (it is probed for "
+                    "layout)")
+                continue
+            dist_asset = input_asset  # the main asset IS the distorted clip
         main_media = metadata
         if main_media is None and stream_scheme(input_asset.path) is None:
             main_media = probe_media(
                 resolve_input_name(input_asset.path), require_video=True)
-        ref_media = probe_media(resolve_input_name(a.path), require_video=True)
-        if ref_media is None:
-            errors.append(
-                f"comparison reference '{a.path}' could not be probed — is "
-                "the file readable?")
-            continue
-        if ref_media.video_streams == 0:
-            errors.append(
-                f"comparison reference '{a.path}' has no video stream — "
-                f"{op.metric} compares video frame by frame")
-            continue
         if main_media is None:
             errors.append(
                 "the main input's video streams could not be verified — "
@@ -1119,6 +1140,37 @@ def plan_execution(
                 f"the main input has no video stream — {op.metric} compares "
                 "video frame by frame")
             continue
+        # the side the main asset plays (reference under the new
+        # convention, distorted under the explicit one) is main_media;
+        # the other side is probed from its file
+        if op.distorted:
+            ref_media = main_media
+            dist_media = probe_media(
+                resolve_input_name(dist_asset.path), require_video=True)
+            if dist_media is None:
+                errors.append(
+                    f"comparison distorted clip '{dist_asset.path}' could "
+                    "not be probed — is the file readable?")
+                continue
+            if dist_media.video_streams == 0:
+                errors.append(
+                    f"the distorted clip '{dist_asset.path}' has no video "
+                    f"stream — {op.metric} compares video frame by frame")
+                continue
+        else:
+            ref_media = probe_media(
+                resolve_input_name(ref_asset.path), require_video=True)
+            dist_media = main_media
+            if ref_media is None:
+                errors.append(
+                    f"comparison reference '{ref_asset.path}' could not be "
+                    "probed — is the file readable?")
+                continue
+            if ref_media.video_streams == 0:
+                errors.append(
+                    f"comparison reference '{ref_asset.path}' has no video "
+                    f"stream — {op.metric} compares video frame by frame")
+                continue
         # 'setpts=PTS-STARTPTS' is only meaningful on streams that carry
         # packet pts — a raw bitstream (a bare .hevc Annex B) demuxes
         # without any, so probe both inputs before the graph is written.
@@ -1126,13 +1178,15 @@ def plan_execution(
         # default.
         if ref_media.has_pts is None:
             ref_media.has_pts = probe_has_pts(
-                resolve_input_name(a.path))
-        if main_media.has_pts is None:
-            main_media.has_pts = probe_has_pts(
-                resolve_input_name(input_asset.path))
+                resolve_input_name(ref_asset.path))
+        if dist_media.has_pts is None:
+            dist_media.has_pts = probe_has_pts(
+                resolve_input_name(dist_asset.path))
         compare = {
-            "op": op, "main_media": main_media,
-            "ref_asset": a, "ref_media": ref_media,
+            "op": op,
+            "ref_asset": ref_asset, "ref_media": ref_media,
+            "dist_asset": dist_asset, "dist_media": dist_media,
+            "main_is_reference": bool(op.distorted),
         }
 
     if compare is not None:
@@ -1490,7 +1544,15 @@ def plan_execution(
             ])
         out_path = dest
         if not out_path:
-            if out.container == "hls" and out.variants is not None:
+            if out.container == "tee":
+                # M13.5: the tee destination is the bracket template built
+                # from the input stem — one encode, both branches.
+                stem = os.path.splitext(os.path.basename(in_path))[0] or "output"
+                out_path = _tee_template(stem, {}, {})
+                defaults.append(
+                    "tee writes the HLS and DASH outputs from one encode — "
+                    f"the destination is the bracket template '{out_path}'")
+            elif out.container == "hls" and out.variants is not None:
                 # M13.3: the ladder writes one playlist per level — the
                 # default name carries the %v variant pattern.
                 out_path = "stream_%v.m3u8"
@@ -1553,17 +1615,97 @@ def plan_execution(
                     "the media segments next to it)"
                 )
 
-        real_out = os.path.realpath(out_path)
-        if real_out == os.path.realpath(in_path):
-            # Only reachable for an explicit -o (the default was de-collided above).
-            raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
-        if wm_paths and real_out in {os.path.realpath(p) for p in wm_paths}:
-            raise PlanError(["output path resolves to a watermark file — refusing to overwrite it"])
-        if ar_path and real_out == os.path.realpath(ar_path):
-            raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
-        if sub_path and real_out == os.path.realpath(sub_path):
-            raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
-        if out.mode != "subtitles" and out_path:
+        if out.container == "tee" and out_path:
+            # M13.5: tee multi-output — one encode, the hls + dash
+            # destinations in the bracket template ffmpeg's tee muxer
+            # parses. Per-branch options ride INSIDE the brackets
+            # ([f=hls:key=value]path), never as separate -key value flags.
+            muxer = "tee"
+            hls_opts, dash_opts, fo_errors = _tee_branch_options(
+                out.format_options)
+            if fo_errors:
+                raise PlanError(fo_errors)
+            if "|" not in out_path:
+                # A plain -o names the stem: both branches take it with
+                # their own extensions (the directory is kept).
+                d = os.path.dirname(out_path)
+                stem = os.path.splitext(os.path.basename(out_path))[0] or "output"
+                out_path = _tee_template(
+                    os.path.join(d, stem) if d else stem, {}, {})
+                defaults.append(
+                    "tee writes the HLS and DASH outputs from one encode — "
+                    f"the destination is the bracket template '{out_path}'")
+            # Merge the routed options into each branch (idempotent for the
+            # defaulted template, additive for an explicit one); force each
+            # branch's manifest extension.
+            branches = []
+            for raw in out_path.split("|"):
+                m = _TEE_BRANCH_RX.match(raw.strip())
+                if m is None or m.group("muxer") not in _TEE_BRANCH_MUXERS:
+                    raise PlanError([
+                        f"tee destination branch '{raw.strip()}' is "
+                        "malformed — expected '[f=hls]name.m3u8|"
+                        "[f=dash]name.mpd' (hls + dash branches)"])
+                branch_muxer = m.group("muxer")
+                branch_path = m.group("path")
+                opts: dict[str, str] = {}
+                for pair in (m.group("opts") or "").split(":"):
+                    if not pair:
+                        continue
+                    k, eq, v = pair.partition("=")
+                    if not eq:
+                        raise PlanError([
+                            f"tee branch '[f={branch_muxer}...]': inline "
+                            f"option '{pair}' must be key=value"])
+                    opts[k] = v
+                opts.update(hls_opts if branch_muxer == "hls" else dash_opts)
+                ext = ".m3u8" if branch_muxer == "hls" else ".mpd"
+                if os.path.splitext(branch_path)[1].lower() != ext:
+                    branch_path = os.path.splitext(branch_path)[0] + ext
+                    defaults.append(
+                        f"the tee {branch_muxer} branch writes a {ext} "
+                        "manifest (the muxer writes the media segments "
+                        "next to it)")
+                branches.append(_tee_branch_token(branch_muxer, branch_path,
+                                                  opts))
+            out_path = "|".join(branches)
+            if hls_opts.get("hls_playlist_type") == "event" \
+                    and stream_scheme(in_path) is None:
+                # Same honesty as the plain HLS event playlist (M13.2):
+                # over a finite input it ends with #EXT-X-ENDLIST.
+                warnings.append(
+                    "live (event) playlist from a finite input ends with "
+                    "#EXT-X-ENDLIST — a live player will play through and "
+                    "then stop; for true live use a stream input (or -re "
+                    "for a paced pseudo-live)")
+
+        if out.container == "tee":
+            # The tee destination is a bracket template, not one path: the
+            # overwrite guards apply to each branch, and the single-
+            # extension container-conflict check below does not apply.
+            branch_real = {os.path.realpath(p)
+                           for p in _tee_branch_paths(out_path)}
+            if os.path.realpath(in_path) in branch_real:
+                raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
+            if wm_paths and branch_real & {os.path.realpath(p) for p in wm_paths}:
+                raise PlanError(["output path resolves to a watermark file — refusing to overwrite it"])
+            if ar_path and os.path.realpath(ar_path) in branch_real:
+                raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
+            if sub_path and os.path.realpath(sub_path) in branch_real:
+                raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
+            real_out = None
+        else:
+            real_out = os.path.realpath(out_path)
+            if real_out == os.path.realpath(in_path):
+                # Only reachable for an explicit -o (the default was de-collided above).
+                raise PlanError(["output path resolves to the input file — refusing to overwrite the source"])
+            if wm_paths and real_out in {os.path.realpath(p) for p in wm_paths}:
+                raise PlanError(["output path resolves to a watermark file — refusing to overwrite it"])
+            if ar_path and real_out == os.path.realpath(ar_path):
+                raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
+            if sub_path and real_out == os.path.realpath(sub_path):
+                raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
+        if out.mode != "subtitles" and out_path and real_out is not None:
             # A .ts destination carries MPEG-TS (and so on) — an explicitly
             # requested, conflicting container is a contradiction (the
             # pipeline reconciles a merely-defaulted one before this point).
@@ -1882,9 +2024,11 @@ def plan_execution(
         # explicit muxer for the stream destination (registry streaming.output);
         # the destination token is already last in the argv (builder contract)
         ep.output_opts = ["-f", muxer] + ep.output_opts
-    if out.format_options and device is None:
+    if out.format_options and device is None and out.container != "tee":
         # Registry-validated container/format options (hls_time, movflags,
-        # mpegts_flags, ...) — emitted as -<key> <value> before the output path.
+        # mpegts_flags, ...) — emitted as -<key> <value> before the output
+        # path. A tee plan carries its options INSIDE the bracket template
+        # (built in the tee block above), so it is excluded here.
         ep.output_opts += [tok for k, v in sorted(out.format_options.items())
                            for tok in (f"-{k}", v)]
     _metadata_warnings(ep, edit, metadata)
@@ -1897,6 +2041,83 @@ def _container_from_path(path: str) -> str | None:
         if ext in info["extensions"]:
             return name
     return None
+
+
+# ------------------------------------------------------- tee (M13.5)
+
+# M13.5 scope: the tee muxer's branches are hls + dash (registry-driven
+# generalization to other branch muxers is future work).
+_TEE_BRANCH_MUXERS = ("hls", "dash")
+_TEE_BRANCH_RX = re.compile(r"^\[f=(?P<muxer>[a-z]+)(?::(?P<opts>[^\]]*))?\](?P<path>.+)$")
+
+
+def _tee_branch_options(format_options: dict[str, str]
+                        ) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """Split a tee plan's format options into the branch sets (registry
+    groups: hls + tee keys → the [f=hls] branch, dash keys → the [f=dash]
+    branch — tee accepts what its branches accept). Returns
+    (hls_opts, dash_opts, errors): errors lists keys that route into no
+    branch and values the tee template syntax cannot carry."""
+    hls_keys = (set(REGISTRY["format_options"]["hls"])
+                | set(REGISTRY["format_options"]["tee"]))
+    dash_keys = set(REGISTRY["format_options"]["dash"])
+    hls_opts: dict[str, str] = {}
+    dash_opts: dict[str, str] = {}
+    errors: list[str] = []
+    for key in sorted(format_options):
+        value = str(format_options[key])
+        if key in hls_keys:
+            hls_opts[key] = value
+        elif key in dash_keys:
+            dash_opts[key] = value
+        else:
+            errors.append(
+                f"format option '{key}' routes into no tee branch — a tee "
+                "output takes the hls/dash branch options and the tee group "
+                "(use_localtime, temp)"
+            )
+            continue
+        if any(c in value for c in ":| \t"):
+            errors.append(
+                f"format option '{key}': '{value}' contains ':', '|' or "
+                "whitespace — the tee template separates branch options "
+                "with colons, so values must be single tokens"
+            )
+    # The hls branch accepts the hls group PLUS the tee group (use_localtime
+    # and temp are hls-muxer options on the 6.1.1 build); the "tee" spec is
+    # exactly that union (its extra dash keys are already excluded by the
+    # routing above).
+    errors.extend(f"hls branch: {e}"
+                  for e in format_option_errors("tee", hls_opts))
+    errors.extend(f"dash branch: {e}"
+                  for e in format_option_errors("dash", dash_opts))
+    return hls_opts, dash_opts, errors
+
+
+def _tee_branch_token(muxer: str, path: str, opts: dict[str, str]) -> str:
+    """One tee branch: '[f=muxer:key=value:key2=value2]path' — FFmpeg's tee
+    syntax (options colon-separated inside the brackets, verified on the
+    host build with ffmpeg -h muxer=tee)."""
+    inner = f"f={muxer}" + "".join(f":{k}={opts[k]}" for k in sorted(opts))
+    return f"[{inner}]{path}"
+
+
+def _tee_template(stem: str, hls_opts: dict[str, str],
+                  dash_opts: dict[str, str]) -> str:
+    """The tee destination from a stem: the hls branch (.m3u8) and the dash
+    branch (.mpd), each with its routed options."""
+    return (_tee_branch_token("hls", f"{stem}.m3u8", hls_opts)
+            + "|" + _tee_branch_token("dash", f"{stem}.mpd", dash_opts))
+
+
+def _tee_branch_paths(template: str) -> list[str]:
+    """The destination paths of a tee bracket template (one per branch)."""
+    paths = []
+    for branch in template.split("|"):
+        end = branch.find("]")
+        if end >= 0:
+            paths.append(branch[end + 1:])
+    return paths
 
 
 _FFPROBE_CODEC = {"hevc": "h265"}  # ffprobe name -> fass codec name
@@ -1944,9 +2165,14 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
     main = _main_input(in_path)
     if compare is not None:
         # The Netflix vmaf documentation's command order: the reference is
-        # input 0, the main (distorted) input 1 — '-i reference
+        # input 0, the distorted clip input 1 — '-i reference
         # -i distorted'; the metric's pads are [distorted][reference].
-        inputs = [InputSpec(compare["ref_asset"].path), main]
+        # Under the new convention the main asset IS the reference, so it
+        # keeps input 0 and the bound distorted clip takes input 1.
+        if compare["main_is_reference"]:
+            inputs = [main, InputSpec(compare["dist_asset"].path)]
+        else:
+            inputs = [InputSpec(compare["ref_asset"].path), main]
     else:
         inputs = [main]
     if edit.trim is not None:
@@ -1964,8 +2190,9 @@ def _build_diagnostic_plan(edit: EditPlan, in_path: str, defaults: list[str],
             "diagnostic analysis — nothing is written to a file; "
             f"the {compare['op'].metric} score is in the run log "
             f"(command order: the reference '{compare['ref_asset'].path}' "
-            "is the first input, the main (distorted) input the second — "
-            "compared frame by frame)")
+            "is the first input, the distorted clip "
+            f"'{compare['dist_asset'].path}' the second — compared frame "
+            "by frame)")
     else:
         vf = ",".join(o.expr for o in edit.operations
                       if o.type == "filter" and o.domain == "video")
@@ -2016,11 +2243,11 @@ def _comparison_segments(compare: dict, defaults: list[str],
                          warnings: list[str]) -> list[str]:
     """Labeled -filter_complex segments for a comparison (M10.4).
 
-    ``compare`` is the plan_execution context: {'op', 'main_media',
-    'ref_asset', 'ref_media'}. The command line follows the Netflix vmaf
-    documentation (resource/doc/ffmpeg.md): the reference is input 0
-    ('-i reference -i distorted'), and the metric's pads take
-    '[distorted][reference]' — so the main (distorted) input, pad 1,
+    ``compare`` is the plan_execution context: {'op', 'ref_asset',
+    'ref_media', 'dist_asset', 'dist_media'}. The command line follows
+    the Netflix vmaf documentation (resource/doc/ffmpeg.md): the
+    reference is input 0 ('-i reference -i distorted'), and the metric's
+    pads take '[distorted][reference]' — so the distorted input, pad 1,
     feeds the metric first. The metric needs identical frame dimensions
     on both pads, so the distorted input is scaled to the reference's
     size when they differ (the doc's convention: the reference is the
@@ -2034,25 +2261,25 @@ def _comparison_segments(compare: dict, defaults: list[str],
     has_pts=False skips the filter and is noted). The last segment feeds
     the two labeled pads into the metric and labels the output [cmp]."""
     op = compare["op"]
-    main = compare["main_media"]
+    dist = compare["dist_media"]
     ref = compare["ref_media"]
     metric = op.metric
     segs: list[str] = []
     c1: list[str] = []
-    if (main.width and main.height and ref.width and ref.height
-            and (ref.width, ref.height) != (main.width, main.height)):
+    if (dist.width and dist.height and ref.width and ref.height
+            and (ref.width, ref.height) != (dist.width, dist.height)):
         c1.append(f"scale={ref.width}:{ref.height}:flags=bicubic")
         warnings.append(
-            f"the main input is {main.width}x{main.height}, the reference "
-            f"is {ref.width}x{ref.height} — the main (distorted) input is "
-            "scaled to the reference's size (the metric compares identical "
-            "dimensions)")
-    if main.has_pts is False:
+            f"the distorted clip is {dist.width}x{dist.height}, the "
+            f"reference is {ref.width}x{ref.height} — the distorted input "
+            "is scaled to the reference's size (the metric compares "
+            "identical dimensions)")
+    if dist.has_pts is False:
         warnings.append(
-            "the main input carries no packet timestamps (raw stream) — "
-            "'setpts=PTS-STARTPTS' was skipped for it; frames are compared "
-            "in arrival order")
-    elif main.has_pts is not False:
+            "the distorted clip carries no packet timestamps (raw stream) "
+            "— 'setpts=PTS-STARTPTS' was skipped for it; frames are "
+            "compared in arrival order")
+    elif dist.has_pts is not False:
         c1.append("setpts=PTS-STARTPTS")
     if c1:
         segs.append(f"[1:v]{','.join(c1)}[c1]")
@@ -2065,16 +2292,16 @@ def _comparison_segments(compare: dict, defaults: list[str],
     if ref.has_pts is not False:
         segs.append("[0:v]setpts=PTS-STARTPTS[c0]")
     c0 = "[c0]" if ref.has_pts is not False else "[0:v]"
-    if (main.fps and ref.fps and abs(main.fps - ref.fps) > 0.01):
+    if (dist.fps and ref.fps and abs(dist.fps - ref.fps) > 0.01):
         warnings.append(
-            f"the reference runs at {fmt_num(ref.fps)} fps, the main input "
-            f"at {fmt_num(main.fps)} fps — frames are compared in arrival "
-            "order (no rate conversion; the metric scores the overlapping "
-            "span)")
-    if (main.pix_fmt and ref.pix_fmt and main.pix_fmt != ref.pix_fmt):
+            f"the reference runs at {fmt_num(ref.fps)} fps, the distorted "
+            f"clip at {fmt_num(dist.fps)} fps — frames are compared in "
+            "arrival order (no rate conversion; the metric scores the "
+            "overlapping span)")
+    if (dist.pix_fmt and ref.pix_fmt and dist.pix_fmt != ref.pix_fmt):
         warnings.append(
-            f"the reference is {ref.pix_fmt}, the main input is "
-            f"{main.pix_fmt} — the metric converts internally")
+            f"the reference is {ref.pix_fmt}, the distorted clip is "
+            f"{dist.pix_fmt} — the metric converts internally")
     opts = dict(op.options)
     if metric == "libvmaf" and "model" not in opts:
         model = vmaf_model_path()

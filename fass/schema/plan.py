@@ -180,7 +180,7 @@ class OutputSpec(BaseModel):
     )
     container: Literal[
         "mp4", "mov", "mkv", "webm", "mpegts", "flv", "rtsp", "srt", "hls",
-        "dash",
+        "dash", "tee",
         "avi", "mxf", "vob", "asf", "3gp", "dv", "gif", "webp",
         "mp3", "mp2", "m4a", "aac", "ogg", "flac", "wav", "aiff", "mka",
         "opus", "srt_file", "vtt_file", "ass_file",
@@ -276,7 +276,10 @@ class OutputSpec(BaseModel):
                     "'movflags': 'faststart', 'mpegts_flags': "
                     "'resend_headers'} — emitted as -<key> <value> before "
                     "the output path. Keys and values are validated against "
-                    "the table.",
+                    "the table. For the tee container (M13.5) the keys route "
+                    "into their branch (hls_* / tee keys into the [f=hls] "
+                    "branch, dash keys into [f=dash]) and ride inside the "
+                    "bracket template instead of as separate flags.",
     )
     variants: list[VariantSpec] | None = Field(
         default=None, max_length=8,
@@ -641,30 +644,40 @@ class CombinerOp(BaseModel):
 
 
 class CompareOp(BaseModel):
-    """Measure the quality difference between the main input (the DISTORTED
-    clip) and a reference input with a comparison metric (the registry
+    """Measure the quality difference between a reference clip and a
+    distorted clip with a comparison metric (the registry
     'needs_reference' table): psnr, ssim or libvmaf.
 
-    ``reference`` is the asset id of the reference clip. The command line
-    follows the Netflix vmaf documentation (resource/doc/ffmpeg.md): the
-    reference is probed and becomes the FIRST input ('-i reference
-    -i distorted'), the main (distorted) input the second; the planner
-    builds a labeled -filter_complex graph whose metric pads take
-    '[distorted][reference]' — '[1:v]setpts=PTS-STARTPTS[c1];
-    [0:v]setpts=PTS-STARTPTS[c0]; [c1][c0]psnr[cmp]'-style, the distorted
-    pad feeding the metric first ('setpts=PTS-STARTPTS' only on pads
-    whose probe says the stream carries packet pts). It runs against the
-    null muxer: nothing is written to a file, the metric score lands in
-    the run log (M10.4, diagnostic pattern). At most one comparison per
-    plan; it is a standalone analysis — it cannot be combined with a
-    watermark, replaced audio, subtitles, a trim or a custom filtergraph
-    (planner)."""
+    Convention (the user decision of 2026-10-28): the MAIN asset is the
+    REFERENCE — the source in the input folder — and the DISTORTED clip
+    is the transcoded file in the output folder. ``distorted`` is the
+    asset id of that file (the rules adapter injects it after scanning
+    the output folder, or the application binds it explicitly); when it
+    is set, ``reference`` is the main asset's id. When ``distorted`` is
+    absent the op keeps the M10.4 explicit-reference shape: ``reference``
+    is the asset id of a second video asset and the main input is the
+    distorted clip.
+
+    The command line follows the Netflix vmaf documentation
+    (resource/doc/ffmpeg.md) in both shapes: the reference is probed and
+    becomes the FIRST input ('-i reference -i distorted'), the distorted
+    clip the second; the planner builds a labeled -filter_complex graph
+    whose metric pads take '[distorted][reference]' —
+    '[1:v]setpts=PTS-STARTPTS[c1]; [0:v]setpts=PTS-STARTPTS[c0];
+    [c1][c0]psnr[cmp]'-style, the distorted pad feeding the metric first
+    ('setpts=PTS-STARTPTS' only on pads whose probe says the stream
+    carries packet pts). It runs against the null muxer: nothing is
+    written to a file, the metric score lands in the run log (M10.4,
+    diagnostic pattern). At most one comparison per plan; it is a
+    standalone analysis — it cannot be combined with a watermark,
+    replaced audio, subtitles, a trim or a custom filtergraph (planner)."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["compare"] = "compare"
     metric: str = Field(min_length=1, max_length=64)
     reference: str = Field(min_length=1, max_length=64)
+    distorted: str | None = Field(default=None, min_length=1, max_length=64)
     options: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")

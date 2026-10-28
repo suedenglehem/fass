@@ -21,7 +21,7 @@ UI_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fass — natural language → validated FFmpeg commands</title>
+<title>ffmpeg assistant — natural language → validated FFmpeg commands</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap');
 :root {
@@ -189,7 +189,7 @@ a { color: var(--accent); }
 </head>
 <body>
 <main>
-  <h1>fass</h1>
+  <h1>ffmpeg assistant</h1>
   <p class="sub">Natural language → <strong>validated</strong> FFmpeg commands.
   The model only plans; the command is built deterministically — and runs here only when
   you press Run.</p>
@@ -214,7 +214,7 @@ a { color: var(--accent); }
       <div><label for="out" id="lbl-out">Output (optional — filename, or stream URL to send to: rtmp://, rtsp://, srt://, udp://…)<span class="tip" data-tip="To chain ffmpeg processings, start the filename with /input/ — e.g. /input/step1.mp4 — and the result is written into the input folder instead of /output. The next run then picks it up by bare name (step1.mp4).">?</span></label>
         <input id="out" placeholder="out.mp4, /input/step1.mp4, or rtmp://host:1935/live"></div>
     </div>
-    <div id="cmp-hint" class="note" hidden>Quality comparison: the <b>reference</b> (undistorted) clip goes in the Input field, the <b>distorted</b> (processed) clip in Output — or, when Output is empty, as the first additional input. Nothing is written to a file: the VMAF / PSNR / SSIM score is printed in the run log (Log tab).</div>
+    <div id="cmp-hint" class="note" hidden>Quality comparison: the Input field is the <b>reference</b> (the source clip from the input folder), the Output field the <b>distorted</b> clip — its name from the output folder; leave Output empty and the server picks the transcoded file (same name as the input, else the only video, else the newest). Nothing is written to a file: the VMAF / PSNR / SSIM score is printed in the run log (Log tab).</div>
     <div class="row">
       <div><label for="wm">Watermark image (optional)<span class="tip" data-tip="For multiple watermarks, add the other images as additional inputs (kind: image) and name them in the request — e.g. 'put the logo top-left and the badge bottom-right'.">?</span></label>
         <input id="wm" placeholder="logo.png"></div>
@@ -287,17 +287,14 @@ a { color: var(--accent); }
             <option value="auto">auto — follow the system</option>
             <option value="light">light</option>
             <option value="dark">night (dark)</option>
-            <option value="kitty">Hello Kitty</option>
-            <option value="autodesk">Autodesk (Maya)</option>
+            <option value="kitty">pink</option>
+            <option value="autodesk">gray</option>
           </select></div>
         <div style="flex:0 0 auto"><label for="width">content width</label>
           <select id="width">
             <option value="">default (860px)</option>
-            <option value="1060">wide (+200px)</option>
-            <option value="1260">widest (+400px)</option>
+            <option value="1260px">wider (+400px)</option>
           </select></div>
-        <span class="note">Stored in this browser only. 'auto' follows the OS color
-        scheme; the width sets the main frame on every page.</span>
       </div>
       <hr class="sep">
       <h3>Volumes — host folders ↔ container</h3>
@@ -335,7 +332,10 @@ a { color: var(--accent); }
         <div><label>port</label><input id="l-port" type="number" placeholder="8080"></div>
         <div><label>api key (anthropic / optional)</label><input id="l-key" type="password" placeholder="sk-… / blank"></div>
         <div><label>model</label><input id="l-model" placeholder="qwen3.8-27b"></div>
+        <div><label>timeout (seconds)</label><input id="l-timeout" type="number" min="1" max="300" step="1" placeholder="10"></div>
       </div>
+      <p class="note">timeout: seconds allowed for one LLM request (connect + read) — a hung
+      endpoint returns an error instead of blocking the request. 1–300, default 10.</p>
       <button type="button" class="small ghost" style="margin-top:10px" onclick="llmTest(true)">test LLM (unsaved values)</button>
       <span id="llm-status"></span>
 
@@ -358,8 +358,9 @@ a { color: var(--accent); }
       <h3>Generated compose (what Apply creates)</h3>
       <pre id="compose"></pre>
       <hr class="sep">
-      <p class="note"><span id="ver"></span> · Post bugs here:
-      <a href="https://github.com/suedenglehem/fass/issues" target="_blank" rel="noopener">https://github.com/suedenglehem/fass/issues</a></p>
+      <p class="note"><span id="ffver"></span><br id="ffbr" hidden><span id="ver"></span> · Post bugs here:
+      <a href="https://github.com/suedenglehem/fass/issues" target="_blank" rel="noopener">https://github.com/suedenglehem/fass/issues</a>
+      <br><a href="https://www.youtube.com/watch?v=YVI6SCtVu4c" target="_blank" rel="noopener">if you're still clueless</a></p>
     </div>
   </div>
 
@@ -423,6 +424,8 @@ let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => {
   EXEC_ENABLED = !!d.execution;
   if (d.version) $('ver').textContent = 'v' + d.version;
+  // ffmpeg build line (first line of `ffmpeg -version` — no lib* versions)
+  if (d.build) { $('ffver').textContent = d.build; $('ffbr').hidden = false; }
 }).catch(() => {});
 
 /* Appearance: an explicit theme on <html data-theme> overrides the OS
@@ -450,6 +453,8 @@ fetch('/v1/env').then(r => r.json()).then(d => {
     const main = document.querySelector('main');
     let w = null;
     try { w = localStorage.getItem('fassWidth'); } catch (e) {}
+    if (w && !w.endsWith('px')) w += 'px';  // legacy unitless pick
+    if (w === '1060px') w = '1260px';       // legacy 'wide' pick → wider
     if (w && main) { wsel.value = w; main.style.maxWidth = w; }
     wsel.addEventListener('change', () => {
       const v = wsel.value;
@@ -478,9 +483,11 @@ function showTab(t) {
 }
 
 /* ------------------------------------------------------------ command tab */
-/* quality-compare convention (the NLU's compare triggers): reference in
-   the Input field, distorted in Output — or, Output empty, the first
-   additional input. Nothing is written; the score lands in the run log. */
+/* quality-compare convention (the NLU's compare triggers, M14 flip): the
+   Input field is the reference (the main asset — the source in the input
+   folder), the Output field the distorted clip — its name from the output
+   folder; Output empty means the server auto-detects it. Nothing is
+   written; the score lands in the run log. */
 const CMP_RX = /\bcompar(?:e[sd]?|ison|ing)\b|\bquality\\s+(?:loss|difference|degradation|drop|impact)\b|\blib-?vmaf\b|\bpsnr\b|\bssim\b/i;
 const INP_LBL = $('lbl-inp'), OUT_LBL = $('lbl-out');
 const INP_HTML = INP_LBL.innerHTML, OUT_HTML = OUT_LBL.innerHTML;
@@ -489,10 +496,10 @@ function setCompareMode() {
   const cmp = isCompare();
   $('cmp-hint').hidden = !cmp;
   INP_LBL.innerHTML = cmp
-    ? 'Reference (the undistorted clip — a file from the input folder)'
+    ? 'Reference (the source clip — a file from the input folder)'
     : INP_HTML;
   OUT_LBL.innerHTML = cmp
-    ? 'Distorted (the processed clip — its name from the output folder, or leave empty and use an additional input)'
+    ? 'Distorted (the transcoded clip — its name from the output folder; leave empty to auto-detect)'
     : OUT_HTML;
 }
 $('instr').addEventListener('input', setCompareMode);
@@ -516,34 +523,22 @@ async function submit(e) {
   e.preventDefault();
   const cmp = isCompare();
   const assets = {};
-  let consumed = null; // data-id of the extra input used as the distorted
   if (cmp) {
-    // compare convention: reference in Input, distorted in Output (or,
-    // Output empty, the first additional input); no output_filename —
-    // the metric score is printed in the run log
-    const inp = $('inp').value.trim();
+    // compare convention (M14 flip): the Input field is the reference —
+    // the main asset, the source in the input folder; the Output field
+    // names the distorted clip in the output folder (empty = the server
+    // auto-detects it). No output_filename — the metric score is printed
+    // in the run log
+    assets.main = $('inp').value.trim();
     const outv = $('out').value.trim();
-    if (outv) {
-      assets.main = outv;
-      assets.ref = { path: inp, kind: 'video' };
-    } else {
-      const first = [...document.querySelectorAll('.extra-inp')]
-        .find(i => i.value.trim());
-      if (first) {
-        consumed = first.dataset.id;
-        assets.main = first.value.trim();
-        assets.ref = { path: inp, kind: 'video' };
-      } else {
-        assets.main = inp; // no second file — the NLU will ask which
-      }
-    }
+    if (outv) assets.distorted = { path: outv, kind: 'video' };
   } else {
     assets.main = $('inp').value.trim();
     if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
   }
   document.querySelectorAll('.extra-inp').forEach(i => {
     const v = i.value.trim();
-    if (!v || i.dataset.id === consumed) return;
+    if (!v) return;
     const kind = i.parentElement.querySelector('.extra-kind').value;
     assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };
   });
@@ -800,6 +795,7 @@ async function loadCfg() {
   $('l-port').value = cfg.llm.port || '';
   $('l-key').value = cfg.llm.api_key;
   $('l-model').value = cfg.llm.model;
+  $('l-timeout').value = cfg.llm.timeout || 10;
   $('apply-btn').disabled = !data.docker.worker;
   const dockerNote = data.docker.manage
     ? `docker control: <span class="ok">available</span> (engine ${esc(data.docker.version || '?')}, container <span class="mono">${esc(data.docker.container || 'n/a')}</span>)`
@@ -840,6 +836,7 @@ function readCfg() {
       port: parseInt($('l-port').value, 10) || 0,
       api_key: $('l-key').value,
       model: $('l-model').value.trim(),
+      timeout: parseInt($('l-timeout').value, 10) || 10,
     },
   };
 }

@@ -798,6 +798,64 @@ def test_live_hls_stream_input_no_endlist_warning(gen):
     assert not any("ENDLIST" in w for w in r.warnings)
 
 
+# ---------------- M13.5: tee multi-output (hls + dash from one encode)
+
+def test_tee_pair_selects_tee(gen):
+    r = gen("convert to hls and dash at the same time", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "tee"
+
+
+def test_tee_pair_reverse_order(gen):
+    r = gen("make dash and hls", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "tee"
+
+
+def test_tee_word_phrasing(gen):
+    r = gen("tee to hls and dash", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "tee"
+
+
+def test_tee_single_container_is_not_tee(gen):
+    r = gen("convert to hls", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "hls"
+
+
+def test_tee_argv_bracket_template(gen):
+    r = gen("tee to hls and dash", "clip.mp4")
+    assert r.status == "ready"
+    a = r.arguments
+    assert a[a.index("-f") + 1] == "tee"
+    assert a[-1] == "[f=hls]clip.m3u8|[f=dash]clip.mpd"
+
+
+def test_tee_live_window_routes_into_hls_branch(gen):
+    r = gen("live hls and dash with a 10 segment window", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["container"] == "tee"
+    a = r.arguments
+    hls_branch, dash_branch = a[-1].split("|")
+    assert hls_branch.startswith("[f=hls:")
+    assert hls_branch.endswith("clip.m3u8")
+    assert "hls_list_size=10" in hls_branch
+    assert "hls_playlist_type=event" in hls_branch
+    assert "hls_flags=independent_segments" in hls_branch
+    assert dash_branch == "[f=dash]clip.mpd"
+    # the tee plan carries its options INSIDE the brackets — no separate flags
+    assert "-hls_list_size" not in a
+
+
+def test_tee_finite_input_warns(gen):
+    # the hls branch's event playlist over a finite file ends with
+    # #EXT-X-ENDLIST — same honesty warning as plain live HLS (M13.2)
+    r = gen("live hls and dash", "clip.mp4")
+    assert r.status == "ready"
+    assert any("ENDLIST" in w for w in r.warnings)
+
+
 # ---------------- M13.3: ABR HLS ladder
 
 def test_ladder_explicit_levels(gen):

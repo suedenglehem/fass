@@ -10,9 +10,11 @@ Run under pytest from the repo root (no server needed: fastapi TestClient).
 from __future__ import annotations
 
 import base64
+import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -784,6 +786,16 @@ def test_ui_has_the_files_tab():
         assert needle in html
 
 
+def test_ui_content_width_values_are_css_valid():
+    # maxWidth = "1060" (unitless) is invalid CSS and silently ignored —
+    # the width pick must carry px; two variants only (default + wider),
+    # and the restore path normalizes legacy picks (unitless, old 'wide')
+    html = client.get("/").text
+    assert 'value="1260px"' in html
+    assert 'value="1060' not in html
+    assert "endsWith('px')" in html and "=== '1060px'" in html
+
+
 # --------------------------------------------- edited command (expert override)
 
 
@@ -869,3 +881,149 @@ def test_ui_command_tab_is_editable():
     # the copy button reads the textarea's live value (textContent would copy
     # the pre-edit text — a textarea's child node never changes)
     assert "writeText($('cmd').value)" in html
+
+
+# ------------------------------------------------- http streams (M13.6)
+
+def _http_env(tmp_path, monkeypatch, base="http://10.0.0.5:8080"):
+    """Volumes + the execution gate + a config pinning
+    streaming.http_base_url (the value docker/install.sh seeds from the
+    http stream port prompt)."""
+    in_dir, out_dir = _run_env(tmp_path, monkeypatch)
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"streaming": {"http_base_url": base}}),
+                 encoding="utf-8")
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    return in_dir, out_dir
+
+
+def _wait_run(run_id: str, timeout: float = 90.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while True:
+        rec = client.get(f"/v1/runs/{run_id}").json()
+        if rec.get("status") != "running" or time.monotonic() > deadline:
+            return rec
+        time.sleep(0.2)
+
+
+def test_streams_empty_without_http_dir(tmp_path, monkeypatch):
+    # no http/ subdir under the output volume: an empty list (not an
+    # error), the base URL still echoed for the tab's URL prefix
+    _http_env(tmp_path, monkeypatch)
+    r = client.get("/v1/streams")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["streams"] == []
+    assert d["http_base_url"] == "http://10.0.0.5:8080"
+
+
+def test_streams_lists_playlists_under_http(tmp_path, monkeypatch):
+    _in, out = _http_env(tmp_path, monkeypatch)
+    ra, rb = out / "http" / "run-a", out / "http" / "run-b"
+    ra.mkdir(parents=True)
+    rb.mkdir(parents=True)
+    hls = ra / "stream.m3u8"
+    hls.write_text("#EXTM3U\n", encoding="utf-8")
+    (ra / "segment0.ts").write_bytes(b"seg")   # segments are not playlists
+    (rb / "master.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    (rb / "stream.mpd").write_text("<MPD/>", encoding="utf-8")
+    (out / "clip.mp4").write_bytes(b"x")       # outside http/ — never listed
+    os.utime(hls, (1_700_000_000, 1_700_000_000))
+    os.utime(rb / "master.m3u8", (1_600_000_000, 1_600_000_000))
+    os.utime(rb / "stream.mpd", (1_650_000_000, 1_650_000_000))
+    r = client.get("/v1/streams")
+    assert r.status_code == 200
+    d = r.json()
+    base = "http://10.0.0.5:8080"
+    assert d["http_base_url"] == base
+    got = [(s["name"], s["kind"], s["path"], s["url"]) for s in d["streams"]]
+    # newest first; the playlist file's URL is <base>/http/<relpath>
+    assert got == [
+        ("stream.m3u8", "hls", "http/run-a/stream.m3u8",
+         f"{base}/http/run-a/stream.m3u8"),
+        ("stream.mpd", "dash", "http/run-b/stream.mpd",
+         f"{base}/http/run-b/stream.mpd"),
+        ("master.m3u8", "hls", "http/run-b/master.m3u8",
+         f"{base}/http/run-b/master.m3u8"),
+    ]
+    # the Config tab exposes the same value (the UI reads GET /v1/config)
+    cfg = client.get("/v1/config").json()
+    assert cfg["config"]["streaming"]["http_base_url"] == base
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_run_serve_http_places_output_in_per_run_dir(tmp_path, monkeypatch):
+    _in, out = _http_env(tmp_path, monkeypatch)
+    argv = ["ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "28",
+            "-f", "hls", "-hls_time", "1", "stream.m3u8"]
+    r = client.post("/v1/runs", json={"arguments": argv, "serve_http": True})
+    assert r.status_code == 200, r.text
+    run = r.json()["run"]
+    rec = _wait_run(run["id"])
+    assert rec["status"] == "success", rec
+    serve = out / "http" / run["id"]
+    # the playlist landed in the per-run dir with its segments beside it
+    assert (serve / "stream.m3u8").is_file()
+    assert [p for p in serve.iterdir() if p.suffix == ".ts"]
+    # the run record keeps the bare resolved name; the argv that RAN
+    # carries the full per-run path
+    assert rec["output"] == str(out / "stream.m3u8")
+    assert rec["argv"][-1] == str(serve / "stream.m3u8")
+    assert not (out / "stream.m3u8").exists()
+    assert any("http" in n for n in rec["notes"])
+    # the sidecar would serve it at <base>/http/<run-id>/stream.m3u8
+    d = client.get("/v1/streams").json()
+    assert ("stream.m3u8", "hls", f"http/{run['id']}/stream.m3u8") in \
+        [(s["name"], s["kind"], s["path"]) for s in d["streams"]]
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_run_serve_http_dash_segments_do_not_collide(tmp_path, monkeypatch):
+    # two http-destined DASH runs in the same output volume: the dash
+    # muxer names its segments init-stream0.m4s / chunk-stream0-*.m4s
+    # regardless of the .mpd name — the per-run dirs keep them apart
+    _in, out = _http_env(tmp_path, monkeypatch)
+
+    def dash_run(dest: str) -> dict:
+        argv = ["ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-f", "dash", "-seg_duration", "1", dest]
+        r = client.post("/v1/runs", json={"arguments": argv, "serve_http": True})
+        assert r.status_code == 200, r.text
+        rec = _wait_run(r.json()["run"]["id"])
+        assert rec["status"] == "success", rec
+        return rec
+
+    a, b = dash_run("a.mpd"), dash_run("b.mpd")
+    da, db = out / "http" / a["id"], out / "http" / b["id"]
+    assert da != db
+    for d, name in ((da, "a.mpd"), (db, "b.mpd")):
+        assert (d / name).is_file(), d
+        assert (d / "init-stream0.m4s").is_file(), d
+    # without the flag the bare destination is untouched (the old behavior)
+    argv = ["ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-f", "dash", "-seg_duration", "1", "plain.mpd"]
+    r = client.post("/v1/runs", json={"arguments": argv})
+    assert r.status_code == 200, r.text
+    rec = _wait_run(r.json()["run"]["id"])
+    assert rec["status"] == "success", rec
+    assert (out / "plain.mpd").is_file()
+    assert rec["argv"][-1] == str(out / "plain.mpd")
+
+
+def test_http_serve_dir_gates(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    # a bare destination in the output volume -> the per-run dir
+    d = execute.http_serve_dir(str(out), str(out / "stream.m3u8"), "rid1")
+    assert d == out / "http" / "rid1" and d.is_dir()
+    # a sub-path keeps its own place; so do stream URLs and the null muxer
+    assert execute.http_serve_dir(
+        str(out), str(out / "sub" / "x.m3u8"), "rid2") is None
+    assert execute.http_serve_dir(str(out), "http://h/x.m3u8", "rid3") is None
+    assert execute.http_serve_dir(str(out), "udp://host:5000", "rid3b") is None
+    assert execute.http_serve_dir(str(out), "-", "rid4") is None
+    # no output volume (no env, no /output on this host)
+    assert execute.http_serve_dir("", str(tmp_path / "x.m3u8"), "rid5") is None

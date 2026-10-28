@@ -22,6 +22,15 @@
 # (host socket mount, FASS_DOCKER_MANAGE=1, accelerator pin) — merge the
 # fass-rag block by hand there, never overwrite the file from the repo.
 
+# fass-http (M13.6): the Apache sidecar serving the http-destined
+# streams. The WHOLE output volume is mounted read-only at its htdocs
+# root, so a run that writes {output}/http/<run-id>/stream.m3u8 is
+# served at /http/<run-id>/stream.m3u8 — GET /v1/streams lists those
+# URLs. The per-run subdirs are the DASH/HLS segment-name collision fix
+# (the muxer names segments independent of the playlist file). The
+# Config tab's Apply recreates fass ONLY — fass-http is owned by the
+# host-side `compose up` (docker/launcher.sh start|rebuild).
+
 services:
   fass:
     build:
@@ -103,4 +112,19 @@ services:
       - FASS_RAG_DATA=/data
       - FASS_RAG_BIND=0.0.0.0:8100
     healthcheck: { test: ["CMD", "python", "-m", "rag.health"], interval: 30s }
+    restart: unless-stopped
+
+  fass-http:
+    # Apache sidecar (M13.6): static server for the http-destined
+    # streams (see the file header). Read-only mount of the WHOLE
+    # output dir at the htdocs root, so /http/<run-id>/x.m3u8 URLs map
+    # 1:1 onto the files. Host port: the install.sh prompt
+    # (FASS_HTTP_PORT in docker/.env), default 8080 — fass owns 8000,
+    # fass-rag stays internal (8100, not published).
+    image: httpd:2.4-alpine
+    container_name: fass-http
+    ports:
+      - "${FASS_HTTP_PORT:-8080}:80"
+    volumes:
+      - ${FASS_OUTPUT_DIR:-../media/output}:/usr/local/apache2/htdocs:ro
     restart: unless-stopped

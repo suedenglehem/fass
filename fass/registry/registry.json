@@ -17,6 +17,7 @@
     "srt": { "extensions": ["srt"], "muxer": "srt", "file": false },
     "hls": { "extensions": ["m3u8"], "muxer": "hls", "note": "playlist + segment files, written into the output directory; -f hls is always emitted explicitly" },
     "dash": { "extensions": ["mpd"], "muxer": "dash", "note": "MPEG-DASH: .mpd manifest + fragmented-MP4 segments in the output directory; -f dash is always emitted explicitly" },
+    "tee": { "extensions": [], "muxer": "tee", "file": false, "note": "tee muxer multi-output (M13.5): one encode written to several destinations in a single command — the destination is the bracket template '[f=hls]stream.m3u8|[f=dash]stream.mpd' (branches separated by '|', each branch's muxer and options inside the brackets, colon-separated); M13.5 carries hls + dash branches" },
     "avi": { "extensions": ["avi"], "muxer": "avi" },
     "mxf": { "extensions": ["mxf"], "muxer": "mxf", "reencode": true, "gop": 120, "note": "broadcast master wrapper (OP-Atom) — the muxer takes an encoded master: video is re-encoded into it (stream-copied h264 arrives avcc-packaged and the mxf muxer rejects it), audio must be PCM, and the h264 GOP is capped (ffmpeg 9.x's mxf index table requires frame offsets within ±127)" },
     "vob": { "extensions": ["vob", "mpg"], "muxer": "vob", "note": "MPEG program stream (DVD/VOB)" },
@@ -173,6 +174,7 @@
     "srt": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an srt:// destination; never a file" },
     "hls": { "video": ["h264", "h265", "mpeg2"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "HLS: .m3u8 playlist + transport segments in the output directory; tune with hls_* format options" },
     "dash": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "DASH: .mpd manifest + fMP4 segments in the output directory; tune with dash_* format options" },
+    "tee": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "tee multi-output (M13.5): passthrough — the tee muxer accepts what its branches accept, so the row is the hls ∩ dash intersection (hls + dash branches); the destination is the bracket template, per-branch options ride inside the brackets" },
     "avi": { "video": ["mpeg4", "mjpeg", "h264", "mpeg2"], "audio": ["pcm_s16le", "mp3", "mp2", "ac3"], "default_video": "mpeg4", "audio_codec": "pcm_s16le", "flags": [] },
     "mxf": { "video": ["h264", "mpeg2", "prores"], "audio": ["pcm_s16le", "pcm_s24le", "pcm_s32le"], "default_video": "h264", "audio_codec": "pcm_s16le", "flags": [], "note": "MXF is a broadcast master format: audio must be PCM (the mxf muxer rejects aac/ac3), and the video is re-encoded into it even when the codec matches" },
     "vob": { "video": ["mpeg2"], "audio": ["mp2", "ac3"], "default_video": "mpeg2", "audio_codec": "mp2", "flags": [] },
@@ -279,6 +281,10 @@
       "dash_segment_type": { "kind": "choice", "values": ["mp4", "fmp4"], "description": "segment type (default fmp4)" },
       "adaptation_sets": { "kind": "string", "description": "explicit adaptation sets 'id=N,streams=a,b id=M,streams=c,d' (single-variant DASH only — explicit sets fail with var_stream_map; auto sets are the ladder default)" },
       "var_stream_map": { "kind": "string", "description": "variant stream map: space-separated 'v:N,a:M' groups, one per ABR variant (planner-constructed; multi-word, never NL-captured)" }
+    },
+    "tee": {
+      "use_localtime": { "kind": "bool", "description": "expand %d in the branch filenames with the wall clock — the hls branch's use_localtime (the tee muxer passes branch options through to the branch muxer)" },
+      "temp": { "kind": "bool", "description": "write the branch files to a temporary name and rename when complete — the hls branch's temp option (named temp_file in the 6.1.1 build; the planner routes it to the hls branch)" }
     },
     "avi": {
       "use_auto_bvf": { "kind": "choice", "values": ["auto", "0", "1"], "description": "automatic B-VFLP (B-frame) writing for AVI" },

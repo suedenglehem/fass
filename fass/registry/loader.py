@@ -487,6 +487,9 @@ _FORMAT_OPTION_GROUPS = {
     "mp4": "mp4", "mov": "mp4", "m4a": "mp4", "3gp": "mp4",
     "mpegts": "mpegts", "hls": "hls", "dash": "dash", "avi": "avi", "flv": "flv",
     "mp3": "mp3", "wav": "wav",
+    # tee (M13.5) accepts what its branches accept: the hls + dash option
+    # sets plus its own group (the planner routes each key into its branch)
+    "tee": ["hls", "dash", "tee"],
 }
 
 _RATE = re.compile(r"^\d+(\.\d+)?[kKmM]?$")
@@ -499,11 +502,13 @@ _META_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_]*$")
 
 def format_option_specs(container: str) -> dict[str, dict]:
     """{key: spec} of every '-<key> value' option the container accepts: the
-    generic set plus the container's own group (mp4/mpegts/hls/avi/flv/mp3/wav)."""
+    generic set plus the container's own group (mp4/mpegts/hls/avi/flv/mp3/wav).
+    A container whose mapping is a list (tee: hls + dash + tee) unions those
+    groups' options — tee accepts what its branches accept."""
     specs = dict(REGISTRY["format_options"]["generic"])
     group = _FORMAT_OPTION_GROUPS.get(container)
-    if group:
-        specs.update(REGISTRY["format_options"].get(group, {}))
+    for g in [group] if isinstance(group, str) else list(group or []):
+        specs.update(REGISTRY["format_options"].get(g, {}))
     return specs
 
 

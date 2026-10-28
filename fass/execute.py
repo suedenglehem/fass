@@ -392,6 +392,32 @@ def _output_dir() -> str:
     return os.environ.get(OUTPUT_DIR_ENV, "/output" if Path("/output").is_dir() else "")
 
 
+def http_serve_dir(out_dir: str, dest: str, run_id: str) -> Path | None:
+    """The per-run http-serving dir (M13.6): {output}/http/<run_id>.
+
+    A run whose output is destined for the fass-http sidecar writes its
+    playlist into a dir unique to the run, and ffmpeg runs with cwd set
+    to it — the hls/dash muxer names its SEGMENTS independent of the
+    playlist file (init-stream0.m4s, chunk-stream0-00001.m4s,
+    segment0.ts, …), so two runs in the same directory clobber each
+    other's segments. Per-run subdirs are the collision fix.
+
+    Only a BARE local destination that resolve_paths placed directly in
+    the output volume qualifies: stream URLs, the null-muxer '-' and
+    explicitly sub-pathed names keep their own place. Returns the
+    created dir, or None when it does not apply (no output volume, …)."""
+    if not out_dir or dest == "-" or stream_scheme(dest) is not None:
+        return None
+    if os.path.dirname(os.path.normpath(dest)) != os.path.normpath(out_dir):
+        return None
+    d = Path(out_dir) / "http" / run_id
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return d
+
+
 def resolve_input_name(name: str) -> str:
     """Resolve a bare input filename against the deployment's input volume
     ($FASS_INPUT_DIR, or /input when it exists) — the same rule
@@ -741,10 +767,14 @@ def execution_enabled() -> bool:
 
 
 def start_run(argv: list[str], timeout: float | None = None,
-              verbose: bool = False) -> Run:
+              verbose: bool = False, serve_http: bool = False) -> Run:
     """Validate and start a run; raises ValueError for invalid argv or a
     disabled execution mode. verbose (M10.7): the log goes to
-    {output_dir}/log/{run_id}.log instead of run_dir()."""
+    {output_dir}/log/{run_id}.log instead of run_dir(). serve_http
+    (M13.6): the output is destined for the fass-http sidecar — a bare
+    local playlist lands in the per-run dir {output}/http/<run_id>/
+    (see http_serve_dir) so its segments cannot collide with other
+    runs; the run record's output stays the bare name."""
     if not execution_enabled():
         raise PermissionError(
             "execution is disabled on this deployment "
@@ -775,10 +805,21 @@ def start_run(argv: list[str], timeout: float | None = None,
         ladder=ladder,
     )
     out_dir = _output_dir()
+    serve_dir = http_serve_dir(out_dir, out_name, run_id) if serve_http else None
+    if serve_dir is not None:
+        # M13.6: the per-run stream dir — the argv that RUNS gets the
+        # full path (run.argv is this same list); the run record's
+        # 'output' above stays the bare name.
+        argv[-1] = str(serve_dir / os.path.basename(out_name))
+        notes.append(
+            f"output destined for http serving — placed in the per-run "
+            f"stream dir {serve_dir} (segments land beside the playlist)")
+        run.command = render_posix(argv)
     cwd = (
-        str(Path(out_dir).resolve())
-        if out_dir and not stream_scheme(out_name)
-        else None
+        str(serve_dir.resolve()) if serve_dir is not None
+        else (str(Path(out_dir).resolve())
+              if out_dir and not stream_scheme(out_name)
+              else None)
     )
     with _LOCK:
         logf = open(log_path, "wb")

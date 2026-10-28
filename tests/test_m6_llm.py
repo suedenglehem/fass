@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import io
 import json
+import socket
 import urllib.error
 
 import pytest
 
-from fass.nlu import llm as llm_mod
+from fass.nlu import _llm_from_config, llm as llm_mod
 from fass.nlu.llm import LLMAdapter
 
 
@@ -28,8 +29,8 @@ class _Resp:
         return False
 
 
-def _adapter(api_key: str | None = None) -> LLMAdapter:
-    return LLMAdapter(api_key=api_key, model="qwen3.8-27b",
+def _adapter(api_key: str | None = None, timeout: float = 90.0) -> LLMAdapter:
+    return LLMAdapter(api_key=api_key, model="qwen3.8-27b", timeout=timeout,
                       provider="openai", host="127.0.0.1", port=8080)
 
 
@@ -135,3 +136,101 @@ def test_probe_returns_answer_and_seconds(monkeypatch):
     answer, secs = _adapter().test()
     assert answer == "ok"
     assert secs >= 0.0
+
+
+# ------------------------------------------------- connection timeout (config)
+
+
+def _cfg_file(tmp_path, monkeypatch, llm: dict):
+    """Point FASS_CONFIG at a config.json holding just this llm block."""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"llm": llm}), encoding="utf-8")
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    return p
+
+
+def test_openai_request_carries_the_timeout(monkeypatch):
+    seen = []
+
+    def fake(req, timeout=None):
+        seen.append(timeout)
+        return _Resp(_ok_payload())
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    assert _adapter(timeout=3)._chat_openai("s", "u") == "ok"
+    assert seen == [3]
+
+
+def test_anthropic_request_carries_the_timeout(monkeypatch):
+    seen = []
+
+    def fake(req, timeout=None):
+        seen.append(timeout)
+        return _Resp({"content": [{"type": "text", "text": "ok"}]})
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    adapter = LLMAdapter(api_key="sk-x", timeout=6)
+    assert adapter._chat_anthropic("s", "u") == "ok"
+    assert seen == [6]
+
+
+def test_retry_keeps_the_configured_timeout(monkeypatch):
+    # the thinking-model retry must not fall back to a fresh default: both
+    # attempts run under the same configured budget
+    seen = []
+
+    def fake(req, timeout=None):
+        seen.append(timeout)
+        if len(seen) == 1:
+            return _Resp({"choices": [{
+                "message": {"content": None, "reasoning_content": "hmm…"},
+                "finish_reason": "length"}]})
+        return _Resp(_ok_payload("final answer"))
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    assert _adapter(timeout=4)._chat_openai("s", "u") == "final answer"
+    assert seen == [4, 4]
+
+
+def test_openai_timeout_is_a_clean_error(monkeypatch):
+    # a hung endpoint: the socket times out, the caller gets a readable
+    # RuntimeError (the config tab shows it verbatim) — not a hang
+    def fake(req, timeout=None):
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    with pytest.raises(RuntimeError, match="unreachable"):
+        _adapter(timeout=1)._chat_openai("s", "u")
+
+
+def test_anthropic_timeout_is_a_clean_error(monkeypatch):
+    def fake(req, timeout=None):
+        raise urllib.error.URLError(socket.timeout("timed out"))
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    with pytest.raises(RuntimeError, match="unreachable"):
+        LLMAdapter(api_key="sk-x", timeout=1)._chat_anthropic("s", "u")
+
+
+def test_adapter_from_config_uses_the_config_timeout(tmp_path, monkeypatch):
+    _cfg_file(tmp_path, monkeypatch,
+              {"provider": "openai", "host": "172.17.0.1", "port": 8080,
+               "model": "qwen3.8-27b", "timeout": 7})
+    adapter = _llm_from_config()
+    assert (adapter.provider, adapter.host, adapter.timeout) == ("openai", "172.17.0.1", 7)
+
+
+def test_adapter_from_config_anthropic_timeout(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _cfg_file(tmp_path, monkeypatch,
+              {"provider": "anthropic", "api_key": "sk-x", "timeout": 25})
+    adapter = _llm_from_config()
+    assert (adapter.provider, adapter.timeout) == ("anthropic", 25)
+
+
+def test_adapter_from_config_timeout_default(tmp_path, monkeypatch):
+    # an older config.json without the key: the adapter gets the 10 s default
+    _cfg_file(tmp_path, monkeypatch,
+              {"provider": "openai", "host": "172.17.0.1", "port": 8080,
+               "model": "qwen3.8-27b"})
+    assert _llm_from_config().timeout == 10

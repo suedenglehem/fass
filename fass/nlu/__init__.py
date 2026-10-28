@@ -13,8 +13,10 @@ def _llm_from_config() -> LLMAdapter:
         return LLMAdapter(
             api_key=llm.api_key or None, model=llm.model or None,
             provider="openai", host=llm.host or None, port=llm.port or None,
+            timeout=llm.timeout,
         )
-    return LLMAdapter(api_key=llm.api_key or None, model=llm.model or None)
+    return LLMAdapter(api_key=llm.api_key or None, model=llm.model or None,
+                      timeout=llm.timeout)
 
 
 def get_adapter(name: str = "auto") -> NLUAdapter:

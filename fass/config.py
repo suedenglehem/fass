@@ -46,6 +46,11 @@ class LLMConfig(BaseModel):
     )
     api_key: str = Field(default="", max_length=1024)
     model: str = Field(default="", max_length=256)
+    timeout: int = Field(
+        default=10, ge=1, le=300,
+        description="seconds allowed for one LLM request (connect + read); a "
+                    "hung endpoint fails fast instead of blocking the request",
+    )
 
 
 class StreamPortMapping(BaseModel):
@@ -79,6 +84,16 @@ class StreamingConfig(BaseModel):
                     "(default: bridge gateway)",
     )
     port_mappings: list[StreamPortMapping] = Field(default_factory=list)
+    http_base_url: str = Field(
+        default="http://localhost:8080", max_length=2048,
+        description="base URL of the fass-http sidecar serving the "
+                    "output volume's http/ stream tree (M13.6) — "
+                    "GET /v1/streams builds its URLs as "
+                    "<base>/http/<path>. docker/install.sh seeds it "
+                    "with the host address and the sidecar's port "
+                    "(FASS_HTTP_PORT, default 8080); the sidecar "
+                    "itself is brought up by compose, not by Apply",
+    )
 
 
 class GPUConfig(BaseModel):
