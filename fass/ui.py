@@ -74,18 +74,6 @@ html[data-theme="autodesk"] textarea { background: #303030; border-color: #222; 
 html[data-theme="autodesk"] button:not(.danger):not(.ghost):not(.copy) {
   background: #505050; border: 1px solid #606060; border-radius: 2px; color: var(--text); }
 html[data-theme="autodesk"] button:not(.danger):not(.ghost):not(.copy):hover { background: #626262; }
-html[data-theme="ffmpeg"] {
-  --bg: #fff; --card: #fff; --text: #333333; --muted: #777777;
-  --border: #dddddd; --accent: #337ab7;
-  --ready: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-}
-/* the FFmpeg-manual docs look: white page, blue links/buttons, gray code */
-html[data-theme="ffmpeg"] body { font: 14px/1.6 Arial, Helvetica, sans-serif; }
-html[data-theme="ffmpeg"] pre { background: #f5f5f5; }
-html[data-theme="ffmpeg"] a:hover { text-decoration: underline; }
-html[data-theme="ffmpeg"] button:not(.danger):not(.ghost):not(.copy) {
-  border: 1px solid #2e6da4; border-radius: 4px; }
-html[data-theme="ffmpeg"] button:not(.danger):not(.ghost):not(.copy):hover { background: #286090; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, sans-serif; }
@@ -127,6 +115,9 @@ textarea.cmd { font-family: ui-monospace, monospace; font-size: 13px; font-weigh
   color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
 h2 { font-size: 14px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 h3 { font-size: 14px; margin: 18px 0 6px; }
+/* section separators in the config card: the card frame's own line, full
+   frame width (the negative margins eat the card's padding + border) */
+.card hr.sep { border: 0; border-top: 1px solid var(--border); margin: 18px -17px 14px; }
 ul { margin: 4px 0; padding-left: 20px; }
 li { margin: 2px 0; }
 .copy { margin-left: 10px; padding: 2px 10px; font-size: 12px; background: none;
@@ -289,7 +280,7 @@ a { color: var(--accent); }
   <!-- ============================================================= CONFIG -->
   <div id="pane-cfg" hidden>
     <div class="card">
-      <h2 style="margin-top:0">Appearance</h2>
+      <h3 style="margin-top:0">Appearance</h3>
       <div class="row" style="align-items:center">
         <div style="flex:0 0 auto"><label for="theme">theme</label>
           <select id="theme">
@@ -298,16 +289,24 @@ a { color: var(--accent); }
             <option value="dark">night (dark)</option>
             <option value="kitty">Hello Kitty</option>
             <option value="autodesk">Autodesk (Maya)</option>
-            <option value="ffmpeg">FFmpeg (docs)</option>
           </select></div>
-        <span class="note">Stored in this browser only. 'auto' follows the OS color scheme.</span>
+        <div style="flex:0 0 auto"><label for="width">content width</label>
+          <select id="width">
+            <option value="">default (860px)</option>
+            <option value="1060">wide (+200px)</option>
+            <option value="1260">widest (+400px)</option>
+          </select></div>
+        <span class="note">Stored in this browser only. 'auto' follows the OS color
+        scheme; the width sets the main frame on every page.</span>
       </div>
-      <h2>Volumes — host folders ↔ container</h2>
+      <hr class="sep">
+      <h3>Volumes — host folders ↔ container</h3>
       <div class="row">
         <div><label>/input — inputs live here</label><input id="v-in" placeholder="/data/fass/input"></div>
         <div><label>/output — results land here</label><input id="v-out" placeholder="/data/fass/output"></div>
         <div><label>/log — run logs</label><input id="v-log" placeholder="/data/fass/log"></div>
       </div>
+      <hr class="sep">
       <h3>Streaming — port mappings (host port ↔ container port)</h3>
       <label class="check" style="margin-top:4px"><input type="checkbox" id="s-en"> enable stream host rewrite
         <span class="note">('host' in a URL → the docker host; udp/rtp inputs bind 0.0.0.0)</span></label>
@@ -320,12 +319,14 @@ a { color: var(--accent); }
       uses <span class="mono">udp://host:PORT</span>. Send/pull: the command targets
       <span class="mono">…://host:PORT</span> and the container resolves it to the host address.</p>
 
+      <hr class="sep">
       <h3>GPU (NVIDIA)</h3>
       <div class="row">
         <div><label class="check" style="margin:0"><input type="checkbox" id="g-en"> GPU enabled (nvenc h264/h265)</label></div>
         <div><label>device</label><input id="g-dev" value="all" placeholder="all, or e.g. 0"></div>
       </div>
 
+      <hr class="sep">
       <h3>LLM provider</h3>
       <div class="row">
         <div><label>provider</label>
@@ -338,6 +339,7 @@ a { color: var(--accent); }
       <button type="button" class="small ghost" style="margin-top:10px" onclick="llmTest(true)">test LLM (unsaved values)</button>
       <span id="llm-status"></span>
 
+      <hr class="sep">
       <h3>RAG — documentation retrieval</h3>
       <div id="rag-status" class="note"></div>
       <p class="note">The fass-rag sidecar serves pinned FFmpeg manual corpora; the LLM
@@ -346,14 +348,18 @@ a { color: var(--accent); }
       (or the <span class="mono">rag</span> block of config.json). It is fail-open: a dead
       service never blocks a generation or changes the command.</p>
 
+      <hr class="sep">
       <h3>Deploy</h3>
       <div id="cfg-status" class="note"></div>
       <div class="row" style="align-items:center">
         <div style="flex:0 0 auto"><button onclick="saveCfg()">Save</button></div>
         <div style="flex:0 0 auto"><button class="danger" id="apply-btn" onclick="applyCfg()" disabled>Apply to container</button></div>
       </div>
-      <h2>Generated compose (what Apply creates)</h2>
+      <h3>Generated compose (what Apply creates)</h3>
       <pre id="compose"></pre>
+      <hr class="sep">
+      <p class="note"><span id="ver"></span> · Post bugs here:
+      <a href="https://github.com/suedenglehem/fass/issues" target="_blank" rel="noopener">https://github.com/suedenglehem/fass/issues</a></p>
     </div>
   </div>
 
@@ -414,11 +420,16 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let lastRunId = null;
 let EXEC_ENABLED = false;
-fetch('/v1/env').then(r => r.json()).then(d => { EXEC_ENABLED = !!d.execution; }).catch(() => {});
+fetch('/v1/env').then(r => r.json()).then(d => {
+  EXEC_ENABLED = !!d.execution;
+  if (d.version) $('ver').textContent = 'v' + d.version;
+}).catch(() => {});
 
 /* Appearance: an explicit theme on <html data-theme> overrides the OS
    prefers-color-scheme; the pick persists in this browser. 'auto' removes
-   the attribute so the media query drives the scheme. */
+   the attribute so the media query drives the scheme. The content-width
+   pick sets an inline max-width on <main> (the CSS default is 860px);
+   '' = default. Both persist per browser only. */
 (function () {
   const root = document.documentElement;
   let saved = null;
@@ -432,6 +443,24 @@ fetch('/v1/env').then(r => r.json()).then(d => { EXEC_ENABLED = !!d.execution; }
       if (v === 'auto') delete root.dataset.theme;
       else root.dataset.theme = v;
       try { localStorage.setItem('fassTheme', v); } catch (e) {}
+    });
+  }
+  const wsel = $('width');
+  if (wsel) {
+    const main = document.querySelector('main');
+    let w = null;
+    try { w = localStorage.getItem('fassWidth'); } catch (e) {}
+    if (w && main) { wsel.value = w; main.style.maxWidth = w; }
+    wsel.addEventListener('change', () => {
+      const v = wsel.value;
+      if (main) {
+        if (v) main.style.maxWidth = v;
+        else delete main.style.maxWidth;
+      }
+      try {
+        if (v) localStorage.setItem('fassWidth', v);
+        else localStorage.removeItem('fassWidth');
+      } catch (e) {}
     });
   }
 })();

@@ -5,7 +5,37 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-27, M13 IMPLEMENTATION — M13.1 + M13.2 +
+- **Last state (2026-10-28, i7 docker volume mapping + install script —
+  UNCOMMITTED, commit only on user request):** i7 volumes remapped to
+  `/dd2/andrei/fass/media/{input,output,log}` (user-created folders;
+  persistent). Root cause of the empty Files tab + failed Apply:
+  containers bound **stale inodes** of the deleted+recreated
+  `docker-data/{input,output,log}` dirs (container saw sdh3 inodes,
+  host dirs live on sdi1); fresh binds on new paths resolve correctly.
+  New mechanism (repo-tracked, works on tr4 too): `docker/install.sh`
+  asks ONLY for host folders at install (input/output/log/config,
+  defaults `<repo>/media/*` + `<repo>/docker-data/config`; LLM model
+  NOT asked — Config tab's job), writes `docker/.env` (git-ignored,
+  machine-local) + seeds/merges the `config.json` volumes section,
+  builds + starts. `compose.yaml` interpolates `${FASS_INPUT_DIR:-
+  ../media/input}` etc. (repo-relative defaults — compose resolves
+  relative to the compose file's dir). **Config tab owns paths after
+  install**: Apply re-creates from config.json (verified: apply-result
+  "applied", media binds, GPU + docker.sock carried over), and
+  `launcher.sh sync_env` re-syncs `.env` from config.json before every
+  compose up (verified by simulated UI change → .env rewritten →
+  restored). i7 local compose keeps its opt-ins (socket mount,
+  FASS_DOCKER_MANAGE=1, GPU pin device_ids ["1"]) — compose.yaml stays
+  UNCOMMITTED on i7 per PRD 6.7; install.sh/launcher.sh/.gitignore/
+  docker README are repo changes. Gotcha found: `compose up` does NOT
+  recreate an unchanged fass-worker → its /config bind stayed stale;
+  fixed with `up -d --force-recreate fass-worker` (do that whenever
+  config dirs are remapped). E2E verified on i7: Files tab lists 6
+  assets (titan.mp4 + test set copied into media/input), webm run
+  success → titan.webm in media/output, run record+log in
+  media/log/runs. i7 `docker/.env` = media paths; host
+  `docker-data/config/config.json` volumes = media paths.
+- **Previous state (2026-10-27, M13 IMPLEMENTATION — M13.1 + M13.2 +
   M13.3 + M13.4 COMPLETE on tr4 6.1.1, DUAL-BUILD E2E GREEN (6.1.1 +
   9.0.1), suite 1365/1):**
   Plan (unchanged, FINAL, ca52114):

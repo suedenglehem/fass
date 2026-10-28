@@ -751,10 +751,14 @@ def start_run(argv: list[str], timeout: float | None = None,
             f"(set {ALLOW_EXECUTE_ENV}=1 to enable it)"
         )
     from fass.builder import render_posix
+    from fass.gpu import gate as gpu_gate
 
     problems = validate_argv(argv)
     if problems:
         raise ValueError("refusing to run — argv failed validation: " + "; ".join(problems))
+    refusal = gpu_gate(argv)  # M14: GPU commands generate, never execute here
+    if refusal:
+        raise PermissionError(refusal)
     argv, notes = resolve_paths(argv)
     ladder = _ladder_from_argv(argv)
 
@@ -814,6 +818,8 @@ def start_run_sequence(argvs: list[list[str]],
         raise ValueError("a run sequence needs at least two steps")
     from fass.builder import render_posix
 
+    from fass.gpu import gate as gpu_gate
+
     resolved: list[list[str]] = []
     notes: list[str] = []
     for i, argv in enumerate(argvs, 1):
@@ -822,6 +828,9 @@ def start_run_sequence(argvs: list[list[str]],
             raise ValueError(
                 f"refusing to run — step {i} argv failed validation: "
                 + "; ".join(problems))
+        refusal = gpu_gate(argv)  # M14: GPU commands generate, never execute
+        if refusal:
+            raise PermissionError(f"step {i}: {refusal}")
         argv, step_notes = resolve_paths(argv)
         resolved.append(argv)
         for n in step_notes:

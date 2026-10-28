@@ -38,10 +38,14 @@ services:
       # - "5000:5000/udp"
       # - "9000:9000/tcp"
     volumes:
-      - /dd2/andrei/fass/docker-data/input:/input
-      - /dd2/andrei/fass/docker-data/output:/output
-      - /dd2/andrei/fass/docker-data/log:/log
-      - /dd2/andrei/fass/docker-data/config:/config
+      # Host folders come from docker/.env (written by docker/install.sh,
+      # re-synced from config.json by launcher.sh — the Config tab owns
+      # them after install). Defaults are repo-relative, resolved against
+      # this file's directory.
+      - ${FASS_INPUT_DIR:-../media/input}:/input
+      - ${FASS_OUTPUT_DIR:-../media/output}:/output
+      - ${FASS_LOG_DIR:-../media/log}:/log
+      - ${FASS_CONFIG_DIR:-../docker-data/config}:/config
       # Config-tab Apply button (container self-management):
       # - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -55,6 +59,10 @@ services:
       # the compose network; the client is fail-open if it is down.
       - FASS_RAG_ENABLED=1
       - FASS_RAG_URL=http://fass-rag:8100
+      # GPU answer from install.sh (docker/.env): 0 = no GPU on this
+      # machine — GPU-involved commands generate but execution is
+      # refused (fass/gpu.py); 1 = probe nvidia-smi in the container
+      - FASS_GPU_PROBE=${FASS_GPU:-1}
     deploy:
       resources:
         reservations:
@@ -74,7 +82,7 @@ services:
     container_name: fass-worker
     command: ["worker", "--port", "8001"]
     volumes:
-      - /dd2/andrei/fass/docker-data/config:/config
+      - ${FASS_CONFIG_DIR:-../docker-data/config}:/config
       # - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - FASS_CONTAINER_NAME=fass

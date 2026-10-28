@@ -5,4 +5,4 @@ Small compiler with an LLM at the front:
                 -> deterministic planner/builder -> argv list -> POSIX render
 """
 
-__version__ = "0.1.0"
+__version__ = "1.137036"

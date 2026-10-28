@@ -25,19 +25,30 @@ only run it where you want fass to execute FFmpeg. A development checkout
 (`python -m fass serve` from the repo) never executes anything — the gate is
 environment-based, see [Execution](#execution).
 
-## Quick start
+## Install (host folders are the only install-time question)
 
 From the repo root:
 
 ```sh
-# 1. host folders (adjust to taste)
-mkdir -p docker-data/{input,output,log,config}
+./docker/install.sh            # asks for the input/output/log/config folders
+./docker/install.sh --yes      # defaults: <repo>/media/{input,output,log},
+                               # <repo>/docker-data/config
+```
 
-# 2. build + start (compose file is docker/compose.yaml)
-docker compose -f docker/compose.yaml up -d --build
+The script creates the folders, records them in **`docker/.env`** (compose
+interpolates `${FASS_INPUT_DIR}` etc.; defaults are repo-relative) and in
+the **`config.json` volumes section** (the Config tab's store), then builds
+and starts the stack. The LLM model is NOT asked — set it in the Config tab.
 
-# 3. open the UI
-#    http://<host>:8000
+After install the **Config tab owns the paths**: Apply re-creates the
+container from `config.json`, and `launcher.sh` re-syncs `docker/.env` from
+`config.json` before every compose up — so paths changed in the UI survive
+rebuilds. `docker/.env` is machine-local (git-ignored); the compose file
+stays generic. Manual route (what install.sh does, by hand):
+
+```sh
+mkdir -p media/{input,output,log} docker-data/config
+docker compose -f docker/compose.yaml up -d --build   # paths from docker/.env
 ```
 
 ### Launcher (start / stop + GUI)

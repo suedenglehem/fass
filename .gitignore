@@ -5,6 +5,11 @@ __pycache__/
 .pytest_cache/
 battery-out/
 docker-data/
+# machine-local volume paths (docker/install.sh writes these)
+docker/.env
+media/input/
+media/output/
+media/log/
 
 # RAG corpus data — rebuilt by rag/tools/build_corpus.sh
 # (recipe recorded in rag/corpus/BUILD-RECIPE.md)

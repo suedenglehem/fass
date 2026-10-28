@@ -37,7 +37,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from fass import dockerctl, execute
+from fass import __version__, dockerctl, execute
 from fass.config import (
     FassConfig,
     LLMConfig,
@@ -476,6 +476,7 @@ def create_app() -> FastAPI:
             bsfs[name] = {"present": name in ff.bsfs}
         return {
             "available": True,
+            "version": __version__,
             "build": ff.version,
             "registry_version": REGISTRY["registry_version"],
             "encoders": encoders,
