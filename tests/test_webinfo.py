@@ -388,18 +388,22 @@ def test_ui_has_the_verbose_toggle_and_the_info_tab():
 
 
 def test_ui_mediainfo_ticker_on_the_command_tab():
-    # the 'mediainfo' ticker (a peek, not a command option) sits on the
-    # Command tab, before preflight — the real media-info controls stay
-    # in the Info / Log tab
+    # Mediainfo is now a BUTTON on the FFmpeg tab (next to Generate), not a
+    # ticker: the old #mi checkbox is gone and the three option checkboxes
+    # (preflight / verbose / serve over http) are independent. The real
+    # media-info controls stay in the Info / Log tab.
     html = client.get("/").text
     cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
-    assert 'id="mi"' in cmd_pane and "mediainfo" in cmd_pane
-    assert cmd_pane.index('id="mi"') < cmd_pane.index('id="pf"')
+    # the old exclusive ticker checkbox is gone
+    assert '<input type="checkbox" id="mi">' not in cmd_pane
+    # the three real options remain, in order, and are no longer exclusive
     assert cmd_pane.index('id="pf"') < cmd_pane.index('id="verbose"')
     assert cmd_pane.index('id="verbose"') < cmd_pane.index('id="servehttp"')
-    assert 'id="genbtn"' in cmd_pane
-    # exclusive row: checking one unchecks the others
-    assert "['mi', 'pf', 'verbose', 'servehttp']" in html
+    assert "['mi', 'pf', 'verbose', 'servehttp']" not in html
+    # the Mediainfo button sits next to Generate (between Generate and Clear)
+    assert 'id="genbtn"' in cmd_pane and 'id="mi-btn"' in cmd_pane
+    assert 'onclick="runMediaInfo()"' in cmd_pane
+    assert cmd_pane.index('id="genbtn"') < cmd_pane.index('id="mi-btn"')
     assert "showMediaInfo" not in cmd_pane
     assert "mi-target" not in cmd_pane and "mi-file" not in cmd_pane
     assert "log-run" not in cmd_pane
@@ -416,41 +420,51 @@ def test_ui_mediainfo_ticker_on_the_command_tab():
     assert '<option value="output">output</option>' in info_pane
 
 
-def test_ui_mediainfo_ticker_does_not_require_instruction():
-    # the mediainfo peek only needs the input file: while the ticker is
-    # ticked, the Instruction field's native `required` is lifted (the
-    # browser would swallow the submit event before submit() ever runs),
-    # and it is restored whenever the ticker ends up off
+def test_ui_mediainfo_button_independent_of_instruction():
+    # the Mediainfo button is a peek that ignores the instruction: it does
+    # NOT go through the form submit, so the Instruction field keeps its
+    # native `required` always (the old miSet required-toggling is gone).
+    # While any instruction is present the button is disabled, so a real
+    # command is never silently replaced by a report.
     html = client.get("/").text
-    assert "function miSet(on)" in html
-    assert "$('instr').removeAttribute('required')" in html
-    assert "$('instr').setAttribute('required', '')" in html
-    # defined before the exclusive-row listeners use it
-    assert html.index("function miSet(on)") < html.index(
-        "for (const id of ['mi', 'pf', 'verbose', 'servehttp'])")
-    # every path that turns the ticker off goes through miSet: the user
-    # tick/uncheck, the other boxes unchecking it, and the Clear branch
-    assert "if (id === 'mi') { miSet($('mi').checked); return; }" in html
-    assert html.count("miSet(false);") >= 2
-    assert "$('mi').checked = false" not in html
+    # the old required-toggling helper and the exclusive-row listener are gone
+    assert "function miSet" not in html
+    assert "$('instr').removeAttribute('required')" not in html
+    assert "for (const id of ['mi', 'pf', 'verbose', 'servehttp'])" not in html
+    # the button is wired to a standalone probe, not the form submit
+    assert 'id="mi-btn"' in html
+    assert 'onclick="runMediaInfo()"' in html
+    assert "async function runMediaInfo()" in html
+    # the Instruction field stays required (the peek no longer needs to lift it)
+    cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
+    assert '<textarea id="instr" required' in cmd_pane
+    # syncMiBtn disables the button while any instruction is present
+    assert "function syncMiBtn()" in html
+    assert "$('mi-btn').disabled = $('instr').value.trim() !== ''" in html
+    # and it runs on every keystroke (and once at load) alongside compare mode
+    assert "setCompareMode(); syncMiBtn()" in html
 
 
 def test_ui_command_tab_clear_button():
-    # the Clear button sits immediately right of Generate and resets the
-    # whole Command pane: every field, the option checkboxes (through
-    # miSet, so Instruction's `required` comes back), the adapter, the
-    # extra inputs, and the result area
+    # the button row is Generate | Mediainfo | Clear; Clear resets the whole
+    # FFmpeg pane: every field, the option checkboxes, the adapter, the extra
+    # inputs, the result area, and the two derived states (the compare labels
+    # and the Mediainfo button)
     html = client.get("/").text
     cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
-    assert 'id="genbtn"' in cmd_pane and 'id="clearbtn"' in cmd_pane
-    assert cmd_pane.index('id="genbtn"') < cmd_pane.index('id="clearbtn"')
+    assert 'id="genbtn"' in cmd_pane and 'id="mi-btn"' in cmd_pane and 'id="clearbtn"' in cmd_pane
+    assert cmd_pane.index('id="genbtn"') < cmd_pane.index('id="mi-btn"') < cmd_pane.index('id="clearbtn"')
     assert 'onclick="clearCmdPane()"' in cmd_pane
     assert "function clearCmdPane()" in html
     for needle in ("$('instr').value = ''", "$('inp').value = ''",
                    "$('out').value = ''", "$('wm').value = ''",
                    "$('ad').value = 'auto'", "$('extra').innerHTML = ''",
-                   "miSet(false)", "setCompareMode()"):
+                   "$('pf').checked = false", "$('verbose').checked = false",
+                   "$('servehttp').checked = false", "setCompareMode()",
+                   "syncMiBtn()"):
         assert needle in html
+    # the old miSet helper is fully gone
+    assert "miSet" not in html
 
 
 def test_ui_ffmpeg_tab_label_and_prompts_view():
@@ -475,7 +489,10 @@ def test_ui_ffmpeg_tab_label_and_prompts_view():
     assert "function loadPrompts()" in html
     assert "function usePrompt(text)" in html
     assert "$('instr').value = text" in html
-    assert "setCompareMode(); // a programmatic value never fires the input listener" in html
+    # a programmatic fill never fires the input listener, so usePrompt
+    # re-derives both states (the compare labels + the Mediainfo button)
+    assert "compare labels and the Mediainfo button (which disables on an instruction)" in html
+    assert "syncMiBtn();" in html
 
 
 def test_ui_run_cmd_sends_the_instruction():

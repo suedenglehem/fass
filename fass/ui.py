@@ -226,12 +226,12 @@ a { color: var(--accent); }
     <label for="extra-h">Additional inputs (optional — audio/video/image files or streams, e.g. "replace the audio with song.mp3")</label>
     <div id="extra"></div>
     <button type="button" class="copy" onclick="addExtra()">+ add input</button>
-    <label class="check"><input type="checkbox" id="mi"> mediainfo <span class="note">(no command — show the ffprobe report of the input file here)</span></label>
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
     <label class="check"><input type="checkbox" id="verbose"> verbose log <span class="note">(every pass runs with -loglevel verbose; the log lands in the output folder's log/ directory — see the Info / Log tab)</span></label>
     <label class="check"><input type="checkbox" id="servehttp"> serve over http <span class="note">(the output lands in the fass-http sidecar's tree — open it in the Player tab; for .m3u8 / .mpd outputs)</span></label>
     <div class="row" style="align-items:center">
       <button type="submit" id="genbtn">Generate</button>
+      <button type="button" id="mi-btn" onclick="runMediaInfo()">Mediainfo</button>
       <button type="button" id="clearbtn" class="ghost" onclick="clearCmdPane()">Clear</button>
     </div>
   </form>
@@ -556,8 +556,15 @@ function setCompareMode() {
     ? 'Distorted (the transcoded clip — its name from the output folder; leave empty to auto-detect)'
     : OUT_HTML;
 }
-$('instr').addEventListener('input', setCompareMode);
+function syncMiBtn() {
+  // Mediainfo is a peek that ignores the instruction — disable the button
+  // while any instruction is present so a real command is never silently
+  // replaced by a report; it can only fire with an empty Instruction
+  $('mi-btn').disabled = $('instr').value.trim() !== '';
+}
+$('instr').addEventListener('input', () => { setCompareMode(); syncMiBtn(); });
 setCompareMode();
+syncMiBtn();
 let extraN = 0;
 function addExtra() {
   extraN += 1;
@@ -575,42 +582,6 @@ function addExtra() {
 }
 async function submit(e) {
   e.preventDefault();
-  // 'Clear' state: the mediainfo report is showing and the button has
-  // flipped — submitting now just puts the tab back to its normal state
-  if ($('genbtn').textContent === 'Clear') {
-    $('res').hidden = true;
-    $('res').innerHTML = '';
-    miSet(false);
-    $('genbtn').textContent = 'Generate';
-    return;
-  }
-  // 'mediainfo' ticked: no command — show the ffprobe report of the
-  // input file right here, and flip the button to 'Clear'
-  if ($('mi').checked) {
-    const file = $('inp').value.trim();
-    $('genbtn').disabled = true;
-    $('genbtn').textContent = 'probing…';
-    $('res').hidden = false;
-    $('res').innerHTML = '<span class="badge b-clar">probing…</span>';
-    try {
-      const r = await fetch('/v1/mediainfo?target=input&file=' + encodeURIComponent(file));
-      const data = await r.json();
-      if (!r.ok) {
-        $('res').innerHTML = `<span class="badge b-bad">mediainfo error</span>
-          <pre>${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2))}</pre>`;
-      } else {
-        $('res').innerHTML = `<span class="badge b-ready">mediainfo — ${esc(file)}</span>
-          <pre>${esc(JSON.stringify(data, null, 2))}</pre>`;
-        $('genbtn').textContent = 'Clear';
-      }
-    } catch (err) {
-      $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
-    }
-    $('genbtn').disabled = false;
-    if ($('genbtn').textContent !== 'Clear') $('genbtn').textContent = 'Generate';
-    return;
-  }
-  $('genbtn').textContent = 'Generate';
   const cmp = isCompare();
   const assets = {};
   if (cmp) {
@@ -655,6 +626,34 @@ async function submit(e) {
   } catch (err) {
     $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
   }
+}
+/* the Mediainfo button: a peek, not a command — probe the input file and
+   print its ffprobe report in the result area. It never goes through the
+   form submit, so it works with an empty Instruction (the button is
+   disabled while any instruction is present, so it can't replace a real
+   command). */
+async function runMediaInfo() {
+  const file = $('inp').value.trim();
+  const btn = $('mi-btn');
+  btn.disabled = true;
+  btn.textContent = 'probing…';
+  $('res').hidden = false;
+  $('res').innerHTML = '<span class="badge b-clar">probing…</span>';
+  try {
+    const r = await fetch('/v1/mediainfo?target=input&file=' + encodeURIComponent(file));
+    const data = await r.json();
+    if (!r.ok) {
+      $('res').innerHTML = `<span class="badge b-bad">mediainfo error</span>
+        <pre>${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2))}</pre>`;
+    } else {
+      $('res').innerHTML = `<span class="badge b-ready">mediainfo — ${esc(file)}</span>
+        <pre>${esc(JSON.stringify(data, null, 2))}</pre>`;
+    }
+  } catch (err) {
+    $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
+  }
+  btn.textContent = 'Mediainfo';
+  syncMiBtn();
 }
 function lists(items) {
   if (!items || !items.length) return '';
@@ -765,28 +764,13 @@ async function runCmd() {
   }
 }
 $('f').addEventListener('submit', submit);
-/* the Command tab's option checkboxes are mutually exclusive — checking
-   one unchecks the others ('mediainfo' is a peek, not a command option,
-   but it shares the row) */
-function miSet(on) {
-  $('mi').checked = on;
-  // a mediainfo peek only needs the input file — while the ticker is on,
-  // Instruction must not block the submit with its native `required`
-  // (the browser swallows the submit event before submit() ever runs)
-  if (on) $('instr').removeAttribute('required');
-  else $('instr').setAttribute('required', '');
-}
-for (const id of ['mi', 'pf', 'verbose', 'servehttp'])
-  $(id).addEventListener('change', () => {
-    if (id === 'mi') { miSet($('mi').checked); return; }
-    if (!$(id).checked) return;
-    miSet(false);
-    for (const o of ['pf', 'verbose', 'servehttp'])
-      if (o !== id) $(o).checked = false;
-  });
-/* the Clear button: resets the whole Command pane — every field, the
-   option checkboxes (miSet keeps Instruction's `required` in sync), the
-   adapter, the extra inputs, and the result area */
+/* the three option checkboxes (preflight / verbose / serve over http) are
+   independent — combine them freely. The old 'mediainfo' tick and its
+   mutual-exclusivity are gone: Mediainfo is now a button next to Generate
+   (runMediaInfo) that never needs an instruction. */
+/* the Clear button: resets the whole FFmpeg pane — every field, the option
+   checkboxes, the adapter, the extra inputs, the result area, and the two
+   derived states (the compare labels and the Mediainfo button) */
 function clearCmdPane() {
   $('instr').value = '';
   $('inp').value = '';
@@ -794,15 +778,15 @@ function clearCmdPane() {
   $('wm').value = '';
   $('ad').value = 'auto';
   $('extra').innerHTML = '';
-  miSet(false);
   $('pf').checked = false;
   $('verbose').checked = false;
   $('servehttp').checked = false;
-  $('genbtn').disabled = false;
-  $('genbtn').textContent = 'Generate';
   $('res').hidden = true;
   $('res').innerHTML = '';
-  setCompareMode(); // restore the default Input / Output labels + hide the hint
+  // a programmatic .value never fires the input listener, so re-derive both
+  // the compare labels and the Mediainfo button's disabled state
+  setCompareMode();
+  syncMiBtn();
 }
 
 /* ------------------------------------------------------------ runs tab */
@@ -1094,7 +1078,10 @@ async function loadPrompts() {
 }
 function usePrompt(text) {
   $('instr').value = text;
-  setCompareMode(); // a programmatic value never fires the input listener
+  // a programmatic value never fires the input listener — re-derive both the
+  // compare labels and the Mediainfo button (which disables on an instruction)
+  setCompareMode();
+  syncMiBtn();
   showTab('cmd');
 }
 
