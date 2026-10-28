@@ -328,6 +328,17 @@ def test_tsanalyze_strips_the_i_prefix(tmp_path, monkeypatch):
     assert "not an MPEG-TS" in r.json()["detail"]
 
 
+def test_tsanalyze_reaches_the_output_volume(tmp_path, monkeypatch):
+    # target=output resolves the OUTPUT folder (the Files-tab right-click
+    # offers tsanalyze in both panes) — a fake file there gets the mpegts
+    # gate 400, not a 404
+    _in, out_dir, _runs = _dirs(tmp_path, monkeypatch)
+    (out_dir / "clip.ts").write_bytes(b"not really a TS stream")
+    r = client.get("/v1/tsanalyze", params={"target": "output", "file": "clip.ts"})
+    assert r.status_code == 400
+    assert "not an MPEG-TS" in r.json()["detail"]
+
+
 @pytest.mark.skipif(
     not ffprobe_available() or not TITAN.is_file(),
     reason="ffprobe or media/titan.mp4 not available — needs real media",
@@ -424,6 +435,24 @@ def test_ui_mediainfo_ticker_does_not_require_instruction():
     assert "$('mi').checked = false" not in html
 
 
+def test_ui_command_tab_clear_button():
+    # the Clear button sits immediately right of Generate and resets the
+    # whole Command pane: every field, the option checkboxes (through
+    # miSet, so Instruction's `required` comes back), the adapter, the
+    # extra inputs, and the result area
+    html = client.get("/").text
+    cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
+    assert 'id="genbtn"' in cmd_pane and 'id="clearbtn"' in cmd_pane
+    assert cmd_pane.index('id="genbtn"') < cmd_pane.index('id="clearbtn"')
+    assert 'onclick="clearCmdPane()"' in cmd_pane
+    assert "function clearCmdPane()" in html
+    for needle in ("$('instr').value = ''", "$('inp').value = ''",
+                   "$('out').value = ''", "$('wm').value = ''",
+                   "$('ad').value = 'auto'", "$('extra').innerHTML = ''",
+                   "miSet(false)", "setCompareMode()"):
+        assert needle in html
+
+
 def test_ui_run_cmd_sends_the_instruction():
     # the NL instruction that generated the command is posted with the run
     # (run log footer: '# instruction:' above the command line)
@@ -461,9 +490,16 @@ def test_ui_files_tab_right_click_actions_and_free_space():
                    "fileAction('tsanalyze')",
                    'id="fm-asinput"', 'id="fm-toinput"', 'id="fm-tsanalyze"'):
         assert needle in html
-    # tsanalyze is offered only for TS-ish container extensions
-    # (case-insensitive — .TS/.MPG/etc. match the same class)
+    # tsanalyze is offered in BOTH panes for TS-ish container extensions
+    # (case-insensitive — .TS/.MPG/etc. match the same class); the gate is
+    # extension-only, no pane condition
     assert r"\.(ts|mpg|mpeg|ps)$" in html
+    assert "TS_EXT_RX.test(row.dataset.name) ? '' : 'none'" in html
+    assert "isInput && TS_EXT_RX" not in html
+    # and the action probes the pane the file was right-clicked in
+    # (input OR output volume), not a hardcoded 'input'
+    assert "$('mi-target').value = dir" in html
+    assert "$('mi-target').value = 'input'" not in html
     # the free-space line under each pane, one fetch for both
     for needle in ('id="files-disk-input"', 'id="files-disk-output"',
                    "loadDisk", "fetch('/v1/files/disk')"):

@@ -230,7 +230,10 @@ a { color: var(--accent); }
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
     <label class="check"><input type="checkbox" id="verbose"> verbose log <span class="note">(every pass runs with -loglevel verbose; the log lands in the output folder's log/ directory — see the Info / Log tab)</span></label>
     <label class="check"><input type="checkbox" id="servehttp"> serve over http <span class="note">(the output lands in the fass-http sidecar's tree — open it in the Player tab; for .m3u8 / .mpd outputs)</span></label>
-    <button type="submit" id="genbtn">Generate</button>
+    <div class="row" style="align-items:center">
+      <button type="submit" id="genbtn">Generate</button>
+      <button type="button" id="clearbtn" class="ghost" onclick="clearCmdPane()">Clear</button>
+    </div>
   </form>
   <div class="result" id="res" hidden></div>
   </div>
@@ -767,6 +770,26 @@ for (const id of ['mi', 'pf', 'verbose', 'servehttp'])
     for (const o of ['pf', 'verbose', 'servehttp'])
       if (o !== id) $(o).checked = false;
   });
+/* the Clear button: resets the whole Command pane — every field, the
+   option checkboxes (miSet keeps Instruction's `required` in sync), the
+   adapter, the extra inputs, and the result area */
+function clearCmdPane() {
+  $('instr').value = '';
+  $('inp').value = '';
+  $('out').value = '';
+  $('wm').value = '';
+  $('ad').value = 'auto';
+  $('extra').innerHTML = '';
+  miSet(false);
+  $('pf').checked = false;
+  $('verbose').checked = false;
+  $('servehttp').checked = false;
+  $('genbtn').disabled = false;
+  $('genbtn').textContent = 'Generate';
+  $('res').hidden = true;
+  $('res').innerHTML = '';
+  setCompareMode(); // restore the default Input / Output labels + hide the hint
+}
 
 /* ------------------------------------------------------------ runs tab */
 let runPoll = null;
@@ -1331,13 +1354,13 @@ function fileMenuAt(ev) {
   const menu = $('filemenu');
   menu.dataset.dir = row.dataset.dir;
   menu.dataset.name = row.dataset.name;
-  // pane-dependent items: 'as input' / 'tsanalyze' on the input pane,
-  // 'to input' on the output pane; tsanalyze only for TS-ish extensions
+  // pane-dependent items: 'as input' on the input pane, 'to input' on
+  // the output pane; tsanalyze in BOTH panes, only for TS-ish extensions
   const isInput = row.dataset.dir === 'input';
   $('fm-asinput').style.display = isInput ? '' : 'none';
   $('fm-toinput').style.display = isInput ? 'none' : '';
   $('fm-tsanalyze').style.display =
-    (isInput && TS_EXT_RX.test(row.dataset.name)) ? '' : 'none';
+    TS_EXT_RX.test(row.dataset.name) ? '' : 'none';
   menu.style.display = 'block';
   menu.style.left = '0px'; menu.style.top = '0px';
   const w = menu.offsetWidth, h = menu.offsetHeight;
@@ -1403,7 +1426,7 @@ async function fileAction(tool) {
     // mi-file is assigned LAST, after showInfo('mi') — fillMi() would
     // otherwise overwrite it from the Command tab's fields.
     showTab('info');
-    $('mi-target').value = 'input';
+    $('mi-target').value = dir; // the pane the file was right-clicked in
     if ($('info-mi').hidden) showInfo('mi');
     $('mi-file').value = name;
     showTSAnalyze();
