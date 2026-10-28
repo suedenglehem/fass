@@ -1252,3 +1252,46 @@ def test_ui_player_tab_wiring():
     assert "serve_http: $('servehttp').checked" in html
     # an http run's output cell links to the Player tab
     assert "run.http" in html
+
+
+# ------------------------------------------------------------- prompt log
+
+def _reset_prompt_log():
+    with app.state.prompt_log["lock"]:
+        app.state.prompt_log["items"].clear()
+
+
+def test_prompts_empty():
+    _reset_prompt_log()
+    assert client.get("/v1/prompts").json() == {"prompts": []}
+
+
+def test_prompts_records_only_accepted_instructions():
+    # the log keeps ONLY prompts the model accepted (status 'ready') —
+    # a pacing-only phrase with no action is needs_clarification, not logged
+    _reset_prompt_log()
+    r = post("read the input at real time", {"main": "clip.mp4"})
+    assert r.json()["status"] != "ready"
+    post("resize to 720p", {"main": "clip.mp4"})
+    post("resize to 1080p", {"main": "clip.mp4"})
+    d = client.get("/v1/prompts").json()
+    # newest first; the unaccepted prompt is absent
+    assert [p["instruction"] for p in d["prompts"]] == [
+        "resize to 1080p", "resize to 720p"]
+    assert all(isinstance(p["ts"], float) for p in d["prompts"])
+
+
+def test_prompts_are_capped_at_1000_newest_first():
+    log = app.state.prompt_log
+    with log["lock"]:
+        log["items"].clear()
+        for i in range(1002):
+            log["items"].append({"instruction": f"prompt {i}", "ts": float(i)})
+    try:
+        names = [p["instruction"] for p in
+                 client.get("/v1/prompts").json()["prompts"]]
+        assert len(names) == 1000
+        assert names[0] == "prompt 1001"  # newest first
+        assert names[-1] == "prompt 2"    # the two oldest dropped
+    finally:
+        _reset_prompt_log()

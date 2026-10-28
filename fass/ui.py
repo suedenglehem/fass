@@ -196,7 +196,7 @@ a { color: var(--accent); }
   you press Run.</p>
 
   <div class="tabs">
-    <button id="tab-cmd" class="on" onclick="showTab('cmd')">Command</button>
+    <button id="tab-cmd" class="on" onclick="showTab('cmd')">FFmpeg</button>
     <button id="tab-files" onclick="showTab('files')">Files</button>
     <button id="tab-runs" onclick="showTab('runs')">Runs</button>
     <button id="tab-player" onclick="showTab('player')">Player</button>
@@ -279,6 +279,7 @@ a { color: var(--accent); }
       <h2 style="margin-top:0">What to look at</h2>
       <label class="check" style="margin-top:0"><input type="radio" name="infosel" id="sel-mi" checked onchange="showInfo('mi')"> media info <span class="note">(ffprobe report on one file)</span></label>
       <label class="check"><input type="radio" name="infosel" id="sel-log" onchange="showInfo('log')"> run log <span class="note">(what ffmpeg printed while running)</span></label>
+      <label class="check"><input type="radio" name="infosel" id="sel-prompt" onchange="showInfo('prompts')"> prompts <span class="note">(the last 1000 instructions the model accepted — click one to reuse it in the FFmpeg tab)</span></label>
 
       <div id="info-mi">
         <div class="row">
@@ -302,6 +303,15 @@ a { color: var(--accent); }
         <span id="log-status" class="note"></span>
         <pre id="log-out" hidden style="margin-top:10px"></pre>
         <p class="note">Logs longer than 10000 lines are shown as their last 1000.</p>
+      </div>
+
+      <div id="info-prompts" hidden>
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:1 1 auto"><span class="note">Latest first. Click a prompt to put it into the FFmpeg tab's Instruction field.</span></div>
+          <div style="flex:0 0 auto"><button type="button" class="copy" onclick="loadPrompts()">↻ refresh</button></div>
+        </div>
+        <span id="prompt-status" class="note"></span>
+        <div id="prompt-out" style="margin-top:10px"></div>
       </div>
     </div>
   </div>
@@ -515,7 +525,11 @@ function showTab(t) {
     $('tab-'+p).classList.toggle('on', p === t);
   }
   if (t === 'runs') loadRuns();
-  if (t === 'info') { loadLogs(); showInfo($('sel-log').checked ? 'log' : 'mi'); }
+  if (t === 'info') {
+    loadLogs();
+    showInfo($('sel-prompt').checked ? 'prompts'
+           : $('sel-log').checked ? 'log' : 'mi');
+  }
   if (t === 'cfg') loadRag();
   if (t === 'files') loadFiles();
   if (t === 'player') { loadStreams(); startPlayerPoll(); }
@@ -941,7 +955,9 @@ async function purgeStreams() {
 function showInfo(which) {
   $('info-mi').hidden = (which !== 'mi');
   $('info-log').hidden = (which !== 'log');
+  $('info-prompts').hidden = (which !== 'prompts');
   if (which === 'mi') fillMi();
+  if (which === 'prompts') loadPrompts();
 }
 function fillMi() {
   // auto-fill from the Command tab's fields ('-i ' prefix stripped),
@@ -1046,6 +1062,40 @@ async function showLogFile() {
   } catch (e) {
     $('log-status').innerHTML = `<span class="err">${esc(e)}</span>`;
   }
+}
+async function loadPrompts() {
+  // the last 1000 accepted instructions, latest first; clicking one
+  // reuses it as the FFmpeg tab's instruction
+  const out = $('prompt-out');
+  $('prompt-status').textContent = 'loading…';
+  try {
+    const r = await fetch('/v1/prompts');
+    const data = await r.json();
+    const prompts = data.prompts || [];
+    $('prompt-status').textContent =
+      prompts.length ? '' : 'no accepted prompts yet';
+    out.innerHTML = '';
+    for (const p of prompts) {
+      const row = document.createElement('div');
+      row.className = 'filerow';
+      row.style.cursor = 'pointer';
+      row.title = p.instruction; // full text on hover (the row ellipsizes)
+      const when = new Date(p.ts * 1000).toLocaleString();
+      row.innerHTML =
+        `<span class="fname mono">${esc(p.instruction)}</span>` +
+        `<span class="note">${when}</span>`;
+      row.onclick = () => usePrompt(p.instruction);
+      out.appendChild(row);
+    }
+  } catch (e) {
+    $('prompt-status').innerHTML =
+      `<span class="err">prompt list failed: ${esc(e)}</span>`;
+  }
+}
+function usePrompt(text) {
+  $('instr').value = text;
+  setCompareMode(); // a programmatic value never fires the input listener
+  showTab('cmd');
 }
 
 /* ------------------------------------------------------------ config tab */
@@ -1397,8 +1447,8 @@ async function fileAction(tool) {
     // put this input-folder file into the Command tab's input field
     $('inp').value = name;
     openModal(name + ' — as input',
-      `<p class="note">Copied into the Command tab's
-       <span class="mono">Input video</span> field — switch to Command
+      `<p class="note">Copied into the FFmpeg tab's
+       <span class="mono">Input video</span> field — switch to FFmpeg
        and press <span class="mono">Generate</span> to run it.</p>`);
     return;
   }

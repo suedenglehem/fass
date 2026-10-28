@@ -30,6 +30,9 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
+from collections import deque
 from pathlib import Path
 from typing import Literal
 
@@ -277,6 +280,11 @@ def create_app() -> FastAPI:
         description="Natural language -> validated FFmpeg commands "
                     "(argv first; execution is an explicit per-deployment opt-in).",
     )
+    # Prompt log (Info/Log tab): the last 1000 instructions the model
+    # ACCEPTED (status 'ready') — in-memory, newest appended last, served
+    # newest-first. A fresh app (every deployment / test) starts empty.
+    app.state.prompt_log = {"lock": threading.Lock(),
+                            "items": deque(maxlen=1000)}
 
     @app.get("/healthz")
     def healthz():
@@ -306,6 +314,12 @@ def create_app() -> FastAPI:
             preflight_check=body.preflight,
             verbose=body.verbose,
         )
+        if resp.status == "ready":
+            # only prompts the model accepted as correct are remembered —
+            # needs_clarification / unsupported / error are not
+            with app.state.prompt_log["lock"]:
+                app.state.prompt_log["items"].append(
+                    {"instruction": body.instruction, "ts": time.time()})
         # Every domain outcome (ready / needs_clarification / unsupported /
         # error) is a structured 200; 4xx is reserved for malformed requests.
         return resp.to_dict()
@@ -1059,6 +1073,16 @@ def create_app() -> FastAPI:
         if path is None:
             raise HTTPException(404, "log not found")
         return execute.serve_log(path)
+
+    @app.get("/v1/prompts")
+    def list_prompts():
+        """The last 1000 instructions the model accepted (status 'ready'),
+        newest first — the 'prompts' view of the Info/Log tab. Clicking one
+        in the UI fills the FFmpeg tab's Instruction field."""
+        log = app.state.prompt_log
+        with log["lock"]:
+            items = list(reversed(log["items"]))
+        return {"prompts": items}
 
     @app.get("/media/output/{filename}")
     def media_output(filename: str):

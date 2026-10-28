@@ -453,6 +453,31 @@ def test_ui_command_tab_clear_button():
         assert needle in html
 
 
+def test_ui_ffmpeg_tab_label_and_prompts_view():
+    # the Command pane is renamed FFmpeg (the internal id stays 'cmd'),
+    # and the Info/Log pane gains a 'prompts' selector under 'run log'
+    html = client.get("/").text
+    bar = html.split('<div class="tabs">')[1].split("</div>")[0]
+    assert ">FFmpeg<" in bar and ">Command<" not in bar
+    info_pane = html.split('<div id="pane-info"')[1].split('<div id="pane-cfg"')[0]
+    assert 'id="sel-prompt"' in info_pane
+    assert "showInfo('prompts')" in info_pane
+    assert 'id="info-prompts"' in info_pane
+    # under 'run log'
+    assert info_pane.index('id="sel-log"') < info_pane.index('id="sel-prompt"')
+    # showInfo toggles the section + refreshes it; the tab-show hook
+    # respects the third selector
+    assert "$('info-prompts').hidden = (which !== 'prompts')" in html
+    assert "if (which === 'prompts') loadPrompts()" in html
+    assert "$('sel-prompt').checked ? 'prompts'" in html
+    # the list itself: fetch + clickable rows that fill the instruction
+    assert "fetch('/v1/prompts')" in html
+    assert "function loadPrompts()" in html
+    assert "function usePrompt(text)" in html
+    assert "$('instr').value = text" in html
+    assert "setCompareMode(); // a programmatic value never fires the input listener" in html
+
+
 def test_ui_run_cmd_sends_the_instruction():
     # the NL instruction that generated the command is posted with the run
     # (run log footer: '# instruction:' above the command line)
