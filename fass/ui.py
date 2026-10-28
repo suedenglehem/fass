@@ -197,12 +197,12 @@ a { color: var(--accent); }
 
   <div class="tabs">
     <button id="tab-cmd" class="on" onclick="showTab('cmd')">Command</button>
+    <button id="tab-files" onclick="showTab('files')">Files</button>
     <button id="tab-runs" onclick="showTab('runs')">Runs</button>
     <button id="tab-player" onclick="showTab('player')">Player</button>
     <button id="tab-info" onclick="showTab('info')">Info / Log</button>
-    <button id="tab-cfg" onclick="showTab('cfg')">Config</button>
     <button id="tab-rag" onclick="showTab('rag')">RAG</button>
-    <button id="tab-files" onclick="showTab('files')">Files</button>
+    <button id="tab-cfg" onclick="showTab('cfg')">Config</button>
   </div>
 
   <!-- ============================================================ COMMAND -->
@@ -412,24 +412,31 @@ a { color: var(--accent); }
       <h2 style="margin-top:0">Files — the input and output folders</h2>
       <p class="note">The two deployment volumes, newest first. Right-click a
       file for its <span class="mono">ffprobe</span> /
-      <span class="mono">mediainfo</span> report or its first frame.</p>
+      <span class="mono">mediainfo</span> report or its first frame, to use
+      it as the input, to tsanalyze it, or (from the output pane) to copy
+      it into the input folder. Free space is shown under each pane.</p>
       <button class="small ghost" style="margin-top:0" onclick="loadFiles()">↻ refresh</button>
       <div class="filecols">
         <div class="filecol">
           <div class="filehead">input <span class="note" id="files-count-input"></span></div>
           <div id="files-input" class="filelist"></div>
+          <p class="note" id="files-disk-input" style="margin:8px 2px 0"></p>
         </div>
         <div class="filecol">
           <div class="filehead">output <span class="note" id="files-count-output"></span></div>
           <div id="files-output" class="filelist"></div>
+          <p class="note" id="files-disk-output" style="margin:8px 2px 0"></p>
         </div>
       </div>
     </div>
   </div>
 
   <div id="filemenu" class="fmenu">
+    <button type="button" id="fm-asinput" style="display:none" onclick="fileAction('as-input')">as input</button>
+    <button type="button" id="fm-toinput" style="display:none" onclick="fileAction('to-input')">to input</button>
     <button type="button" onclick="fileAction('ffprobe')">ffprobe</button>
     <button type="button" onclick="fileAction('mediainfo')">mediainfo</button>
+    <button type="button" id="fm-tsanalyze" style="display:none" onclick="fileAction('tsanalyze')">tsanalyze</button>
     <button type="button" onclick="fileAction('frame')">1st frame</button>
   </div>
 
@@ -1250,11 +1257,28 @@ function ragResultsHtml(d) {
 }
 
 /* ------------------------------------------------------------ files tab */
+// right-click 'tsanalyze' is offered for these container extensions
+// (the server still checks the real format and 400s on non-TS files)
+const TS_EXT_RX = /\\.(ts|mpg|mpeg|ps)$/i;
 function fmtSize(n) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let v = Number(n) || 0, i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
   return (i === 0 ? v : v.toFixed(1)) + ' ' + units[i];
+}
+async function loadDisk() {
+  try {
+    const d = await (await fetch('/v1/files/disk')).json();
+    for (const key of ['input', 'output']) {
+      const v = d[key] || {};
+      $('files-disk-' + key).textContent = v.exists
+        ? 'free ' + fmtSize(v.free) + ' / total ' + fmtSize(v.total)
+        : 'volume not available';
+    }
+  } catch (e) {
+    $('files-disk-input').textContent = '';
+    $('files-disk-output').textContent = '';
+  }
 }
 function fmtDate(sec) {
   const d = new Date(Number(sec) * 1000);
@@ -1263,6 +1287,7 @@ function fmtDate(sec) {
     + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 async function loadFiles() {
+  loadDisk(); // fire-and-forget: one fetch feeds both pane footers
   for (const key of ['input', 'output']) {
     const box = $('files-' + key);
     try {
@@ -1296,6 +1321,13 @@ function fileMenuAt(ev) {
   const menu = $('filemenu');
   menu.dataset.dir = row.dataset.dir;
   menu.dataset.name = row.dataset.name;
+  // pane-dependent items: 'as input' / 'tsanalyze' on the input pane,
+  // 'to input' on the output pane; tsanalyze only for TS-ish extensions
+  const isInput = row.dataset.dir === 'input';
+  $('fm-asinput').style.display = isInput ? '' : 'none';
+  $('fm-toinput').style.display = isInput ? 'none' : '';
+  $('fm-tsanalyze').style.display =
+    (isInput && TS_EXT_RX.test(row.dataset.name)) ? '' : 'none';
   menu.style.display = 'block';
   menu.style.left = '0px'; menu.style.top = '0px';
   const w = menu.offsetWidth, h = menu.offsetHeight;
@@ -1328,6 +1360,45 @@ async function fileAction(tool) {
   const menu = $('filemenu');
   const dir = menu.dataset.dir, name = menu.dataset.name;
   if (!dir || !name) return;
+  if (tool === 'as-input') {
+    // put this input-folder file into the Command tab's input field
+    $('inp').value = name;
+    openModal(name + ' — as input',
+      `<p class="note">Copied into the Command tab's
+       <span class="mono">Input video</span> field — switch to Command
+       and press <span class="mono">Generate</span> to run it.</p>`);
+    return;
+  }
+  if (tool === 'to-input') {
+    openModal(name + ' — to input', '<span class="note">copying…</span>');
+    const body = $('modal-body');
+    try {
+      const r = await fetch('/v1/files/copy-to-input', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const d = await r.json();
+      if (!r.ok) { body.innerHTML = `<p class="err">${esc(detailMsg(d))}</p>`; return; }
+      body.innerHTML = `<p class="note">${esc(name)} is now in the input
+        folder (the output original was kept). Right-click it in the input
+        pane to use it — e.g. <b>as input</b>.</p>`;
+      loadFiles(); // panes + free space
+    } catch (e) {
+      body.innerHTML = `<p class="err">${esc(String(e))}</p>`;
+    }
+    return;
+  }
+  if (tool === 'tsanalyze') {
+    // reuse the Info/Log tab's TSAnalyze display: pick this file, then run.
+    // mi-file is assigned LAST, after showInfo('mi') — fillMi() would
+    // otherwise overwrite it from the Command tab's fields.
+    showTab('info');
+    $('mi-target').value = 'input';
+    if ($('info-mi').hidden) showInfo('mi');
+    $('mi-file').value = name;
+    showTSAnalyze();
+    return;
+  }
   openModal(name + ' — ' + (tool === 'frame' ? '1st frame' : tool),
     '<span class="note">reading…</span>');
   const body = $('modal-body');

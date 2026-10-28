@@ -239,6 +239,16 @@ class FrameRequest(BaseModel):
     file: str = Field(min_length=1, max_length=1024)
 
 
+class CopyToInputRequest(BaseModel):
+    """POST /v1/files/copy-to-input body (Files tab, the 'to input' menu
+    item on the OUTPUT pane): the bare basename of a file in the output
+    volume to copy into the input volume."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=1024)
+
+
 def _llm_status() -> dict:
     """Docker-control availability for the config tab. 'worker' (not
     'manage') is what gates the Apply button: the sidecar does the swap."""
@@ -799,6 +809,50 @@ def create_app() -> FastAPI:
             return {"dir": dir, "exists": False, "files": []}
         files.sort(key=lambda f: f["mtime"], reverse=True)
         return {"dir": dir, "exists": True, "files": files}
+
+    @app.get("/v1/files/disk")
+    def files_disk():
+        """Free space of the two deployment volumes — the Files tab prints
+        one line under each pane. shutil.disk_usage on the volume root (it
+        reports the filesystem the volume lives on); an unmounted volume
+        answers exists=false, like /v1/files."""
+        out: dict = {}
+        for which in ("input", "output"):
+            vol = _volume_dir(which)
+            root = Path(vol) if vol else None
+            if root is None or not root.is_dir():
+                out[which] = {"exists": False}
+                continue
+            du = shutil.disk_usage(root)
+            out[which] = {"exists": True, "total": du.total,
+                          "used": du.used, "free": du.free}
+        return out
+
+    @app.post("/v1/files/copy-to-input")
+    def files_copy_to_input(body: CopyToInputRequest):
+        """'to input' on the Files tab's output pane: copy a file from the
+        output volume into the input volume, so a processed result can be
+        fed straight back as the next run's input. Bare names only (the
+        volume-jail stance of /v1/files/inspect); a name that already
+        exists in the input folder is a 409 — this never silently
+        overwrites an input. The output original survives (copy, not move).
+        """
+        name = _bare_name(body.name)
+        src = execute.volume_file("output", name)
+        if src is None:
+            raise HTTPException(404, f"{name} not found in the output folder")
+        in_dir = _volume_dir("input")
+        if not in_dir:
+            raise HTTPException(
+                503, "the input volume is not mounted on this deployment")
+        dest = Path(in_dir) / name
+        if dest.exists():
+            raise HTTPException(409, f"{name} already exists in the input folder")
+        try:
+            shutil.copy2(src, dest)
+        except OSError as e:
+            raise HTTPException(500, f"copy failed: {e}")
+        return {"ok": True, "name": name}
 
     @app.get("/v1/streams")
     def streams_list():

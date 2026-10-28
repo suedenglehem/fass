@@ -836,6 +836,68 @@ def test_files_frame_audio_only_fails_open(tmp_path, monkeypatch):
     assert "jpeg_b64" not in d
 
 
+def test_files_disk_reports_free_space_of_both_volumes(tmp_path, monkeypatch):
+    # one line under each Files-tab pane: the volume's filesystem free/total
+    _vols(tmp_path, monkeypatch)
+    r = client.get("/v1/files/disk")
+    assert r.status_code == 200
+    d = r.json()
+    for which in ("input", "output"):
+        v = d[which]
+        assert v["exists"] is True
+        assert v["free"] > 0
+        assert v["total"] >= v["free"]
+        assert v["total"] >= v["used"]
+
+
+def test_files_disk_unmounted_volume_is_exists_false(tmp_path, monkeypatch):
+    _vols(tmp_path, monkeypatch)
+    monkeypatch.setenv(execute.OUTPUT_DIR_ENV, str(tmp_path / "nope"))
+    d = client.get("/v1/files/disk").json()
+    assert d["input"]["exists"] is True
+    assert d["output"] == {"exists": False}
+
+
+def test_files_copy_to_input_copies_and_keeps_the_original(tmp_path, monkeypatch):
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    (out_dir / "result.mp4").write_bytes(b"processed")
+    r = client.post("/v1/files/copy-to-input", json={"name": "result.mp4"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "name": "result.mp4"}
+    assert (in_dir / "result.mp4").read_bytes() == b"processed"
+    # a copy, not a move: the output original survives
+    assert (out_dir / "result.mp4").read_bytes() == b"processed"
+
+
+def test_files_copy_to_input_existing_name_is_409(tmp_path, monkeypatch):
+    # never silently overwrites an input
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    (in_dir / "same.mp4").write_bytes(b"original input")
+    (out_dir / "same.mp4").write_bytes(b"processed")
+    r = client.post("/v1/files/copy-to-input", json={"name": "same.mp4"})
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+    assert (in_dir / "same.mp4").read_bytes() == b"original input"
+
+
+def test_files_copy_to_input_missing_file_is_404(tmp_path, monkeypatch):
+    _vols(tmp_path, monkeypatch)
+    r = client.post("/v1/files/copy-to-input", json={"name": "ghost.mp4"})
+    assert r.status_code == 404
+    assert "not found in the output folder" in r.json()["detail"]
+
+
+def test_files_copy_to_input_bare_names_only(tmp_path, monkeypatch):
+    # the same volume-jail stance as /v1/files/inspect
+    _vols(tmp_path, monkeypatch)
+    for bad in ("../x", "a/b.mp4", "..", "sub/../x"):
+        r = client.post("/v1/files/copy-to-input", json={"name": bad})
+        assert r.status_code == 400, bad
+    # an empty name is a schema rejection, not a jail escape
+    assert client.post("/v1/files/copy-to-input",
+                       json={"name": ""}).status_code == 422
+
+
 def test_ui_has_the_files_tab():
     html = client.get("/").text
     assert 'id="tab-files"' in html and "showTab('files')" in html

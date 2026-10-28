@@ -7,6 +7,7 @@ Run under pytest from the repo root (fastapi TestClient, no server).
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
@@ -421,3 +422,40 @@ def test_ui_shows_the_raw_llm_output_block():
     # appended in render() for every status (ready / clarify / unsupported /
     # error), not just the ready path
     assert "html += rawLlmHtml(d)" in html
+
+
+def test_ui_tab_bar_order_files_second_config_last():
+    # user-requested order: Command, Files, Runs, Player, Info / Log, RAG,
+    # Config — the tab bar only (the showTab pane list is order-independent
+    # and keeps its own asserted shape)
+    html = client.get("/").text
+    bar = html.split('<div class="tabs">')[1].split("</div>")[0]
+    assert re.findall(r"showTab\('([a-z]+)'\)", bar) == [
+        "cmd", "files", "runs", "player", "info", "rag", "cfg"]
+
+
+def test_ui_files_tab_right_click_actions_and_free_space():
+    html = client.get("/").text
+    # the three pane-dependent context-menu items (hidden until fileMenuAt
+    # decides they apply)
+    for needle in ("fileAction('as-input')", "fileAction('to-input')",
+                   "fileAction('tsanalyze')",
+                   'id="fm-asinput"', 'id="fm-toinput"', 'id="fm-tsanalyze"'):
+        assert needle in html
+    # tsanalyze is offered only for TS-ish container extensions
+    # (case-insensitive — .TS/.MPG/etc. match the same class)
+    assert r"\.(ts|mpg|mpeg|ps)$" in html
+    # the free-space line under each pane, one fetch for both
+    for needle in ('id="files-disk-input"', 'id="files-disk-output"',
+                   "loadDisk", "fetch('/v1/files/disk')"):
+        assert needle in html
+    # the actions themselves: 'as input' writes the Command tab's input
+    # field; 'to input' posts the server copy; tsanalyze reuses the
+    # Info / Log tab's TSAnalyze display
+    assert "$('inp').value = name" in html
+    assert "fetch('/v1/files/copy-to-input'" in html
+    # mi-file is assigned only after showInfo('mi') — fillMi() would
+    # otherwise overwrite it from the Command tab's fields
+    assert "$('mi-file').value = name" in html
+    assert html.index("$('mi-file').value = name") > \
+        html.index("if ($('info-mi').hidden) showInfo('mi');")
