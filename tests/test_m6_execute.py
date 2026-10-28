@@ -555,6 +555,28 @@ def test_log_footer_records_command_and_duration(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
+def test_log_footer_records_instruction_before_command(tmp_path, monkeypatch):
+    # the NL instruction that generated the command lands in the footer
+    # ABOVE the command line (whitespace-collapsed), so the log is
+    # self-describing
+    monkeypatch.setenv(execute.ALLOW_EXECUTE_ENV, "1")
+    run = execute.start_run(_lavfi_argv("1"),
+                            instruction="  make   a 1s demo\nclip ")
+    st = _wait(run.id)
+    assert st["status"] == "success", st
+    log = execute._log_file(run.id).read_text(encoding="utf-8")
+    assert "# instruction: make a 1s demo clip" in log
+    lines = log.splitlines()
+    idx = {}
+    for j, l in enumerate(lines):
+        for tag in ("# instruction:", "# command:", "# duration:"):
+            if l.startswith(tag) and tag not in idx:
+                idx[tag] = j
+    assert set(idx) == {"# instruction:", "# command:", "# duration:"}
+    assert idx["# instruction:"] < idx["# command:"] < idx["# duration:"]
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not on PATH")
 def test_chained_processings_share_input_folder(monkeypatch):
     # The chaining flow: the first processing writes into the input folder
     # ('/input/step1.mp4'), the second picks the result up by bare name.

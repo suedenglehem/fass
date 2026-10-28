@@ -771,14 +771,18 @@ def execution_enabled() -> bool:
 
 
 def start_run(argv: list[str], timeout: float | None = None,
-              verbose: bool = False, serve_http: bool = False) -> Run:
+              verbose: bool = False, serve_http: bool = False,
+              instruction: str | None = None) -> Run:
     """Validate and start a run; raises ValueError for invalid argv or a
     disabled execution mode. verbose (M10.7): the log goes to
     {output_dir}/log/{run_id}.log instead of run_dir(). serve_http
     (M13.6): the output is destined for the fass-http sidecar — a bare
     local playlist lands in the per-run dir {output}/http/<run_id>/
     (see http_serve_dir) so its segments cannot collide with other
-    runs; the run record's output stays the bare name."""
+    runs; the run record's output stays the bare name. instruction:
+    the natural-language text the command was generated from — the log
+    footer records it above the command line, so the log is
+    self-describing."""
     if not execution_enabled():
         raise PermissionError(
             "execution is disabled on this deployment "
@@ -838,7 +842,7 @@ def start_run(argv: list[str], timeout: float | None = None,
     threading.Thread(
         target=_watch,
         args=(run_id, proc, logf, timeout, cwd, ladder, run.command,
-              time.monotonic()),
+              time.monotonic(), instruction),
         daemon=True,
     ).start()
     return run
@@ -846,7 +850,8 @@ def start_run(argv: list[str], timeout: float | None = None,
 
 def start_run_sequence(argvs: list[list[str]],
                        timeout: float | None = None,
-                       verbose: bool = False) -> Run:
+                       verbose: bool = False,
+                       instruction: str | None = None) -> Run:
     """Validate and start a MULTI-PASS run (M10.5, two-pass vidstab).
 
     The steps run one at a time, in order, in the SAME working directory
@@ -907,23 +912,28 @@ def start_run_sequence(argvs: list[list[str]],
     threading.Thread(
         target=_watch_sequence,
         args=(run_id, resolved, cwd, timeout, logf, notes,
-              [render_posix(a) for a in resolved], time.monotonic()),
+              [render_posix(a) for a in resolved], time.monotonic(),
+              instruction),
         daemon=True,
     ).start()
     return run
 
 
-def _log_footer(logf, commands: list[str], t0: float | None) -> None:
-    """Self-contained log tail: the command(s) that ran plus the wall time.
+def _log_footer(logf, commands: list[str], t0: float | None,
+                instruction: str | None = None) -> None:
+    """Self-contained log tail: the instruction that generated the
+    command(s), the command(s) that ran, plus the wall time.
 
     Written to the shared log after the process has exited. The child
     wrote through its own (inherited) fd, so the Python object's position
     is still 0 — seek to the end before appending, or the footer clobbers
     the start of the log."""
-    if not commands and t0 is None:
+    if not commands and t0 is None and not instruction:
         return
     try:
         lines: list[str] = []
+        if instruction and (flat := " ".join(instruction.split())):
+            lines.append(f"# instruction: {flat}")
         if commands:
             if len(commands) == 1:
                 lines.append(f"# command: {commands[0]}")
@@ -943,7 +953,8 @@ def _log_footer(logf, commands: list[str], t0: float | None) -> None:
 def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
                     timeout: float | None, logf, notes: list[str],
                     commands: list[str] | None = None,
-                    t0: float | None = None) -> None:
+                    t0: float | None = None,
+                    instruction: str | None = None) -> None:
     """Run the steps one at a time into the shared log; the first
     non-zero exit (or a timeout, or a stop) finalizes the run. _ACTIVE
     holds the CURRENT step's process, so stop_run kills whichever step
@@ -976,7 +987,7 @@ def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
             status = "success"
     finally:
         _update(run_id, status=status, exit_code=rc, notes=notes + progress)
-        _log_footer(logf, commands or [], t0)
+        _log_footer(logf, commands or [], t0, instruction)
         logf.close()
         with _LOCK:
             _ACTIVE.pop(run_id, None)
@@ -985,7 +996,8 @@ def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
 
 def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
            cwd=None, ladder: dict | None = None,
-           command: str | None = None, t0: float | None = None) -> None:
+           command: str | None = None, t0: float | None = None,
+           instruction: str | None = None) -> None:
     try:
         if timeout:
             try:
@@ -1009,7 +1021,7 @@ def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
                 if note:
                     _append_note(run_id, note)
     finally:
-        _log_footer(logf, [command] if command else [], t0)
+        _log_footer(logf, [command] if command else [], t0, instruction)
         logf.close()
         with _LOCK:
             _ACTIVE.pop(run_id, None)

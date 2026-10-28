@@ -166,6 +166,41 @@ def test_runs_invalid_argv_422(cfg_env, run_env, monkeypatch):
     assert r.status_code == 422
 
 
+def test_runs_instruction_length_bounded(cfg_env, run_env):
+    r = client.post("/v1/runs", json={
+        "arguments": ["ffmpeg", "-version"], "instruction": "x" * 20001})
+    assert r.status_code == 422
+
+
+_LAVFI = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+          "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
+          "-c:v", "libx264", "-f", "mp4", "instrtest.mp4"]
+
+
+def test_runs_accepts_instruction_and_logs_it(cfg_env, run_env, monkeypatch):
+    # the NL instruction that generated the command is recorded in the run
+    # log footer, above the command line
+    if not __import__("shutil").which("ffmpeg"):
+        pytest.skip("ffmpeg not on PATH")
+    monkeypatch.setenv("FASS_ALLOW_EXECUTE", "1")
+    r = client.post("/v1/runs", json={
+        "arguments": _LAVFI, "instruction": "make a one second demo clip"})
+    assert r.status_code == 200
+    rid = r.json()["run"]["id"]
+    import time
+
+    st = {"status": "running"}
+    deadline = time.time() + 30
+    while time.time() < deadline and st["status"] == "running":
+        st = client.get(f"/v1/runs/{rid}").json()
+        time.sleep(0.2)
+    assert st["status"] == "success", st
+    log = client.get(f"/v1/runs/{rid}/log").text
+    i_ins = log.find("# instruction: make a one second demo clip")
+    i_cmd = log.find("# command:")
+    assert 0 <= i_ins < i_cmd
+
+
 def test_runs_list_and_404(run_env):
     r = client.get("/v1/runs")
     assert r.status_code == 200

@@ -8,6 +8,7 @@ Run under pytest from the repo root (fastapi TestClient, no server).
 from __future__ import annotations
 
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -297,6 +298,68 @@ def test_mediainfo_real_media_returns_ffprobe_json(tmp_path, monkeypatch):
     assert r.json()["format"]["filename"].endswith("done.mp4")
 
 
+# ------------------------------------------------------------- tsanalyze
+
+@pytest.mark.parametrize("bad", ["a/b", "sub/dir/x.ts", "..hidden", "../up.ts"])
+def test_tsanalyze_rejects_non_basename_names(bad):
+    r = client.get("/v1/tsanalyze", params={"target": "input", "file": bad})
+    assert r.status_code == 400
+
+
+def test_tsanalyze_rejects_bad_target_and_empty_file(tmp_path, monkeypatch):
+    _dirs(tmp_path, monkeypatch)
+    assert client.get("/v1/tsanalyze", params={"target": "bogus", "file": "x.ts"}).status_code == 400
+    assert client.get("/v1/tsanalyze", params={"target": "input", "file": ""}).status_code == 400
+
+
+def test_tsanalyze_missing_file_is_404(tmp_path, monkeypatch):
+    _dirs(tmp_path, monkeypatch)
+    assert client.get("/v1/tsanalyze", params={"target": "input", "file": "nope.ts"}).status_code == 404
+
+
+def test_tsanalyze_strips_the_i_prefix(tmp_path, monkeypatch):
+    in_dir, _out, _runs = _dirs(tmp_path, monkeypatch)
+    (in_dir / "clip.ts").write_bytes(b"not really a TS stream")
+    r = client.get("/v1/tsanalyze", params={"target": "input", "file": "-i clip.ts"})
+    # the file exists, so the request is not a 400/404 — ffprobe on the
+    # fake file fails the mpegts gate, which is the documented 400 path
+    assert r.status_code == 400
+    assert "not an MPEG-TS" in r.json()["detail"]
+
+
+@pytest.mark.skipif(
+    not ffprobe_available() or not TITAN.is_file(),
+    reason="ffprobe or media/titan.mp4 not available — needs real media",
+)
+def test_tsanalyze_rejects_a_non_mpegts_container(tmp_path, monkeypatch):
+    # titan.mp4 is an MP4 container: the mpegts gate must refuse it
+    in_dir, _out, _runs = _dirs(tmp_path, monkeypatch)
+    shutil.copy(TITAN, in_dir / "titan.mp4")
+    r = client.get("/v1/tsanalyze", params={"target": "input", "file": "titan.mp4"})
+    assert r.status_code == 400
+    assert "not an MPEG-TS" in r.json()["detail"]
+
+
+@pytest.mark.skipif(
+    not ffprobe_available() or not TITAN.is_file() or not FFMPEG,
+    reason="ffmpeg/ffprobe or media/titan.mp4 not available — needs real media",
+)
+def test_tsanalyze_on_a_real_ts_file(tmp_path, monkeypatch):
+    in_dir, _out, _runs = _dirs(tmp_path, monkeypatch)
+    ts = in_dir / "clip.ts"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(TITAN),
+                    "-c", "copy", str(ts)], check=True, timeout=60)
+    r = client.get("/v1/tsanalyze", params={"target": "input", "file": "clip.ts"})
+    if shutil.which("tsanalyze"):
+        # the deployment image ships the tool: a plain-text TS report
+        assert r.status_code == 200, r.text
+        assert r.text.strip()
+    else:
+        # a dev machine without tsduck: the documented 502 path
+        assert r.status_code == 502
+        assert "tsanalyze" in r.json()["detail"]
+
+
 # ------------------------------------------------------------------- the UI
 
 def test_ui_has_the_verbose_toggle_and_the_info_tab():
@@ -312,13 +375,37 @@ def test_ui_has_the_verbose_toggle_and_the_info_tab():
     assert html.count("verbose: $('verbose').checked") == 2  # submit() + runCmd()
 
 
-def test_ui_keeps_all_mediainfo_controls_off_the_command_tab():
+def test_ui_mediainfo_ticker_on_the_command_tab():
+    # the 'mediainfo' ticker (a peek, not a command option) sits on the
+    # Command tab, before preflight — the real media-info controls stay
+    # in the Info / Log tab
     html = client.get("/").text
     cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
-    assert "mediainfo" not in cmd_pane.lower()
-    assert "Show media info" not in cmd_pane
+    assert 'id="mi"' in cmd_pane and "mediainfo" in cmd_pane
+    assert cmd_pane.index('id="mi"') < cmd_pane.index('id="pf"')
+    assert cmd_pane.index('id="pf"') < cmd_pane.index('id="verbose"')
+    assert cmd_pane.index('id="verbose"') < cmd_pane.index('id="servehttp"')
+    assert 'id="genbtn"' in cmd_pane
+    # exclusive row: checking one unchecks the others
+    assert "['mi', 'pf', 'verbose', 'servehttp']" in html
+    assert "showMediaInfo" not in cmd_pane
+    assert "mi-target" not in cmd_pane and "mi-file" not in cmd_pane
     assert "log-run" not in cmd_pane
     # exactly one media-info control, inside the info pane
     assert html.count("Show media info") == 1
     info_pane = html.split('<div id="pane-info"')[1].split('<div id="pane-cfg"')[0]
     assert "Show media info" in info_pane and "log-run" in info_pane
+    # the TSAnalyze button sits next to Show media info, disabled until a
+    # probed file proves it is an MPEG-TS container
+    assert 'id="tsbtn"' in info_pane and "TSAnalyze" in info_pane
+    assert 'disabled onclick="showTSAnalyze()"' in info_pane
+    # 'Look in' options are bare 'input' / 'output'
+    assert '<option value="input">input</option>' in info_pane
+    assert '<option value="output">output</option>' in info_pane
+
+
+def test_ui_run_cmd_sends_the_instruction():
+    # the NL instruction that generated the command is posted with the run
+    # (run log footer: '# instruction:' above the command line)
+    html = client.get("/").text
+    assert "instruction: $('instr').value.trim() || null" in html

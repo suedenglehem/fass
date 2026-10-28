@@ -183,6 +183,12 @@ class RunRequest(BaseModel):
                     "so its segments cannot collide with other runs — "
                     "GET /v1/streams lists what the sidecar serves",
     )
+    instruction: str | None = Field(
+        default=None, max_length=20000,
+        description="the natural-language instruction the command was "
+                    "generated from — recorded in the run log footer "
+                    "above the command, so the log is self-describing",
+    )
 
     @model_validator(mode="after")
     def _steps_consistent(self) -> "RunRequest":
@@ -616,11 +622,12 @@ def create_app() -> FastAPI:
         try:
             if body.steps:
                 run = execute.start_run_sequence(
-                    body.steps, timeout=body.timeout, verbose=body.verbose)
+                    body.steps, timeout=body.timeout, verbose=body.verbose,
+                    instruction=body.instruction)
             else:
                 run = execute.start_run(
                     argv, timeout=body.timeout, verbose=body.verbose,
-                    serve_http=body.serve_http)
+                    serve_http=body.serve_http, instruction=body.instruction)
         except PermissionError as e:
             raise HTTPException(403, str(e))
         except ValueError as e:
@@ -691,6 +698,57 @@ def create_app() -> FastAPI:
         except json.JSONDecodeError:
             raise HTTPException(
                 502, f"ffprobe output was not JSON: {proc.stdout[-500:]}")
+
+    @app.get("/v1/tsanalyze", response_class=PlainTextResponse)
+    def tsanalyze(target: str = "input", file: str = ""):
+        """TSAnalyze: the tsanalyze tool's (tsduck suite) full report on
+        an MPEG-TS file in the input or output volume, as plain text.
+        The file must probe as an mpegts container first — tsanalyze is
+        a TS-only analyzer and a raw mp4 would just produce an error.
+        Shown in the Info/Log tab where the media info is shown."""
+        if target not in ("input", "output"):
+            raise HTTPException(400, "target must be 'input' or 'output'")
+        given = file.strip()
+        if not given:
+            raise HTTPException(400, "file: give a bare filename")
+        name = _strip_i_prefix(given)
+        if not name:
+            raise HTTPException(400, "file: give a bare filename")
+        if "/" in name or name.startswith(".."):
+            raise HTTPException(
+                400, "file must be a bare name in the input or output folder")
+        path = execute.volume_file(target, name)
+        if path is None:
+            raise HTTPException(404, f"{name} not found in the {target} folder")
+        if not ffprobe_available():
+            raise HTTPException(502, "ffprobe is not installed on this build")
+        probe = ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_format", str(path)]
+        try:
+            p = subprocess.run(probe, capture_output=True, text=True,
+                               timeout=60, check=False)
+            fmt = json.loads(p.stdout).get("format", {}).get("format_name", "")
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            fmt = ""
+        if not fmt.startswith("mpegts"):
+            raise HTTPException(
+                400, f"{name} is not an MPEG-TS file "
+                     f"(ffprobe format: {fmt or 'unknown'})")
+        if not shutil.which("tsanalyze"):
+            raise HTTPException(502,
+                                "tsanalyze is not installed on this build")
+        try:
+            proc = subprocess.run(
+                ["tsanalyze", str(path)], capture_output=True, text=True,
+                timeout=600, check=False)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise HTTPException(502, f"tsanalyze failed: {e}")
+        out = (proc.stdout or "").strip()
+        if not out:
+            raise HTTPException(
+                502, f"tsanalyze failed: "
+                     f"{(proc.stderr or '')[-500:] or f'exit {proc.returncode}'}")
+        return out
 
     # ------------------------------------------------------ files (Files tab)
 

@@ -226,10 +226,11 @@ a { color: var(--accent); }
     <label for="extra-h">Additional inputs (optional — audio/video/image files or streams, e.g. "replace the audio with song.mp3")</label>
     <div id="extra"></div>
     <button type="button" class="copy" onclick="addExtra()">+ add input</button>
+    <label class="check"><input type="checkbox" id="mi"> mediainfo <span class="note">(no command — show the ffprobe report of the input file here)</span></label>
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
     <label class="check"><input type="checkbox" id="verbose"> verbose log <span class="note">(every pass runs with -loglevel verbose; the log lands in the output folder's log/ directory — see the Info / Log tab)</span></label>
     <label class="check"><input type="checkbox" id="servehttp"> serve over http <span class="note">(the output lands in the fass-http sidecar's tree — open it in the Player tab; for .m3u8 / .mpd outputs)</span></label>
-    <button type="submit">Generate</button>
+    <button type="submit" id="genbtn">Generate</button>
   </form>
   <div class="result" id="res" hidden></div>
   </div>
@@ -279,11 +280,12 @@ a { color: var(--accent); }
       <div id="info-mi">
         <div class="row">
           <div><label for="mi-target">Look in</label>
-            <select id="mi-target" onchange="fillMi()"><option value="input">input file</option><option value="output">output file</option></select></div>
+            <select id="mi-target" onchange="fillMi()"><option value="input">input</option><option value="output">output</option></select></div>
           <div><label for="mi-file">File (bare name in that folder)</label>
             <input id="mi-file" placeholder="clip.mp4"></div>
         </div>
         <button type="button" onclick="showMediaInfo()">Show media info</button>
+        <button type="button" id="tsbtn" disabled onclick="showTSAnalyze()">TSAnalyze</button>
         <span id="mi-status" class="note"></span>
         <pre id="mi-out" hidden style="margin-top:10px"></pre>
       </div>
@@ -549,6 +551,42 @@ function addExtra() {
 }
 async function submit(e) {
   e.preventDefault();
+  // 'Clear' state: the mediainfo report is showing and the button has
+  // flipped — submitting now just puts the tab back to its normal state
+  if ($('genbtn').textContent === 'Clear') {
+    $('res').hidden = true;
+    $('res').innerHTML = '';
+    $('mi').checked = false;
+    $('genbtn').textContent = 'Generate';
+    return;
+  }
+  // 'mediainfo' ticked: no command — show the ffprobe report of the
+  // input file right here, and flip the button to 'Clear'
+  if ($('mi').checked) {
+    const file = $('inp').value.trim();
+    $('genbtn').disabled = true;
+    $('genbtn').textContent = 'probing…';
+    $('res').hidden = false;
+    $('res').innerHTML = '<span class="badge b-clar">probing…</span>';
+    try {
+      const r = await fetch('/v1/mediainfo?target=input&file=' + encodeURIComponent(file));
+      const data = await r.json();
+      if (!r.ok) {
+        $('res').innerHTML = `<span class="badge b-bad">mediainfo error</span>
+          <pre>${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data, null, 2))}</pre>`;
+      } else {
+        $('res').innerHTML = `<span class="badge b-ready">mediainfo — ${esc(file)}</span>
+          <pre>${esc(JSON.stringify(data, null, 2))}</pre>`;
+        $('genbtn').textContent = 'Clear';
+      }
+    } catch (err) {
+      $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
+    }
+    $('genbtn').disabled = false;
+    if ($('genbtn').textContent !== 'Clear') $('genbtn').textContent = 'Generate';
+    return;
+  }
+  $('genbtn').textContent = 'Generate';
   const cmp = isCompare();
   const assets = {};
   if (cmp) {
@@ -661,7 +699,12 @@ async function runCmd() {
   const argv = JSON.parse($('cmdargs').textContent);
   // serve_http is an execution-time choice: it redirects this run's output into
   // the fass-http sidecar's tree so the Player tab can stream it.
-  const body = { arguments: argv, verbose: $('verbose').checked, serve_http: $('servehttp').checked };
+  const body = {
+    arguments: argv, verbose: $('verbose').checked, serve_http: $('servehttp').checked,
+    // the instruction the command was generated from — recorded in the
+    // run log footer above the command, so the log is self-describing
+    instruction: $('instr').value.trim() || null,
+  };
   const text = $('cmd').value;
   // an expert edit is sent as `command` (shlex-split + revalidated server-side);
   // an untouched textarea keeps the exact generated argv, as before
@@ -689,6 +732,15 @@ async function runCmd() {
   }
 }
 $('f').addEventListener('submit', submit);
+/* the Command tab's option checkboxes are mutually exclusive — checking
+   one unchecks the others ('mediainfo' is a peek, not a command option,
+   but it shares the row) */
+for (const id of ['mi', 'pf', 'verbose', 'servehttp'])
+  $(id).addEventListener('change', () => {
+    if (!$(id).checked) return;
+    for (const o of ['mi', 'pf', 'verbose', 'servehttp'])
+      if (o !== id) $(o).checked = false;
+  });
 
 /* ------------------------------------------------------------ runs tab */
 let runPoll = null;
@@ -848,6 +900,8 @@ function fillMi() {
   const src = ($('mi-target').value === 'output')
     ? $('out').value.trim() : $('inp').value.trim();
   $('mi-file').value = src.replace(/^-i\\s+/, '');
+  // the selection changed: TSAnalyze is enabled again by the next probe
+  $('tsbtn').disabled = true;
 }
 async function showMediaInfo() {
   const target = $('mi-target').value;
@@ -865,10 +919,44 @@ async function showMediaInfo() {
     $('mi-status').textContent = '';
     out.hidden = false;
     out.textContent = JSON.stringify(data, null, 2);
+    // TSAnalyze applies to MPEG-TS containers only — enable it when the
+    // probed file is one (the server enforces the same check)
+    const fmt = (data && data.format && data.format.format_name) || '';
+    $('tsbtn').disabled = !/^mpegts/i.test(fmt);
   } catch (err) {
     out.hidden = true;
     $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
   }
+}
+/* TSAnalyze: the tsanalyze tool's full TS report (tsduck) — plain text,
+   shown where the media info is shown */
+async function showTSAnalyze() {
+  const target = $('mi-target').value;
+  const file = $('mi-file').value.trim();
+  if (!file) {
+    $('mi-status').textContent = 'give the file name first';
+    return;
+  }
+  const btn = $('tsbtn');
+  btn.disabled = true;
+  $('mi-status').textContent = 'running tsanalyze…';
+  try {
+    const r = await fetch(`/v1/tsanalyze?target=${encodeURIComponent(target)}&file=${encodeURIComponent(file)}`);
+    const text = await r.text();
+    if (!r.ok) {
+      let detail = text;
+      try { detail = JSON.parse(text).detail || text; } catch (_) {}
+      $('mi-status').innerHTML = `<span class="err">${esc(detail)}</span>`;
+      $('mi-out').hidden = true;
+      return;
+    }
+    $('mi-status').textContent = '';
+    $('mi-out').textContent = text;
+    $('mi-out').hidden = false;
+  } catch (err) {
+    $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
+  }
+  btn.disabled = false;
 }
 async function loadLogs() {
   const sel = $('log-run');
