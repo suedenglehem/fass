@@ -405,6 +405,25 @@ def test_ui_mediainfo_ticker_on_the_command_tab():
     assert '<option value="output">output</option>' in info_pane
 
 
+def test_ui_mediainfo_ticker_does_not_require_instruction():
+    # the mediainfo peek only needs the input file: while the ticker is
+    # ticked, the Instruction field's native `required` is lifted (the
+    # browser would swallow the submit event before submit() ever runs),
+    # and it is restored whenever the ticker ends up off
+    html = client.get("/").text
+    assert "function miSet(on)" in html
+    assert "$('instr').removeAttribute('required')" in html
+    assert "$('instr').setAttribute('required', '')" in html
+    # defined before the exclusive-row listeners use it
+    assert html.index("function miSet(on)") < html.index(
+        "for (const id of ['mi', 'pf', 'verbose', 'servehttp'])")
+    # every path that turns the ticker off goes through miSet: the user
+    # tick/uncheck, the other boxes unchecking it, and the Clear branch
+    assert "if (id === 'mi') { miSet($('mi').checked); return; }" in html
+    assert html.count("miSet(false);") >= 2
+    assert "$('mi').checked = false" not in html
+
+
 def test_ui_run_cmd_sends_the_instruction():
     # the NL instruction that generated the command is posted with the run
     # (run log footer: '# instruction:' above the command line)

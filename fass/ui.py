@@ -563,7 +563,7 @@ async function submit(e) {
   if ($('genbtn').textContent === 'Clear') {
     $('res').hidden = true;
     $('res').innerHTML = '';
-    $('mi').checked = false;
+    miSet(false);
     $('genbtn').textContent = 'Generate';
     return;
   }
@@ -751,10 +751,20 @@ $('f').addEventListener('submit', submit);
 /* the Command tab's option checkboxes are mutually exclusive — checking
    one unchecks the others ('mediainfo' is a peek, not a command option,
    but it shares the row) */
+function miSet(on) {
+  $('mi').checked = on;
+  // a mediainfo peek only needs the input file — while the ticker is on,
+  // Instruction must not block the submit with its native `required`
+  // (the browser swallows the submit event before submit() ever runs)
+  if (on) $('instr').removeAttribute('required');
+  else $('instr').setAttribute('required', '');
+}
 for (const id of ['mi', 'pf', 'verbose', 'servehttp'])
   $(id).addEventListener('change', () => {
+    if (id === 'mi') { miSet($('mi').checked); return; }
     if (!$(id).checked) return;
-    for (const o of ['mi', 'pf', 'verbose', 'servehttp'])
+    miSet(false);
+    for (const o of ['pf', 'verbose', 'servehttp'])
       if (o !== id) $(o).checked = false;
   });
 
