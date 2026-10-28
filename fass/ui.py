@@ -95,10 +95,11 @@ textarea { min-height: 64px; resize: vertical; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 12px;
   font-size: 14px; color: var(--text); }
 .check input { width: auto; }
-button { margin-top: 14px; padding: 9px 18px; font: inherit; font-weight: 600;
-  color: #fff; background: var(--accent); border: 0; border-radius: 6px; cursor: pointer; }
+button { margin-top: 14px; padding: 7px 14px; font: inherit; font-weight: 600;
+  color: #fff; background: color-mix(in srgb, var(--accent) 80%, #000); border: 0; border-radius: 6px; cursor: pointer; }
 button.small { margin-top: 0; padding: 3px 10px; font-size: 12px; font-weight: 500; }
 button.danger { background: var(--bad); }
+button#apply-btn { background: #1c5c52; }
 button.ghost { background: none; border: 1px solid var(--border); color: var(--muted); }
 .badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
   font-size: 13px; font-weight: 600; margin-bottom: 10px; }
