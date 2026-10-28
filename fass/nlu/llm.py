@@ -313,9 +313,15 @@ class LLMAdapter:
         )
         data = _extract_json(text)
         try:
-            return Envelope.model_validate(data)
+            env = Envelope.model_validate(data)
         except Exception as e:  # pydantic ValidationError or bad structure
-            raise RuntimeError(f"model output failed schema validation: {e}") from e
+            err = RuntimeError(f"model output failed schema validation: {e}")
+            # the verbatim reply — when the model's JSON is broken, that is
+            # exactly the thing the user needs to see to debug it
+            err.raw_output = text
+            raise err from e
+        env.raw = text  # the model's verbatim reply, surfaced by the UI
+        return env
 
     def test(self) -> tuple[str, float]:
         """Minimal end-to-end probe (config tab 'test LLM'): a one-word

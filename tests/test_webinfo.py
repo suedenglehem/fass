@@ -409,3 +409,15 @@ def test_ui_run_cmd_sends_the_instruction():
     # (run log footer: '# instruction:' above the command line)
     html = client.get("/").text
     assert "instruction: $('instr').value.trim() || null" in html
+
+
+def test_ui_shows_the_raw_llm_output_block():
+    # the Command tab renders the model's verbatim reply (the pre-processing
+    # LLM output) as a collapsible block appended to every generation result
+    html = client.get("/").text
+    assert "rawLlmHtml" in html
+    assert "raw LLM output" in html
+    assert "d.raw_llm" in html
+    # appended in render() for every status (ready / clarify / unsupported /
+    # error), not just the ready path
+    assert "html += rawLlmHtml(d)" in html

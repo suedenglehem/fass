@@ -662,6 +662,14 @@ function sourcesHtml(ev) {
     html += '<p class="note">' + ev.warnings.map(w => '— ' + esc(w)).join('<br>') + '</p>';
   return html + '</details>';
 }
+/* The LLM's verbatim reply — what the model actually returned, before any
+   processing (JSON extraction, schema validation, plan building). LLM
+   adapter only; the rules adapter has no raw text. */
+function rawLlmHtml(d) {
+  if (!d.raw_llm) return '';
+  return `<details class="sources"><summary>raw LLM output <span class="note">(the model's verbatim reply — before any processing)</span></summary>
+    <pre>${esc(d.raw_llm)}</pre></details>`;
+}
 function render(d) {
   const badge = d.status === 'ready' ? 'b-ready' :
                 d.status === 'needs_clarification' ? 'b-clar' : 'b-bad';
@@ -693,6 +701,7 @@ function render(d) {
   } else {
     html += '<h2>Errors</h2>' + lists(d.errors);
   }
+  html += rawLlmHtml(d);
   $('res').innerHTML = html;
 }
 async function runCmd() {

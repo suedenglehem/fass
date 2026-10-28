@@ -53,6 +53,7 @@ def test_ready_returns_argv_command_and_plan():
     assert d["plan"] is not None
     assert d["validation_level"] == "static"
     assert d["adapter"] == "rules"
+    assert d["raw_llm"] is None  # deterministic adapter: no model reply
 
 
 def test_ready_without_existing_file_is_still_ready():
@@ -63,6 +64,64 @@ def test_ready_without_existing_file_is_still_ready():
     d = r.json()
     assert d["status"] == "ready"
     assert d["arguments"][0] == "ffmpeg"
+
+
+def _llm_env(tmp_path, monkeypatch):
+    """A config that makes the llm adapter 'available' (host/port/model)."""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"llm": {"provider": "openai",
+                                     "host": "127.0.0.1", "port": 8080,
+                                     "model": "m"}}), encoding="utf-8")
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+
+
+def test_llm_path_returns_the_raw_model_reply(monkeypatch, tmp_path):
+    # the LLM's verbatim answer (fences and all) comes back as raw_llm,
+    # next to the validated command — the model's output before any
+    # processing, not the post-validation shape
+    from fass.nlu import get_adapter
+    from fass.nlu.llm import LLMAdapter
+    from fass.schema import Asset, guess_kind
+
+    rules = get_adapter("rules").parse(
+        "resize to 720p",
+        {"main": Asset(path="clip.mp4", kind=guess_kind("clip.mp4"))})
+    canned = ("```json\n"
+              + json.dumps({"status": "ready",
+                            "plan": rules.plan.model_dump(mode="json")})
+              + "\n```")
+    _llm_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(LLMAdapter, "_chat_openai",
+                        lambda self, system, user: canned)
+    r = client.post("/v1/commands", json={
+        "instruction": "resize to 720p", "assets": {"main": "clip.mp4"},
+        "adapter": "llm"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "ready"
+    assert d["adapter"] == "llm"
+    assert d["command"].startswith("ffmpeg ")
+    assert d["raw_llm"] == canned
+
+
+def test_llm_schema_failure_still_returns_the_raw_reply(monkeypatch, tmp_path):
+    # when the model's JSON fails the envelope schema, the response is an
+    # error — but raw_llm keeps the verbatim reply, so the UI can show
+    # what the model actually said
+    from fass.nlu.llm import LLMAdapter
+
+    garbage = '{"status": "wobbly"}'
+    _llm_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(LLMAdapter, "_chat_openai",
+                        lambda self, system, user: garbage)
+    r = client.post("/v1/commands", json={
+        "instruction": "resize to 720p", "assets": {"main": "clip.mp4"},
+        "adapter": "llm"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "error"
+    assert "schema validation" in d["errors"][0]
+    assert d["raw_llm"] == garbage
 
 
 def test_i_prefix_input_convention_stripped():

@@ -67,6 +67,11 @@ class GenerationResponse:
     # M11.2: documentation evidence (PRD §6.4) — citations derived from
     # the plan's used components; None when there is nothing to cite.
     evidence: dict | None = None
+    # The LLM's verbatim reply — what the model returned before any
+    # processing (JSON extraction / schema validation / plan building) —
+    # so the UI can show it. None for the rules adapter and when the model
+    # never produced an answer (transport failure).
+    raw_llm: str | None = None
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -405,8 +410,13 @@ def generate(
     except Exception as e:  # provider/transport/schema failures
         resp.status = "error"
         resp.errors = [f"parser error: {e}"]
+        # on a schema-validation failure the LLM adapter attached the
+        # verbatim reply to the error — a broken plan is exactly when the
+        # user wants to see what the model actually returned
+        resp.raw_llm = getattr(e, "raw_output", None)
         return resp
 
+    resp.raw_llm = result.raw
     resp.clarifications = [c.model_dump() for c in result.clarifications]
     resp.unsupported = [u.model_dump() for u in result.unsupported]
     resp.defaults.extend(result.defaults)

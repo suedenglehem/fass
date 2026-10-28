@@ -897,6 +897,11 @@ class ParseResult(BaseModel):
     clarifications: list[Clarification] = Field(default_factory=list)
     unsupported: list[UnsupportedPart] = Field(default_factory=list)
     defaults: list[str] = Field(default_factory=list)
+    # The LLM adapter records the model's VERBATIM reply here, so the UI can
+    # show what the model actually returned before any processing (JSON
+    # extraction, schema validation, plan building). Deterministic adapters
+    # have no raw text and leave it None.
+    raw: str | None = None
 
 # ---------------------------------------------------------------- assets
 

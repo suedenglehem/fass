@@ -13,6 +13,7 @@ import pytest
 
 from fass.nlu import _llm_from_config, llm as llm_mod
 from fass.nlu.llm import LLMAdapter
+from fass.schema import Asset, ParseStatus, guess_kind
 
 
 class _Resp:
@@ -234,3 +235,32 @@ def test_adapter_from_config_timeout_default(tmp_path, monkeypatch):
               {"provider": "openai", "host": "172.17.0.1", "port": 8080,
                "model": "qwen3.8-27b"})
     assert _llm_from_config().timeout == 90
+
+
+# ------------------------------------------------------------- raw output
+
+def test_parse_records_the_verbatim_model_output(monkeypatch):
+    # the model's reply is preserved verbatim (fences and all) in
+    # ParseResult.raw, so the UI can show what the LLM actually returned
+    raw = ('```json\n{"status": "unsupported",\n'
+           ' "unsupported": [{"fragment": "rotate 45 deg", '
+           '"reason": "only 90-degree rotations"}]}\n```')
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen",
+                        lambda req, timeout=None: _Resp(_ok_payload(raw)))
+    res = _adapter().parse(
+        "rotate the file 45 degrees",
+        {"main": Asset(path="clip.mp4", kind=guess_kind("clip.mp4"))})
+    assert res.status is ParseStatus.UNSUPPORTED
+    assert res.raw == raw
+
+
+def test_parse_schema_failure_carries_the_verbatim_output(monkeypatch):
+    # broken model JSON -> the error still carries the verbatim reply,
+    # because a broken plan is exactly when the user needs to see the raw
+    garbage = '{"status": "wobbly"}'
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen",
+                        lambda req, timeout=None: _Resp(_ok_payload(garbage)))
+    with pytest.raises(RuntimeError, match="schema validation") as ei:
+        _adapter().parse(
+            "x", {"main": Asset(path="clip.mp4", kind=guess_kind("clip.mp4"))})
+    assert ei.value.raw_output == garbage
