@@ -743,6 +743,18 @@ class EditPlan(BaseModel):
     input_id: str = Field(default="main", min_length=1, max_length=64)
     output: OutputSpec
     trim: TrimSpec | None = None
+    realtime_input: bool = Field(
+        default=False,
+        description="Pace the main input's read at native frame rate "
+                    "(-re, 'pseudo-live' / 'read at real time'): the file "
+                    "is consumed in real time instead of as fast as "
+                    "ffmpeg can, so e.g. a live (event) HLS playlist is "
+                    "followed by a player while it is still being "
+                    "generated. The main input only — auxiliary inputs "
+                    "(watermark, replacement audio) are never paced. "
+                    "Has no effect on a stream input that is already "
+                    "real time.",
+    )
     bitstream_filters: list[BitstreamFilterSpec] | None = Field(
         default=None, max_length=8,
         description="Bitstream filters to apply to the compressed stream "

@@ -108,7 +108,11 @@ SUPPORTED_SUMMARY = (
     "format options ('faststart', "
     "'hls_time=6', 'mpegts_flags=resend_headers'), live HLS ('live hls', "
     "'live hls with a 10 segment window' — a rolling event playlist; "
-    "'and delete old segments' opts in to segment cleanup), ABR ladders "
+    "'and delete old segments' opts in to segment cleanup), pseudo-live "
+    "pacing ('pseudo-live', 'read at real time' — the input is read at "
+    "native frame rate, -re: the file plays in real time, e.g. so a live "
+    "HLS playlist is followed by a player while it is still being "
+    "generated), ABR ladders "
     "('abr hls with levels 216p 300k, 360p 700k, 480p 1500k', 'dash "
     "ladder', '3 quality levels' — one encode per level: HLS variant "
     "playlists plus a synthesized master playlist, or a single DASH "
@@ -817,6 +821,27 @@ def _detect_qsv(t: str) -> bool | None:
     if _QSV_OFF.search(t):
         return False
     if _QSV_ON.search(t):
+        return True
+    return None
+
+
+_REALTIME_ON = re.compile(
+    r"\bpseudo[- ]?live\b|\bread\s+(?:the\s+input\s+)?at\s+real\s+time\b",
+    re.I)
+_REALTIME_OFF = re.compile(
+    r"\bno\s+pacing\b|\bwithout\s+pacing\b|\bdon'?t\s+pace\b"
+    r"|\bnot\s+(?:at|in)\s+real\s+time\b", re.I)
+
+
+def _detect_realtime_input(t: str) -> bool | None:
+    """'pseudo-live' / 'read at real time' -> True; 'no pacing' /
+    'don't pace' -> False; nothing said -> None (the plan keeps its
+    current value). Note 'pseudo-live hls' also matches the M13.2 live
+    HLS phrasing on purpose: the paced line is the same event playlist
+    with -re in front of the input."""
+    if _REALTIME_OFF.search(t):
+        return False
+    if _REALTIME_ON.search(t):
         return True
     return None
 
@@ -2639,6 +2664,7 @@ class RulesAdapter:
             tf_ops.append(FilterOp(
                 domain="video", expr=f"scale_cuda=w={w}:h={h}"))
         qsv = _detect_qsv(t_det)
+        realtime = _detect_realtime_input(t_det)
         video_codec_opts, audio_codec_opts = _detect_codec_options(t_det)
         # bitstream filters claimed their own option tokens (e.g. a 'level'
         # for h264_metadata must not double-land as an encoder level)
@@ -2951,6 +2977,7 @@ class RulesAdapter:
                 filters=filters, filtergraph=filtergraph, combine=combine,
                 compare=compare,
                 input_ext=input_ext,
+                realtime=realtime,
                 video_codec_options=video_codec_opts,
                 audio_codec_options=audio_codec_opts,
             )
@@ -2963,6 +2990,8 @@ class RulesAdapter:
         else:
             plan = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
             plan.trim = trim
+            if realtime is True:
+                plan.realtime_input = True
             if trim is not None and _copy_trim_requested(t_det):
                 trim.stream_copy = True
             ops = []
@@ -3260,6 +3289,11 @@ class RulesAdapter:
                 plan.output.format_options = format_options
                 notes.append("format options: "
                              + ", ".join(f"{k}={v}" for k, v in format_options.items()))
+            if plan.realtime_input:
+                notes.append(
+                    "input read paced at native frame rate (-re, "
+                    "pseudo-live) — the file plays in real time instead "
+                    "of as fast as ffmpeg can")
             if bsfs:
                 plan.bitstream_filters = [
                     BitstreamFilterSpec(name=f["name"], options=f["options"])
@@ -3302,6 +3336,7 @@ class RulesAdapter:
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
                     audio_resample=None, subtitle=None, gpu=None, qsv=None, codec=None,
+                    realtime=None,
                     container=None, audio_codec=None, audio_container=None,
                     audio_bitrate=None, video_bitrate=None, mode=None,
                     sub_dump=None, filters=None, filtergraph=None, combine=None,
@@ -3618,6 +3653,12 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks,
         plan.output.format_options = {**plan.output.format_options, **fo}
         changed.append("format options: "
                        + ", ".join(f"{k}={v}" for k, v in fo.items()))
+
+    if realtime is not None and plan.realtime_input != realtime:
+        plan.realtime_input = realtime
+        changed.append(
+            "input pacing -> real time (-re pseudo-live)"
+            if realtime else "input pacing -> as fast as possible")
 
     # bitstream filters: a named filter replaces the current list (a new
     # 'h264_metadata level=5.1' means 'set it to 5.1')

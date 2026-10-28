@@ -74,7 +74,7 @@ _CODEC_OPTION_KEYS = {
     for key in opts
 }
 
-_BOOL_FLAGS = {"-hide_banner", "-an", "-shortest"}
+_BOOL_FLAGS = {"-hide_banner", "-an", "-shortest", "-re"}
 _VALUE_FLAGS = {
     "-loglevel", "-ss", "-t", "-i", "-f",
     "-filter_complex", "-vf", "-af", "-map",

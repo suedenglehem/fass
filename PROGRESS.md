@@ -5,8 +5,109 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-28, i7 docker volume mapping + install script —
-  UNCOMMITTED, commit only on user request):** i7 volumes remapped to
+- **Last state (2026-10-28, M13b (-re pseudo-live input pacing) —
+  IMPLEMENTED, UNCOMMITTED; suite 1472 passed / 1 skipped):** The last
+  M13-series item. "pseudo-live" / "read at real time" → `ffmpeg … -re
+  -i in …` — the MAIN input is read at native frame rate (real time)
+  instead of as fast as ffmpeg can, so e.g. a live (event) HLS playlist
+  is followed by a player while it is still being generated. Schema:
+  `EditPlan.realtime_input: bool = False` (plan.py, between `trim` and
+  `bitstream_filters`; LLM adapter auto-exposed via the
+  model_json_schema prompt; unset → byte-identical argv, the whole
+  suite is the regression gate). NLU (rules.py): house tri-state
+  detector — `_REALTIME_ON` (`pseudo-live`/`pseudo live`/`pseudolive`,
+  `read [the input] at real time`) → True; `_REALTIME_OFF` (`no
+  pacing`/`without pacing`/`don't pace`/`not at [in] real time`) →
+  False; silence → None (merge keeps the plan's value). "pseudo-live
+  hls" matches the M13.2 live-HLS regex AND `_REALTIME_ON` ON PURPOSE
+  (hyphen = word boundary) — reference case 6. Pacing-only phrases
+  without an action stay needs_clarification per house behavior (tests
+  carry an action word). Planner: `-re` appended to
+  `ep.inputs[0].pre_opts` at the main return — AFTER
+  `_attach_stabilize_passes` (needs `ep.passes`) and BEFORE
+  `ep.warnings.extend(warnings)` (a first version appended after the
+  merge and the stream-input warning was silently lost — caught by
+  test, moved). Main input ONLY (watermark/replacement audio never
+  paced); multi-pass (stabilize) earlier passes get a plain InputSpec
+  copy — only the FINAL (transform) pass is paced; diagnostic plans:
+  no `-re` + a defaults line; stream input: `-re` emitted + "no
+  effect" warning. Executor: `-re` added to `_BOOL_FLAGS` — the E2E
+  run was refused ("unknown flag '-re' (not in the builder's
+  vocabulary)") until then; the suite checks argv shape, not the
+  executor vocabulary. Tests: 11 new (test_rules.py: reference case 6
+  exact argv, plain output, phrasings, word variants, "live hls"
+  untouched, negation, finite ENDLIST coexists, stream no-effect,
+  main-only pacing, revision on/off) + 2 (test_stabilize.py: NLU
+  combined phrase; `build_argv_all` — `-re` in transform argv, NOT in
+  detect argv) → **1472 passed / 1 skipped** (baseline 1459/1 + 13).
+  E2E both halves: tr4 host 6.1.1 via `execute.start_run` on
+  titan.mp4, "trim the first 6 seconds, pseudo-live" → `ffmpeg … -ss
+  0 -re -i titan.mp4 … -t 6 …` success exit 0, **wall 6.5 s** paced
+  vs **1.20 s** unpaced control (5.4× = real-time pacing); docker
+  `fass:m133-verify` (9.0.1) same argv in-container → **wall 6.9 s**,
+  1.68 MB out.mp4. **Next unfinished task:** commit M13b; user
+  browser E2E of live HLS/DASH playback on tr4/i7 still owed
+  (serve_http run → Player tab → play while generating; M13b is its
+  paced generator — "pseudo-live hls" = reference case 6).
+- **Previous state (2026-10-28, M13.7 Player tab + shaka-player swap +
+  fass-http CORS — COMMITTED & PUSHED as fc25cd5 (origin/main); suite
+  1459 passed / 1 skipped):** The last numbered M13 milestone. Player
+  tab (between Runs and Info) over the fass-http sidecar's stream
+  tree: manifest list (name/kind/state/size/modified) with a `live`
+  badge while the owning run is still running (else `vod`), ~5 s
+  auto-refresh while the tab is open, `served at <base_url>` line,
+  per-row **play**, and a **Purge stream tree** button (confirm) →
+  `POST /v1/streams/purge` (409 while ANY run is running; else counts
+  + rmtree's `{output}/http` → `{"purged": true, "files": n}`).
+  api.py: `GET /v1/streams` entries gained `size`/`mtime`/`live`
+  (run_id from the `http/<run-id>/…` path prefix, live = that run's
+  status "running"); `GET /static/{name}` = FIXED allowlist (only the
+  vendored player lib — no CDN, no directory browsing; any other name
+  or path-separator → 404). execute.py: `Run.http` flag (serve_http
+  runs) + `to_dict`. ui.py: `serve over http` checkbox on the Command
+  tab (runCmd body `serve_http`); the Runs tab's output cell links
+  http runs to the Player tab. **Player library — user directive to
+  replace the hls.js + dash.js pair with shaka-player:** ONE vendored
+  UMD build `fass/static/shaka-player.compiled.js` (shaka-player@5.3.2,
+  886,066 B, Apache-2.0, global `shaka`; + LICENSE + SHA256SUMS +
+  VENDORED.md pin table) plays BOTH .m3u8 and .mpd through one API.
+  v5 API facts (v4-era assumptions are WRONG): no static `create` —
+  `new shaka.Player(video)`; `await player.load(url)`; `destroy()`;
+  `await shaka.Player.isBrowserSupported()`; `sh.Player.version` is
+  the STRING "v5.3.2" (not a function); fatal errors via
+  `addEventListener('error', e => e.detail)` with `severity ===
+  'fatal'`; node smoke test needs `globalThis.self = globalThis`
+  first. **fass-http CORS (dispatched job j_a9a4961bd0 on
+  tr4-secondary, cherry-picked from 787ca79):** new
+  `docker/fass-http/httpd-fass.conf` — `FilesMatch
+  "\.(m3u8|mpd|ts|m4s)$"` → `Access-Control-Allow-Origin *`;
+  `FilesMatch "\.(m3u8|mpd)$"` → `Cache-Control no-cache` (live
+  playlists grow in place; browsers would otherwise serve a stale
+  copy); compose.yaml: fass-http runs `httpd-foreground -c "Include
+  conf/extra/httpd-fass.conf"` + read-only conf mount (`FASS_HTTP_CORS_CONF`
+  override) — the stock httpd:2.4-alpine httpd.conf has NO live
+  conf/extra glob include (all commented except proxy-html), so the
+  include is explicit; mod_headers is loaded by default. E2E-verified
+  by the worker on port **8099** (host 8080 is taken by the strata
+  LLM server — never 8080 for test containers). Tests: +7 (+2
+  assertions) — static serve/allowlist/traversal, streams
+  size/mtime/live incl. live-while-running (monkeypatched
+  `execute.list_runs`), purge empty/real/409, UI wiring incl.
+  `new shaka.Player(`; + 2 pre-existing pin fixes (the JS-syntax
+  test now selects the line containing "saved config?" — the purge
+  confirm is the first `confirm(` in the served script; the files-tab
+  pin `.concat('rag','files')` → `.concat('rag','files','player')`).
+  Gates actually run: full suite `./.venv/bin/python -m pytest -q` =
+  **1459 passed / 1 skipped (142.69 s)**; served `<script>` (36,625
+  ch) `node --check` OK; `sha256sum -c SHA256SUMS` OK. **Known
+  problem / owed:** no browser exists in this environment — live
+  playback E2E is owed on a machine with one (tr4/i7 web UI); the
+  node smoke (UMD load + v5 API surface) is the verification ceiling
+  here. **Next unfinished task:** user browser E2E of live
+  HLS/DASH playback on tr4/i7 (serve_http run → Player tab → play
+  while generating); then M13b (-re pseudo-live).
+- **Previous state (2026-10-28, i7 docker volume mapping + install script —
+  UNCOMMITTED at the time, commit only on user request):** i7 volumes remapped to
   `/dd2/andrei/fass/media/{input,output,log}` (user-created folders;
   persistent). Root cause of the empty Files tab + failed Apply:
   containers bound **stale inodes** of the deleted+recreated

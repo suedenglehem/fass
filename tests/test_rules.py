@@ -798,6 +798,113 @@ def test_live_hls_stream_input_no_endlist_warning(gen):
     assert not any("ENDLIST" in w for w in r.warnings)
 
 
+# ---------------- M13b: -re pseudo-live (input pacing at native frame rate)
+
+def test_pseudo_live_hls_reference_case(gen):
+    # plan reference case 6: the live HLS tail plus -re in front of -i
+    r = gen("pseudo-live hls with a 10 segment window", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["realtime_input"] is True
+    out = r.plan["output"]
+    assert out["container"] == "hls"
+    assert out["format_options"] == {
+        "hls_playlist_type": "event",
+        "hls_flags": "independent_segments",
+        "hls_list_size": "10"}
+    a = r.arguments
+    assert a[a.index("-i") - 1] == "-re"
+    assert a[a.index("-hls_playlist_type") + 1] == "event"
+    assert a[a.index("-hls_list_size") + 1] == "10"
+    assert a[a.index("-hls_flags") + 1] == "independent_segments"
+
+
+def test_pseudo_live_plain_output(gen):
+    r = gen("convert to mp4 pseudo-live", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["realtime_input"] is True
+    assert r.arguments[r.arguments.index("-i") - 1] == "-re"
+
+
+def test_read_at_real_time_phrasings(gen):
+    for phrasing in ("read at real time and convert to mp4",
+                     "read the input at real time and convert to mp4",
+                     "read the input at real time, hls"):
+        r = gen(phrasing, "clip.mp4")
+        assert r.status == "ready"
+        assert r.plan["realtime_input"] is True
+
+
+def test_pseudo_live_word_variants(gen):
+    for phrasing in ("make it pseudo live hls", "pseudolive hls"):
+        r = gen(phrasing, "clip.mp4")
+        assert r.status == "ready"
+        assert r.plan["realtime_input"] is True
+
+
+def test_live_hls_without_pseudo_stays_fast(gen):
+    # M13.2's line is untouched: 'live hls' carries no -re
+    r = gen("live hls", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["realtime_input"] is False
+    assert "-re" not in r.arguments
+
+
+def test_no_pacing_negation(gen):
+    r = gen("pseudo-live hls but no pacing", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["realtime_input"] is False
+    assert "-re" not in r.arguments
+
+
+def test_pseudo_live_hls_finite_still_warns_endlist(gen):
+    # pacing does not remove the finite-input ENDLIST honesty (M13.2)
+    r = gen("pseudo-live hls", "clip.mp4")
+    assert r.status == "ready"
+    assert any("ENDLIST" in w for w in r.warnings)
+
+
+def test_pseudo_live_stream_input_warns_no_effect(gen):
+    r = gen("pseudo-live hls", "rtsp://cam.local/stream")
+    assert r.status == "ready"
+    assert any("no effect" in w for w in r.warnings)
+    assert r.arguments[r.arguments.index("-i") - 1] == "-re"
+
+
+def test_pseudo_live_paces_main_input_only(gen):
+    # the watermark is an auxiliary input — it is never paced
+    r = gen("pseudo-live with the watermark", "clip.mp4",
+            watermark="logo.png")
+    assert r.status == "ready"
+    a = r.arguments
+    i = a.index("-i")
+    assert a[i - 1] == "-re"
+    j = a.index("-i", i + 1)
+    assert a[j - 1] != "-re"
+
+
+def test_revision_turns_pacing_on(gen):
+    prev = EditPlan(
+        output=OutputSpec(container="hls", video_codec="h264",
+                          format_options={"hls_playlist_type": "event",
+                                          "hls_flags": "independent_segments"}))
+    r = gen("now read the input at real time", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["realtime_input"] is True
+    assert r.arguments[r.arguments.index("-i") - 1] == "-re"
+
+
+def test_revision_turns_pacing_off(gen):
+    prev = EditPlan(
+        output=OutputSpec(container="hls", video_codec="h264",
+                          format_options={"hls_playlist_type": "event",
+                                          "hls_flags": "independent_segments"}),
+        realtime_input=True)
+    r = gen("no pacing", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["realtime_input"] is False
+    assert "-re" not in r.arguments
+
+
 # ---------------- M13.5: tee multi-output (hls + dash from one encode)
 
 def test_tee_pair_selects_tee(gen):

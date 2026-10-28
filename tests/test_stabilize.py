@@ -83,6 +83,14 @@ def test_stabilize_phrases():
         assert any(o.type == "stabilize" for o in r.plan.operations), instr
 
 
+def test_stabilize_pseudo_live_combined():
+    # M13b: pacing + stabilize in one instruction — the flag rides the plan
+    r = _parse("stabilize the shaky clip pseudo-live")
+    assert r.status is ParseStatus.READY
+    assert any(o.type == "stabilize" for o in r.plan.operations)
+    assert r.plan.realtime_input is True
+
+
 def test_stabilize_neighbours_stay_unsupported():
     r = _parse("denoise the video")
     assert r.status is ParseStatus.UNSUPPORTED
@@ -184,6 +192,24 @@ def test_stabilize_argv_for_both_passes(monkeypatch):
     assert transform[transform.index("-vf") + 1] == \
         "vidstabtransform=input=out.vidstab.trf"
     assert transform[-1] == "out.mp4"
+
+
+def test_pseudo_live_paces_final_pass_only(monkeypatch):
+    # M13b: -re paces only the FINAL (transform) pass — the analysis pass
+    # should not wait out the file at real time
+    assets = {"main": Asset(path="in.mp4", kind=AssetKind.VIDEO)}
+    probes = {"in.mp4": make_media(path="in.mp4")}
+    monkeypatch.setattr("fass.planner.planner.probe_media",
+                        lambda p, require_video=True: probes.get(p))
+    edit = EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[StabilizeOp()],
+        realtime_input=True,
+    )
+    ep = plan_execution(edit, assets, probes["in.mp4"], "out.mp4")
+    detect, transform = build_argv_all(ep)
+    assert "-re" not in detect
+    assert transform[transform.index("-i") - 1] == "-re"
 
 
 def test_stabilize_resize_lands_in_transform_pass_only(monkeypatch):

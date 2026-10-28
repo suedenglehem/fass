@@ -1465,6 +1465,11 @@ def plan_execution(
 
     # -- diagnostic analysis (M10.2): null muxer, log level info, no file --
     if diagnostic:
+        if edit.realtime_input:
+            defaults.append(
+                "pseudo-live input pacing (-re) does not apply to a "
+                "diagnostic analysis — the stream is discarded, nothing "
+                "is written out")
         ep = _build_diagnostic_plan(edit, in_path, defaults, warnings,
                                     output_filename, diag_names,
                                     compare=compare)
@@ -2018,6 +2023,30 @@ def plan_execution(
         )
         if edit.ops_of("stabilize"):
             _attach_stabilize_passes(ep, out_path, defaults)
+    if edit.realtime_input:
+        # M13b pseudo-live: pace the MAIN input's read at native frame
+        # rate (-re before -i) — the file plays in real time instead of
+        # as fast as ffmpeg can (e.g. a live (event) HLS playlist is
+        # followed by a player while it is still being generated).
+        # Auxiliary inputs (watermark, replacement audio) are never paced.
+        # (After the stabilize-pass attach so ep.passes exists; before the
+        # warnings merge so the stream-input note lands in ep.warnings.)
+        main = ep.inputs[0]
+        if ep.passes:
+            # Multi-pass (stabilize): pace only the final pass — the
+            # analysis pass should not wait out the file at real time.
+            # The earlier passes share the main InputSpec object with
+            # the final pass, so they get their own unpaced copy first.
+            plain = InputSpec(main.path, pre_opts=list(main.pre_opts))
+            for p in ep.passes[:-1]:
+                if p.inputs and p.inputs[0] is main:
+                    p.inputs[0] = plain
+        main.pre_opts += ["-re"]
+        if stream_scheme(in_path) is not None:
+            warnings.append(
+                "-re pacing has no effect on a stream input that is "
+                "already read at real time — the flag is kept because "
+                "it was asked for")
     ep.defaults.extend(defaults)
     ep.warnings.extend(warnings)
     if muxer:
@@ -2031,6 +2060,7 @@ def plan_execution(
         # (built in the tee block above), so it is excluded here.
         ep.output_opts += [tok for k, v in sorted(out.format_options.items())
                            for tok in (f"-{k}", v)]
+
     _metadata_warnings(ep, edit, metadata)
     return ep
 
