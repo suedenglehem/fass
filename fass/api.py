@@ -489,7 +489,7 @@ def create_app() -> FastAPI:
         return {
             "available": True,
             "version": __version__,
-            "build": ff.version,
+            "build": ff.build_info,
             "registry_version": REGISTRY["registry_version"],
             "encoders": encoders,
             # every registry filter, probed against THIS build (like bsfs)

@@ -62,6 +62,9 @@ class MediaInfo:
 @dataclass
 class FfmpegInfo:
     version: str | None = None
+    # the full `ffmpeg -version` minus the lib* lines (the user's
+    # `ffmpeg -version | grep -v '^lib'`): version, built-with, configuration
+    build_info: str | None = None
     encoders: set[str] = field(default_factory=set)
     filters: set[str] = field(default_factory=set)
     muxers: set[str] = field(default_factory=set)
@@ -282,6 +285,8 @@ def probe_ffmpeg() -> FfmpegInfo | None:
     ver = _run(["ffmpeg", "-hide_banner", "-version"])
     if ver:
         info.version = ver.splitlines()[0]
+        info.build_info = "\n".join(
+            line for line in ver.splitlines() if not line.startswith("lib"))
     enc = _run(["ffmpeg", "-hide_banner", "-encoders"])
     if enc:
         info.encoders = {line.split()[1] for line in enc.splitlines() if len(line.split()) > 1}

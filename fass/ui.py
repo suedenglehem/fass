@@ -128,6 +128,7 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bord
 th { color: var(--muted); font-weight: 600; }
 .mono { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
 .note { font-size: 13px; color: var(--muted); }
+#ffver { white-space: pre-line; }  /* ffmpeg -version lines, breaks kept */
 .err { color: var(--bad); font-size: 13px; }
 .ok { color: var(--ready); font-size: 13px; }
 a { color: var(--accent); }
@@ -424,7 +425,8 @@ let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => {
   EXEC_ENABLED = !!d.execution;
   if (d.version) $('ver').textContent = 'v' + d.version;
-  // ffmpeg build line (first line of `ffmpeg -version` — no lib* versions)
+  // ffmpeg build info: `ffmpeg -version` minus the lib* lines (pre-line CSS
+  // keeps the line breaks — version, built-with and configuration lines)
   if (d.build) { $('ffver').textContent = d.build; $('ffbr').hidden = false; }
 }).catch(() => {});
 
