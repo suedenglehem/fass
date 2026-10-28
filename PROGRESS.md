@@ -5,8 +5,46 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-28, M13b (-re pseudo-live input pacing) —
-  IMPLEMENTED, UNCOMMITTED; suite 1472 passed / 1 skipped):** The last
+- **Last state (2026-10-28, i7 LLM timeout fix — COMMITTED fbcd8ab +
+  PUSHED, i7 DEPLOYED + VERIFIED; suite 1473 passed / 1 skipped):**
+  User report: "test llm" OK, but generating a command on i7 fails with
+  `parser error: LLM provider unreachable: timed out`. Root cause:
+  `LLMConfig.timeout` in fass/config.py defaulted to **10 s** and feeds
+  every generated adapter (`_llm_from_config` in fass/nlu/__init__.py,
+  the llm-test endpoint) — silently shadowing `LLMAdapter.__init__`'s
+  own 90 s default. i7's local LLM (strata server, small 3-bit-quantized
+  thinking model behind the qwen3.8-27b name, host 172.17.0.1:8080)
+  needs 10–21 s for the full ~54 KB fass system prompt, so every
+  generation died at exactly 10 s; the tiny "LLM test" prompt fit under
+  the limit, masking it. Proven by a urlopen tracer in the container
+  (`timeout=10 FAIL after 10.0s`) + raw probes (10–21 s, RAG
+  evidence-independent). Fix: config default 10 → **90** (still
+  user-settable 1–300 via the Config tab); UI hint/placeholder
+  updated (fass/ui.py); new test
+  `test_llm_timeout_tracks_adapter_default` (test_m6_config.py) pins
+  the config default to the `LLMAdapter.__init__` `timeout` parameter
+  via `inspect.signature` so the two cannot drift apart; 5 existing
+  pins updated (test_m6_config ×4, test_m6_api ×1, test_m6_llm ×1) →
+  **1473 passed / 1 skipped** (1472/1 + 1 new). i7 deploy: repo
+  ff-merged 0240b51→fbcd8ab via `git fetch origin && git merge
+  --ff-only origin/main` (i7's main has NO upstream tracking — plain
+  `git pull` fails with the set-upstream hint); `docker compose build
+  fass` + `up -d --force-recreate fass` (local compose opt-ins
+  untouched; fass-worker/fass-http/fass-rag unharmed); in-container
+  `load_config().llm.timeout == 90`. Verified via i7's API — the
+  user's exact flow: `POST /v1/commands` "pseudo-live hls with a 10
+  segment window" → `status: ready`, `adapter: llm`, `realtime_input:
+  true`, argv `ffmpeg -hide_banner -loglevel error -re -i
+  /input/titan.mp4 -map 0:v:0 -map 0:a? -f hls -c copy
+  -hls_list_size 10 titan.m3u8`, wall **14.8 s** (previously
+  hard-failed at 10 s). Debug artifacts cleaned from i7 /tmp + tr4
+  (kept: /tmp/compose.yaml.i7-optins, /tmp/ffprobe-i7.patch,
+  /tmp/PROGRESS.md.i7 — i7 local-state safety backups). Next: user
+  browser E2E on i7 (Command tab → "pseudo-live hls with a 10 segment
+  window" → serve over http → Player tab → play while generating).
+- **Previous state (2026-10-28, M13b (-re pseudo-live input pacing) —
+  COMMITTED + PUSHED as 0240b51, i7 DEPLOYED + API-verified; suite
+  1472 passed / 1 skipped):** The last
   M13-series item. "pseudo-live" / "read at real time" → `ffmpeg … -re
   -i in …` — the MAIN input is read at native frame rate (real time)
   instead of as fast as ffmpeg can, so e.g. a live (event) HLS playlist
