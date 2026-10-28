@@ -36,7 +36,7 @@ def test_get_config_defaults(cfg_env):
     assert r.status_code == 200
     d = r.json()
     assert d["config"]["llm"]["provider"] == "anthropic"
-    assert d["config"]["llm"]["timeout"] == 10
+    assert d["config"]["llm"]["timeout"] == 90
     assert d["config"]["streaming"]["enabled"] is False
     assert "compose" in d
     assert d["docker"]["manage"] is False

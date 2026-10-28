@@ -229,8 +229,8 @@ def test_adapter_from_config_anthropic_timeout(tmp_path, monkeypatch):
 
 
 def test_adapter_from_config_timeout_default(tmp_path, monkeypatch):
-    # an older config.json without the key: the adapter gets the 10 s default
+    # an older config.json without the key: the adapter gets the 90 s default
     _cfg_file(tmp_path, monkeypatch,
               {"provider": "openai", "host": "172.17.0.1", "port": 8080,
                "model": "qwen3.8-27b"})
-    assert _llm_from_config().timeout == 10
+    assert _llm_from_config().timeout == 90

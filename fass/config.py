@@ -47,9 +47,11 @@ class LLMConfig(BaseModel):
     api_key: str = Field(default="", max_length=1024)
     model: str = Field(default="", max_length=256)
     timeout: int = Field(
-        default=10, ge=1, le=300,
+        default=90, ge=1, le=300,
         description="seconds allowed for one LLM request (connect + read); a "
-                    "hung endpoint fails fast instead of blocking the request",
+                    "hung endpoint fails fast instead of blocking the request. "
+                    "90 matches LLMAdapter's own default — local models on a "
+                    "full fass prompt (50 KB+) can need 10–30 s per request",
     )
 
 

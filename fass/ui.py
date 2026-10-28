@@ -356,10 +356,11 @@ a { color: var(--accent); }
         <div><label>port</label><input id="l-port" type="number" placeholder="8080"></div>
         <div><label>api key (anthropic / optional)</label><input id="l-key" type="password" placeholder="sk-… / blank"></div>
         <div><label>model</label><input id="l-model" placeholder="qwen3.8-27b"></div>
-        <div><label>timeout (seconds)</label><input id="l-timeout" type="number" min="1" max="300" step="1" placeholder="10"></div>
+        <div><label>timeout (seconds)</label><input id="l-timeout" type="number" min="1" max="300" step="1" placeholder="90"></div>
       </div>
       <p class="note">timeout: seconds allowed for one LLM request (connect + read) — a hung
-      endpoint returns an error instead of blocking the request. 1–300, default 10.</p>
+      endpoint returns an error instead of blocking the request. 1–300, default 90.
+      Local models on a full fass prompt can need 10–30 s per request.</p>
       <button type="button" class="small ghost" style="margin-top:10px" onclick="llmTest(true)">test LLM (unsaved values)</button>
       <span id="llm-status"></span>
 
@@ -930,7 +931,7 @@ async function loadCfg() {
   $('l-port').value = cfg.llm.port || '';
   $('l-key').value = cfg.llm.api_key;
   $('l-model').value = cfg.llm.model;
-  $('l-timeout').value = cfg.llm.timeout || 10;
+  $('l-timeout').value = cfg.llm.timeout || 90;
   $('apply-btn').disabled = !data.docker.worker;
   const dockerNote = data.docker.manage
     ? `docker control: <span class="ok">available</span> (engine ${esc(data.docker.version || '?')}, container <span class="mono">${esc(data.docker.container || 'n/a')}</span>)`

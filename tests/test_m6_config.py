@@ -35,7 +35,7 @@ def _clear_rag_env(monkeypatch):
 def test_defaults():
     cfg = FassConfig()
     assert cfg.llm.provider == "anthropic"
-    assert cfg.llm.timeout == 10
+    assert cfg.llm.timeout == 90
     assert cfg.streaming.enabled is False
     assert cfg.streaming.host_address == DEFAULT_HOST_ADDRESS
     assert cfg.gpu.enabled is False
@@ -89,8 +89,22 @@ def test_unknown_field_rejected(tmp_path, monkeypatch):
 
 
 def test_llm_timeout_default():
-    assert LLMConfig().timeout == 10
-    assert FassConfig().llm.timeout == 10
+    # 90 matches LLMAdapter's own default — a local model on the full fass
+    # prompt (50 KB+) can need 10–30 s per request
+    assert LLMConfig().timeout == 90
+    assert FassConfig().llm.timeout == 90
+
+
+def test_llm_timeout_tracks_adapter_default():
+    # the config default feeds every generated adapter (_llm_from_config,
+    # llm-test); it must not shadow LLMAdapter's own default into something
+    # shorter (the 10 s default timed out a local model mid-generation)
+    import inspect
+
+    from fass.nlu.llm import LLMAdapter
+
+    adapter_default = inspect.signature(LLMAdapter.__init__).parameters["timeout"].default
+    assert LLMConfig().timeout == adapter_default
 
 
 def test_llm_timeout_bounds():
@@ -115,7 +129,7 @@ def test_llm_timeout_roundtrip(tmp_path, monkeypatch):
 
 def test_llm_timeout_absent_in_an_older_config(tmp_path, monkeypatch):
     # a config.json seeded before the timeout existed keeps loading, and the
-    # field takes its default (10 s)
+    # field takes its default (90 s)
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"llm": {"provider": "openai", "host": "172.17.0.1",
                                      "port": 8080, "api_key": "", "model": "m"}}),
@@ -123,7 +137,7 @@ def test_llm_timeout_absent_in_an_older_config(tmp_path, monkeypatch):
     monkeypatch.setenv("FASS_CONFIG", str(p))
     cfg = load_config()
     assert cfg.llm.host == "172.17.0.1"
-    assert cfg.llm.timeout == 10
+    assert cfg.llm.timeout == 90
 
 
 def test_llm_timeout_out_of_range_falls_back(tmp_path, monkeypatch):
