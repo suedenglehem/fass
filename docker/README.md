@@ -327,6 +327,14 @@ up -d` brings it up together with fass (no profile, no overlay).
   volume's `http/` subdir (`.m3u8` → kind `hls`, `.mpd` → kind `dash`),
   newest first, each with its full URL — built from the config's
   `streaming.http_base_url` (see the Config tab's Streaming section).
+- The sidecar sends **`Access-Control-Allow-Origin: *`** on the stream
+  files (playlists plus their `.ts`/`.m4s` segments) and **`Cache-Control:
+  no-cache`** on the playlists, so the web-UI **Player** tab — a page served
+  by fass on `8000`, i.e. a different origin — can play them cross-origin and
+  never serves a stale copy of a growing live playlist. The rules are one
+  small file, `docker/fass-http/httpd-fass.conf`, mounted read-only into the
+  image's `conf/extra/` and pulled in by the service's `command:` (the stock
+  `httpd.conf` includes no `conf/extra` glob).
 
 **Who owns what:** the Config tab's **Apply** recreates the fass
 container only (the fass-worker swap) — it cannot create or restart

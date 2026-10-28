@@ -198,6 +198,7 @@ a { color: var(--accent); }
   <div class="tabs">
     <button id="tab-cmd" class="on" onclick="showTab('cmd')">Command</button>
     <button id="tab-runs" onclick="showTab('runs')">Runs</button>
+    <button id="tab-player" onclick="showTab('player')">Player</button>
     <button id="tab-info" onclick="showTab('info')">Info / Log</button>
     <button id="tab-cfg" onclick="showTab('cfg')">Config</button>
     <button id="tab-rag" onclick="showTab('rag')">RAG</button>
@@ -227,6 +228,7 @@ a { color: var(--accent); }
     <button type="button" class="copy" onclick="addExtra()">+ add input</button>
     <label class="check"><input type="checkbox" id="pf"> preflight against the local FFmpeg build</label>
     <label class="check"><input type="checkbox" id="verbose"> verbose log <span class="note">(every pass runs with -loglevel verbose; the log lands in the output folder's log/ directory — see the Info / Log tab)</span></label>
+    <label class="check"><input type="checkbox" id="servehttp"> serve over http <span class="note">(the output lands in the fass-http sidecar's tree — open it in the Player tab; for .m3u8 / .mpd outputs)</span></label>
     <button type="submit">Generate</button>
   </form>
   <div class="result" id="res" hidden></div>
@@ -243,6 +245,27 @@ a { color: var(--accent); }
         <tbody id="runs-body"></tbody>
       </table></div>
       <pre id="runs-log" hidden style="margin-top:10px"></pre>
+    </div>
+  </div>
+
+  <!-- ============================================================== PLAYER -->
+  <div id="pane-player" hidden>
+    <div class="card">
+      <h2 style="margin-top:0">Player</h2>
+      <button class="small ghost" style="margin-top:0" onclick="loadStreams()">↻ refresh</button>
+      <button class="small danger" style="margin-top:0" onclick="purgeStreams()">Purge stream tree</button>
+      <span id="streams-base" class="note"></span>
+      <div id="player-stage" hidden style="margin-top:12px">
+        <video id="player-video" controls style="width:100%;max-height:420px;background:#000"></video>
+        <span id="player-status" class="note"></span>
+      </div>
+      <div id="streams-wrap" style="overflow-x:auto">
+        <table id="streams-table" style="width:100%">
+          <thead><tr><th>playlist</th><th>kind</th><th>state</th><th>size</th><th>modified</th><th></th></tr></thead>
+          <tbody id="streams-body"></tbody>
+        </table>
+        <div id="streams-empty" class="note">No streams under the output volume's http/ directory yet — run a command with "serve over http" checked, and its playlist shows up here (live while the run is going).</div>
+      </div>
     </div>
   </div>
 
@@ -473,8 +496,8 @@ fetch('/v1/env').then(r => r.json()).then(d => {
 })();
 
 function showTab(t) {
-  // the base four + 'rag' + 'files' (concat keeps the pinned literal in test_webinfo)
-  for (const p of ['cmd','runs','info','cfg'].concat('rag','files')) {
+  // the base four + 'rag' + 'files' + 'player' (concat keeps the pinned literal in test_webinfo)
+  for (const p of ['cmd','runs','info','cfg'].concat('rag','files','player')) {
     $('pane-'+p).hidden = (p !== t);
     $('tab-'+p).classList.toggle('on', p === t);
   }
@@ -482,6 +505,8 @@ function showTab(t) {
   if (t === 'info') { loadLogs(); showInfo($('sel-log').checked ? 'log' : 'mi'); }
   if (t === 'cfg') loadRag();
   if (t === 'files') loadFiles();
+  if (t === 'player') { loadStreams(); startPlayerPoll(); }
+  else stopPlayerPoll();
 }
 
 /* ------------------------------------------------------------ command tab */
@@ -633,7 +658,9 @@ function render(d) {
 }
 async function runCmd() {
   const argv = JSON.parse($('cmdargs').textContent);
-  const body = { arguments: argv, verbose: $('verbose').checked };
+  // serve_http is an execution-time choice: it redirects this run's output into
+  // the fass-http sidecar's tree so the Player tab can stream it.
+  const body = { arguments: argv, verbose: $('verbose').checked, serve_http: $('servehttp').checked };
   const text = $('cmd').value;
   // an expert edit is sent as `command` (shlex-split + revalidated server-side);
   // an untouched textarea keeps the exact generated argv, as before
@@ -672,8 +699,12 @@ async function loadRuns() {
   tbody.innerHTML = '';
   for (const run of rows) {
     const tr = document.createElement('tr');
+    // M13.7: an http-served run links to the Player tab (the sidecar streams
+    // it); an ordinary run links to the raw output file.
     const out = run.output
-      ? `<a href="/media/run/${encodeURIComponent(run.id)}/output" target="_blank">${esc(run.output.split('/').pop())}</a>`
+      ? (run.http
+        ? `<a href="#" onclick="showTab('player');return false">${esc(run.output.split('/').pop())} <span class="note">· player</span></a>`
+        : `<a href="/media/run/${encodeURIComponent(run.id)}/output" target="_blank">${esc(run.output.split('/').pop())}</a>`)
       : '<span class="note">—</span>';
     const statusCls = run.status === 'success' ? 'b-ready' :
                       run.status === 'running' ? 'b-run' : 'b-bad';
@@ -700,6 +731,108 @@ async function showLog(id) {
   const r = await fetch(`/v1/runs/${id}/log`);
   $('runs-log').hidden = false;
   $('runs-log').textContent = (await r.text()) || '(empty log — ffmpeg prints progress on stderr)';
+}
+
+/* ------------------------------------------------------------ player tab */
+/* M13.7: play the fass-http sidecar's stream tree. shaka-player plays both
+   .m3u8 (HLS) and .mpd (DASH) through one API — vendored under /static/
+   (fixed allowlist, no CDN). The list auto-refreshes while the tab is open
+   because a live run is still appending segments. */
+let playerPoll = null;
+let playerShaka = null; // active shaka.Player instance
+let streamSpecs = [];   // parallel to the rendered rows: {path, kind, url}
+function startPlayerPoll() {
+  if (!playerPoll) playerPoll = setInterval(loadStreams, 5000);
+}
+function stopPlayerPoll() {
+  if (playerPoll) { clearInterval(playerPoll); playerPoll = null; }
+}
+function fmtSize(n) {
+  if (n == null) return '—';
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+}
+function playerStatus(msg) { $('player-status').textContent = msg || ''; }
+async function loadStreams() {
+  const r = await fetch('/v1/streams');
+  const data = await r.json();
+  const streams = data.streams || [];
+  const base = data.http_base_url;
+  $('streams-base').textContent = base
+    ? 'served at ' + base + ' (the fass-http sidecar mounts the output volume)'
+    : 'no streaming.http_base_url configured — set it in Config to get playable URLs';
+  streamSpecs = streams;
+  const tbody = $('streams-body');
+  tbody.innerHTML = '';
+  streams.forEach((s, i) => {
+    const tr = document.createElement('tr');
+    const state = s.live
+      ? '<span class="badge b-run">live</span>'
+      : '<span class="badge b-ready">vod</span>';
+    const modified = s.mtime != null ? new Date(s.mtime * 1000).toLocaleString() : '—';
+    tr.innerHTML = `<td class="mono">${esc(s.name)}</td><td>${esc(s.kind)}</td>
+      <td>${state}</td><td>${fmtSize(s.size)}</td><td>${modified}</td>
+      <td><button class="small ghost" onclick="playStream(${i})">play</button></td>`;
+    tbody.appendChild(tr);
+  });
+  $('streams-empty').style.display = streams.length ? 'none' : '';
+  $('streams-table').hidden = !streams.length;
+}
+/* lazy-load a vendored lib once; resolves to the global it sets */
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
+function stopPlayer() {
+  if (playerShaka) { try { playerShaka.destroy(); } catch (e) {} playerShaka = null; }
+  const v = $('player-video');
+  v.pause();
+  v.removeAttribute('src');
+  v.load();
+  playerStatus('');
+}
+async function playStream(i) {
+  const s = streamSpecs[i];
+  if (!s) return;
+  const { path, kind, url } = s;
+  const v = $('player-video');
+  $('player-stage').hidden = false;
+  stopPlayer();
+  playerStatus('loading…');
+  if (!url) { playerStatus('no http_base_url configured — cannot resolve a playable URL'); return; }
+  try {
+    if (window.shaka === undefined) await loadScript('/static/shaka-player.compiled.js');
+    if (!(await shaka.Player.isBrowserSupported())) {
+      playerStatus('this browser lacks the media APIs shaka needs (MSE) — cannot play');
+      return;
+    }
+    playerShaka = new shaka.Player(v);
+    playerShaka.addEventListener('error', (e) => {
+      const d = e.detail;
+      if (d && d.severity === 'fatal')
+        playerStatus(`fatal ${kind.toUpperCase()} error (${d.code}): ${d.message || d.detail || 'unknown'}`);
+    });
+    await playerShaka.load(url);
+    playerStatus(`playing ${kind.toUpperCase()} (shaka-player) — ${path}`);
+    v.play().catch(() => {});  // autoplay may be blocked; the user presses play
+  } catch (err) {
+    playerStatus('failed to start player: ' + err);
+  }
+}
+async function purgeStreams() {
+  if (!confirm('Purge the whole stream tree? This deletes every file under the output volume http/ directory (all served playlists and segments).')) return;
+  const r = await fetch('/v1/streams/purge', { method: 'POST' });
+  const data = await r.json();
+  if (!r.ok) { alert('purge failed: ' + (typeof data.detail === 'string' ? data.detail : JSON.stringify(data))); return; }
+  stopPlayer();
+  $('player-stage').hidden = true;
+  loadStreams();
 }
 
 /* -------------------------------------------------------- info / log tab */

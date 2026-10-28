@@ -752,7 +752,10 @@ def create_app() -> FastAPI:
         the configured streaming.http_base_url prefixed to it — the
         fass-http sidecar mounts the WHOLE output volume at its htdocs
         root, so the URL is served as-is. An unmounted output volume
-        answers an empty list (like /v1/files)."""
+        answers an empty list (like /v1/files). M13.7: each entry also
+        carries size/mtime (the Player tab's table) and 'live' — the run
+        that owns the http/<run-id>/ dir is still running, so the
+        playlist is still growing (event-HLS mid-run)."""
         out_dir = execute._output_dir()
         base = load_config().streaming.http_base_url
         entries: list[tuple[float, Path]] = []
@@ -765,18 +768,47 @@ def create_app() -> FastAPI:
                     st = p.stat()
                 except OSError:
                     continue
-                entries.append((st.st_mtime, p))
+                entries.append((st.st_mtime, st.st_size, p))
         entries.sort(key=lambda e: e[0], reverse=True)
+        live_ids = {r["id"] for r in execute.list_runs()
+                    if r.get("status") == "running"}
         streams: list[dict] = []
-        for _, p in entries:
+        for mtime, size, p in entries:
             rel = p.relative_to(Path(out_dir)).as_posix()
+            parts = rel.split("/")
+            run_id = parts[1] if len(parts) >= 2 and parts[0] == "http" else None
             streams.append({
                 "name": p.name,
                 "kind": "hls" if p.suffix.lower() == ".m3u8" else "dash",
                 "path": rel,
                 "url": f"{base.rstrip('/')}/{rel}" if base else None,
+                "size": size,
+                "mtime": mtime,
+                "live": run_id in live_ids if run_id else False,
             })
         return {"streams": streams, "http_base_url": base}
+
+    @app.post("/v1/streams/purge")
+    def streams_purge():
+        """M13.7: wipe the http-served tree ({output}/http/, recursive) —
+        the Player tab's Purge button. Refuses with 409 while any run is
+        still running (deleting a running run's per-run dir would leave
+        its playlist unlinked while ffmpeg keeps writing it). Returns
+        the number of files removed (0 when the tree does not exist)."""
+        if any(r.get("status") == "running" for r in execute.list_runs()):
+            raise HTTPException(
+                409, "a run is still in progress — stop it before purging "
+                     "the stream tree")
+        out_dir = execute._output_dir()
+        root = Path(out_dir) / "http" if out_dir else None
+        if root is None or not root.exists():
+            return {"purged": True, "files": 0}
+        count = 0
+        for p in root.rglob("*"):
+            if p.is_file():
+                count += 1
+        shutil.rmtree(root, ignore_errors=True)
+        return {"purged": True, "files": count}
 
     @app.get("/v1/files/inspect")
     def files_inspect(dir: str = "input", file: str = "", tool: str = "ffprobe"):
@@ -935,6 +967,25 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index():
         return UI_HTML
+
+    # M13.7: the Player tab's vendored player library. A FIXED allowlist
+    # — the deployment stays a self-contained page (no CDN, no directory
+    # browsing); any other name, or one with a path separator, is a 404.
+    # The file itself lives in fass/static/ (pinned release; see
+    # fass/static/VENDORED.md + SHA256SUMS).
+    _STATIC_ALLOWLIST = {
+        "shaka-player.compiled.js": "shaka-player@5.3.2 (global shaka; HLS + DASH)",
+    }
+
+    @app.get("/static/{name}")
+    def static(name: str):
+        if name not in _STATIC_ALLOWLIST or "/" in name:
+            raise HTTPException(404, "unknown static asset")
+        p = Path(__file__).resolve().parent / "static" / name
+        return FileResponse(
+            p, media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     return app
 

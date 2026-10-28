@@ -563,6 +563,10 @@ class Run:
     # the run's argv at start time. The data the post-run master.m3u8
     # synthesis uses (never parsed from the filesystem); None otherwise.
     ladder: dict | None = None
+    # M13.7: the run's output is http-served (serve_http start flag) — it
+    # lands in {output}/http/<run-id>/ and the Runs tab links it to the
+    # Player tab. False for every non-http run.
+    http: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -571,7 +575,7 @@ class Run:
             "exit_code": self.exit_code, "output": self.output,
             "notes": self.notes, "steps": self.steps,
             "log_path": self.log_path, "verbose": self.verbose,
-            "ladder": self.ladder,
+            "ladder": self.ladder, "http": self.http,
         }
 
 
@@ -809,7 +813,9 @@ def start_run(argv: list[str], timeout: float | None = None,
     if serve_dir is not None:
         # M13.6: the per-run stream dir — the argv that RUNS gets the
         # full path (run.argv is this same list); the run record's
-        # 'output' above stays the bare name.
+        # 'output' above stays the bare name. M13.7: the flag the
+        # Runs tab uses to link the row to the Player tab.
+        run.http = True
         argv[-1] = str(serve_dir / os.path.basename(out_name))
         notes.append(
             f"output destined for http serving — placed in the per-run "

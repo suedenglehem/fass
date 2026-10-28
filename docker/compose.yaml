@@ -123,8 +123,14 @@ services:
     # fass-rag stays internal (8100, not published).
     image: httpd:2.4-alpine
     container_name: fass-http
+    # The stock httpd.conf includes NO conf/extra glob (its httpd-*.conf
+    # Includes are all commented out), so the header conf below is pulled in
+    # explicitly via httpd's -c directive (httpd-foreground = httpd -DFOREGROUND).
+    command: ["httpd-foreground", "-c", "Include conf/extra/httpd-fass.conf"]
     ports:
       - "${FASS_HTTP_PORT:-8080}:80"
     volumes:
       - ${FASS_OUTPUT_DIR:-../media/output}:/usr/local/apache2/htdocs:ro
+      # Player-tab headers (CORS on stream files, no-cache on playlists):
+      - ${FASS_HTTP_CORS_CONF:-../docker/fass-http/httpd-fass.conf}:/usr/local/apache2/conf/extra/httpd-fass.conf:ro
     restart: unless-stopped

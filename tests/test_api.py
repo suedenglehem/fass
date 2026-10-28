@@ -332,7 +332,8 @@ def test_ui_script_is_valid_javascript():
     js = re.search(r"<script>(.*?)</script>", client.get("/").text, re.S)
     assert js, "the UI must carry an inline script"
     # the specific victim: one physical line with the escape intact
-    line = next(l for l in js.group(1).splitlines() if "confirm(" in l)
+    # (pick it by its text — the Player tab added another confirm() later)
+    line = next(l for l in js.group(1).splitlines() if "saved config?" in l)
     assert "saved config?\\nThe UI" in line
     # the whole block: a real JS parser on the served bytes
     node = shutil.which("node")
@@ -780,7 +781,7 @@ def test_ui_has_the_files_tab():
     html = client.get("/").text
     assert 'id="tab-files"' in html and "showTab('files')" in html
     assert 'id="pane-files"' in html
-    assert "['cmd','runs','info','cfg'].concat('rag','files')" in html
+    assert "['cmd','runs','info','cfg'].concat('rag','files','player')" in html
     for needle in ("files-input", "files-output", "filemenu", "filemodal",
                    "loadFiles", "fileAction", "closeModal", "1st frame"):
         assert needle in html
@@ -972,6 +973,8 @@ def test_run_serve_http_places_output_in_per_run_dir(tmp_path, monkeypatch):
     assert rec["argv"][-1] == str(serve / "stream.m3u8")
     assert not (out / "stream.m3u8").exists()
     assert any("http" in n for n in rec["notes"])
+    # M13.7: the flag the Runs tab uses to link the row to the Player tab
+    assert rec["http"] is True
     # the sidecar would serve it at <base>/http/<run-id>/stream.m3u8
     d = client.get("/v1/streams").json()
     assert ("stream.m3u8", "hls", f"http/{run['id']}/stream.m3u8") in \
@@ -1011,6 +1014,7 @@ def test_run_serve_http_dash_segments_do_not_collide(tmp_path, monkeypatch):
     assert rec["status"] == "success", rec
     assert (out / "plain.mpd").is_file()
     assert rec["argv"][-1] == str(out / "plain.mpd")
+    assert rec["http"] is False   # no serve flag -> not linked to the Player tab
 
 
 def test_http_serve_dir_gates(tmp_path):
@@ -1027,3 +1031,103 @@ def test_http_serve_dir_gates(tmp_path):
     assert execute.http_serve_dir(str(out), "-", "rid4") is None
     # no output volume (no env, no /output on this host)
     assert execute.http_serve_dir("", str(tmp_path / "x.m3u8"), "rid5") is None
+
+
+# --------------------------------------------- player tab (M13.7)
+
+def test_static_serves_vendored_player_lib():
+    # the vendored shaka-player bundle is served by the fixed allowlist
+    # with a long cache lifetime (it is pinned — see fass/static/VENDORED.md)
+    r = client.get("/static/shaka-player.compiled.js")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/javascript")
+    assert "max-age=86400" in r.headers["cache-control"]
+    assert len(r.content) > 100_000   # a real bundle, not a stub
+
+
+def test_static_rejects_unknown_and_traversal_names():
+    assert client.get("/static/nope.js").status_code == 404
+    # a decoded traversal name must never reach a file outside static/
+    assert client.get("/static/..%2F..%2Fconfig.json").status_code == 404
+    assert client.get("/static/../config.json").status_code == 404
+
+
+def test_streams_entries_carry_size_mtime_and_live(tmp_path, monkeypatch):
+    _in, out = _http_env(tmp_path, monkeypatch)
+    ra = out / "http" / "run-a"
+    ra.mkdir(parents=True)
+    hls = ra / "stream.m3u8"
+    hls.write_text("#EXTM3U\n", encoding="utf-8")
+    os.utime(hls, (1_700_000_000, 1_700_000_000))
+    # no run owns these dirs -> every entry is VOD
+    d = client.get("/v1/streams").json()
+    assert d["streams"] == [{
+        "name": "stream.m3u8", "kind": "hls", "path": "http/run-a/stream.m3u8",
+        "url": "http://10.0.0.5:8080/http/run-a/stream.m3u8",
+        "size": 8, "mtime": 1_700_000_000, "live": False,
+    }]
+
+
+def test_streams_marks_live_while_owning_run_runs(tmp_path, monkeypatch):
+    _in, out = _http_env(tmp_path, monkeypatch)
+    ra, rb = out / "http" / "run-a", out / "http" / "run-b"
+    ra.mkdir(parents=True)
+    rb.mkdir(parents=True)
+    (ra / "live.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    (rb / "done.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    monkeypatch.setattr(execute, "list_runs", lambda: [
+        {"id": "run-a", "status": "running"},
+        {"id": "run-b", "status": "success"},
+    ])
+    d = client.get("/v1/streams").json()
+    by_name = {s["name"]: s for s in d["streams"]}
+    assert by_name["live.m3u8"]["live"] is True
+    assert by_name["done.m3u8"]["live"] is False
+
+
+def test_streams_purge_wipes_the_http_tree(tmp_path, monkeypatch):
+    _in, out = _http_env(tmp_path, monkeypatch)
+    # no tree yet: nothing to remove, still a successful purge
+    r = client.post("/v1/streams/purge")
+    assert r.status_code == 200
+    assert r.json() == {"purged": True, "files": 0}
+    ra = out / "http" / "run-a"
+    ra.mkdir(parents=True)
+    (ra / "stream.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    (ra / "segment0.ts").write_bytes(b"seg")
+    r = client.post("/v1/streams/purge")
+    assert r.status_code == 200
+    assert r.json() == {"purged": True, "files": 2}
+    assert not (out / "http").exists()
+    assert client.get("/v1/streams").json()["streams"] == []
+
+
+def test_streams_purge_refuses_while_a_run_is_running(tmp_path, monkeypatch):
+    _in, out = _http_env(tmp_path, monkeypatch)
+    ra = out / "http" / "run-a"
+    ra.mkdir(parents=True)
+    (ra / "stream.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    monkeypatch.setattr(execute, "list_runs",
+                        lambda: [{"id": "run-a", "status": "running"}])
+    r = client.post("/v1/streams/purge")
+    assert r.status_code == 409
+    assert (ra / "stream.m3u8").is_file()   # the tree is untouched
+
+
+def test_ui_player_tab_wiring():
+    # the Player tab is in the UI: pane + tab button + the vendored
+    # player lib is referenced (shaka-player plays both .m3u8 and .mpd)
+    r = client.get("/")
+    html = r.text
+    assert 'id="tab-player"' in html
+    assert 'id="pane-player"' in html
+    assert "function loadStreams" in html
+    assert "function playStream" in html
+    assert "function purgeStreams" in html
+    assert "/static/shaka-player.compiled.js" in html
+    assert "new shaka.Player(" in html
+    # the serve-over-http checkbox feeds POST /v1/runs' serve_http flag
+    assert 'id="servehttp"' in html
+    assert "serve_http: $('servehttp').checked" in html
+    # an http run's output cell links to the Player tab
+    assert "run.http" in html
