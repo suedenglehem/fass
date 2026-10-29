@@ -5,10 +5,35 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, multi-input "Generate does nothing" + RAG
+- **Last state (2026-10-29, VOD-HLS truncation: `hls_list_size` — COMMITTED
+  b7ad2eb + PUSHED, i7 DEPLOYED + VERIFIED, suite 1523 passed / 1 skipped,
+  E2E ffmpeg 9.0 13/13 segments, live API emits `-hls_list_size 0`):**
+  FFmpeg 9.0 changed the hls muxer's default `hls_list_size` from 0 (keep all)
+  to 5, so a finite (non-event) HLS transcode silently rolled the playlist down
+  to its last 5 segments — Shaka played only the clip's tail. Fix (planner.py):
+  inject `-hls_list_size 0` for a VOD hls output when the user hasn't set one,
+  in BOTH the plain-hls path and the tee hls branch; an explicit user value and
+  an `event` (live) playlist are left untouched. **+3 tests** (default /
+  explicit / event) + 3 existing pins updated to the new VOD argv shape.
+  **i7 deploy:** ff-merged f166b06→b7ad2eb (`git fetch origin && git merge
+  --ff-only origin/main`; local compose.yaml opt-ins + ffprobe.py patch
+  preserved through the merge), `docker compose -f docker/compose.yaml build
+  fass` + `up -d --force-recreate fass`. **Live-verified:** healthz ok;
+  `POST /v1/commands` (the user's exact instruction on titan_double.mp4) →
+  status ready, command ends `-c:a aac -b:a 32k -hls_list_size 0
+  titan_double.m3u8` + the "VOD HLS keeps the whole clip — -hls_list_size 0"
+  default note; fass-http/fass-worker/fass-rag unharmed. **Next unfinished
+  task:** (a) commit + push the doc-recording (HANDOFF.md + this PROGRESS.md)
+  on the user's ask — NOT auto-pushed (standing gate); (b) carry-forward still
+  open from the multi-input era: user browser E2E on i7 (2 multi-input cases +
+  `blackdetect` in the RAG tab); OPTIONAL docs/DEVELOPMENT.md codec list; and
+  the OPEN (user's call) CLI concat of "…48kbps aac audio" that emitted
+  `-b:a 160k`, not 48k (an NLU audio-bitrate-parsing matter).
+
+- **Previous state (2026-10-29, multi-input "Generate does nothing" + RAG
   `blackdetect` + dead compare regex — COMMITTED 5e38838 + PUSHED, i7
-  DEPLOYED + VERIFIED, suite 1520 passed / 1 skipped; README.md updated
-  UNCOMMITTED):** three bugs fixed. (1) Multi-input: the web UI "input video"
+  DEPLOYED + VERIFIED, suite 1520 passed / 1 skipped; README.md committed in
+  f166b06):** three bugs fixed. (1) Multi-input: the web UI "input video"
   field accepted `-i a -i b`; the server `_strip_i_prefix` (api.py) splits on
   the FIRST whitespace, so the field collapsed to the broken path `a -i b` →
   dead Generate. Fix (ui.py): client-side `mainInputs()` splits the main field
@@ -39,12 +64,13 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   **Live-verified:** `POST /v1/rag/query` "blackdetect" → `supported` + the
   family chunk (was NOTHING pre-fix), "blackdetect_vulkan" supported,
   "scale_cuda" control intact; served page has no control byte + all
-  multi-input markers. **README.md updated (UNCOMMITTED):** new codecs
+  multi-input markers. **README.md (committed in f166b06):** new codecs
   (AV1-libaom default / SVT-AV1 / VP8 / Theora / VVC) + OGV in the container
   list; the `-i`-tokens-in-main-field input method; the full UI tab list (was
-  "Command / Runs / Config"). **Next unfinished task:** (a) commit README.md +
-  push (on the user's ask); (b) OPTIONAL — docs/DEVELOPMENT.md line 277 codec
-  list still reads "(H.264 / H.265 / VP9, AAC / Opus)", add the new codecs;
+  "Command / Runs / Config"). **Next unfinished task (as of that state):**
+  (a) commit README.md + push — DONE in f166b06; (b) OPTIONAL —
+  docs/DEVELOPMENT.md line 277 codec list still reads "(H.264 / H.265 / VP9,
+  AAC / Opus)", add the new codecs;
   (c) user browser E2E on i7 (2 multi-input cases + `blackdetect` in the RAG
   tab); (d) OPEN (user's call) — the CLI concat of "…48kbps aac audio" emitted
   `-b:a 160k`, not 48k (an NLU audio-bitrate-parsing matter, not yet touched).
