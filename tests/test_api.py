@@ -969,6 +969,13 @@ def test_vviz_button_is_in_the_ui():
     # and the media-info row carries its own Clear
     assert 'sandbox="allow-scripts"' in html
     assert 'id="mi-clearbtn"' in html and "clearMiPane()" in html
+    # the row follows the File field: all four start disabled (no file,
+    # nothing to run); miButtons() on the input enables all of them once a
+    # file is entered, and Clear (wipeFile=true) empties the field again
+    assert 'oninput="miButtons()"' in html and "function miButtons()" in html
+    assert 'id="mi-showbtn" disabled onclick="showMediaInfo()"' in html
+    assert 'id="tsbtn" disabled onclick="showTSAnalyze()"' in html
+    assert 'id="mi-clearbtn" class="ghost" disabled onclick="clearMiPane(true)"' in html
     # the button is gated on the probed video codec, like TSAnalyze
     assert "'h264', 'hevc', 'av1', 'vp9'" in html
 

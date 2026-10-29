@@ -289,12 +289,12 @@ a { color: var(--accent); }
           <div><label for="mi-target">Look in</label>
             <select id="mi-target" onchange="fillMi()"><option value="input">input</option><option value="output">output</option></select></div>
           <div><label for="mi-file">File (bare name in that folder)</label>
-            <input id="mi-file" placeholder="clip.mp4"></div>
+            <input id="mi-file" oninput="miButtons()" placeholder="clip.mp4"></div>
         </div>
-        <button type="button" id="mi-showbtn" onclick="showMediaInfo()">Show media info</button>
+        <button type="button" id="mi-showbtn" disabled onclick="showMediaInfo()">Show media info</button>
         <button type="button" id="tsbtn" disabled onclick="showTSAnalyze()">TSAnalyze</button>
         <button type="button" id="vvizbtn" disabled onclick="showVviz()">Bitrate</button>
-        <button type="button" id="mi-clearbtn" class="ghost" onclick="clearMiPane()">Clear</button>
+        <button type="button" id="mi-clearbtn" class="ghost" disabled onclick="clearMiPane(true)">Clear</button>
         <span id="mi-status" class="note"></span>
         <pre id="mi-out" hidden style="margin-top:10px"></pre>
         <iframe id="vviz-frame" hidden sandbox="allow-scripts" style="margin-top:10px;width:100%;height:640px;border:1px solid #ccc" title="Bitrate chart"></iframe>
@@ -973,6 +973,17 @@ function showInfo(which) {
   if (which === 'prompts') loadPrompts();
 }
 let vvizBlob = null;
+let miBusy = false;
+/* the button row follows the File field: with no file, none of the
+   operations can run, so all four buttons stay disabled; a non-empty
+   file (typed or auto-filled by fillMi) enables all of them. After a
+   probe, showMediaInfo re-gates TSAnalyze/Bitrate by the probed
+   format/codec (the server enforces the same checks). */
+function miButtons() {
+  if (miBusy) return; // the vviz row lock wins while a chart generates
+  const has = $('mi-file').value.trim() !== '';
+  ['mi-showbtn', 'tsbtn', 'vvizbtn', 'mi-clearbtn'].forEach(id => { $(id).disabled = !has; });
+}
 /* hide the Bitrate chart and release its blob URL (one output at a
    time: fillMi / clearMiPane / showMediaInfo / showTSAnalyze all call it) */
 function hideVvizFrame() {
@@ -987,19 +998,17 @@ function fillMi() {
   const src = ($('mi-target').value === 'output')
     ? $('out').value.trim() : $('inp').value.trim();
   $('mi-file').value = src.replace(/^-i\\s+/, '');
-  // the selection changed: TSAnalyze and the Bitrate chart are
-  // enabled again by the next probe
-  $('tsbtn').disabled = true;
-  $('vvizbtn').disabled = true;
+  miButtons();
   hideVvizFrame();
 }
 /* Clear: wipes every output in the media-info block — the ffprobe report /
    tsanalyze text and the Bitrate chart */
-function clearMiPane() {
+function clearMiPane(wipeFile = false) {
   const out = $('mi-out');
   out.hidden = true;
   out.textContent = '';
   hideVvizFrame();
+  if (wipeFile) { $('mi-file').value = ''; miButtons(); }
   $('mi-status').innerHTML = '';
 }
 async function showMediaInfo() {
@@ -1063,8 +1072,9 @@ async function showTSAnalyze() {
     $('mi-out').hidden = false;
   } catch (err) {
     $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
+  } finally {
+    btn.disabled = false;
   }
-  btn.disabled = false;
 }
 /* Bitrate visualisation: vviz_py's interactive frame/GOP/bitrate chart.
    The server brings the source into a temp mp4 in /output (an mp4 is
@@ -1087,8 +1097,9 @@ async function showVviz() {
   const frame = $('vviz-frame');
   const row = [$('mi-showbtn'), $('tsbtn'), btn, $('mi-clearbtn')];
   const was = row.map(b => b.disabled);
+  miBusy = true; // keep miButtons() from re-enabling the row mid-flight
   row.forEach(b => { b.disabled = true; });
-  const unlock = () => row.forEach((b, i) => { b.disabled = was[i]; });
+  const unlock = () => { miBusy = false; row.forEach((b, i) => { b.disabled = was[i]; }); };
   const body = { target, file, confirm: false };
   const post = () => fetch('/v1/vviz', {
     method: 'POST',
