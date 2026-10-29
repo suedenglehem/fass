@@ -5,7 +5,48 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, VOD-HLS truncation: `hls_list_size` — COMMITTED
+- **Last state (2026-10-29, vviz bitrate visualisation — COMMITTED 3e3a25b +
+  PUSHED, i7 DEPLOYED + VERIFIED, suite 1535 passed / 2 skipped):**
+  vviz_py (bitrate/GOP/fragment/frame Plotly chart; reads mp4 only, needs
+  Bento4 mp4dump) baked into the image: new `bento` builder stage → static
+  mp4dump (SDK 1-6-0-641) at /usr/local/bin; venv RUN += `plotly==5.24.1
+  pandas scipy pytz` + `git clone --depth 1 wabiloo/vviz_py /opt/vviz_py` +
+  pkt_pts→pts sed patch (ffprobe≥5 dropped `pkt_pts`). Server: `POST
+  /v1/vviz {target: input|output, file, confirm=false}` — bare-name jail →
+  ffprobe codec gate {h264,hevc,av1,vp9} (400; "av2" in the request = VP9,
+  confirmed) → mp4 sources BYTE-COPIED, non-mp4 `ffmpeg -c copy -f mp4`
+  remux with a 409 confirm gate when duration > 20 min (UI `confirm()`s the
+  detail then re-POSTs confirm:true) → 507 when output free ≤ source size →
+  temp workdir `.vviz-*` ALWAYS in /output (vviz shells out with shell=True,
+  so a space-free temp name) → `vviz.py -f interactive` → its Plotly HTML
+  (written next to the target) served as HTMLResponse; workdir rmtree'd in
+  finally. UI: "bitrate visualisation" button + 640px hidden iframe under
+  the Info/Log mediainfo block, gated on the probed video codec (mirrors
+  tsbtn's mpegts gate). +13 tests (503 unavailable, schema 400/422, 404,
+  codec gate + audio-only, output-volume source, mp4 copied-not-remuxed,
+  409→confirm→remux argv, short non-mp4 direct, remux-failure 400, 507
+  faked disk_usage, unmounted output 503, E2E skipped without stack, UI
+  marker). **tr4 in-container E2E (port 8099):** all four codecs ×
+  mp4-direct/remux → 200 + Plotly (~4.6 MB each); mpeg4 → 400; 21-min ts →
+  409 w/o confirm, 200 + 6.95 MB chart in 5.3 s w/ confirm; clean /output;
+  UI markers present. **i7 deploy:** ff-merged b7ad2eb→3e3a25b (`git fetch
+  origin && git merge --ff-only origin/main`; compose.yaml opt-ins +
+  ffprobe.py patch preserved and verified), `docker compose build fass`
+  (clean) + `up -d --force-recreate fass`. **Live-verified:** healthz ok;
+  UI markers; titan.mp4 (mp4 direct) 200+plotly; titan.ts (remux)
+  200+plotly; no output leftovers; fass-worker/fass-rag unharmed; fass-http
+  already `Exited (127)` 14 h pre-deploy (pre-existing, NOT caused by the
+  deploy); LLM on 8080 untouched. **Next unfinished task:** user browser
+  E2E of the vviz button on i7, then the queued PRESETS feature (Save
+  button next to Generate; PRESETS block under "WHAT TO LOOK AT" in
+  Info/Log; preset JSON named md5 over Instruction+inputs+ffmpeg command;
+  selector → line-by-line preview → confirm fills the FFmpeg pane in the
+  generation-accomplished state). Carry-forward still open: OPTIONAL
+  docs/DEVELOPMENT.md codec list; the OPEN (user's call) CLI concat of
+  "…48kbps aac audio" that emitted `-b:a 160k`, not 48k (NLU
+  audio-bitrate-parsing).
+
+- **Previous state (2026-10-29, VOD-HLS truncation: `hls_list_size` — COMMITTED
   b7ad2eb + PUSHED, i7 DEPLOYED + VERIFIED, suite 1523 passed / 1 skipped,
   E2E ffmpeg 9.0 13/13 segments, live API emits `-hls_list_size 0`):**
   FFmpeg 9.0 changed the hls muxer's default `hls_list_size` from 0 (keep all)
@@ -22,13 +63,14 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   `POST /v1/commands` (the user's exact instruction on titan_double.mp4) →
   status ready, command ends `-c:a aac -b:a 32k -hls_list_size 0
   titan_double.m3u8` + the "VOD HLS keeps the whole clip — -hls_list_size 0"
-  default note; fass-http/fass-worker/fass-rag unharmed. **Next unfinished
-  task:** (a) commit + push the doc-recording (HANDOFF.md + this PROGRESS.md)
-  on the user's ask — NOT auto-pushed (standing gate); (b) carry-forward still
-  open from the multi-input era: user browser E2E on i7 (2 multi-input cases +
-  `blackdetect` in the RAG tab); OPTIONAL docs/DEVELOPMENT.md codec list; and
-  the OPEN (user's call) CLI concat of "…48kbps aac audio" that emitted
-  `-b:a 160k`, not 48k (an NLU audio-bitrate-parsing matter).
+  default note; fass-http/fass-worker/fass-rag unharmed. **Doc-recording
+  (HANDOFF.md + PROGRESS.md) COMMITTED fd86ba1 + PUSHED** (origin/main; i7
+  checkout still at b7ad2eb — docs-only, no i7 runtime impact). **Next
+  unfinished task:** carry-forward still open from the multi-input era: user
+  browser E2E on i7 (2 multi-input cases + `blackdetect` in the RAG tab);
+  OPTIONAL docs/DEVELOPMENT.md codec list; and the OPEN (user's call) CLI
+  concat of "…48kbps aac audio" that emitted `-b:a 160k`, not 48k (an NLU
+  audio-bitrate-parsing matter).
 
 - **Previous state (2026-10-29, multi-input "Generate does nothing" + RAG
   `blackdetect` + dead compare regex — COMMITTED 5e38838 + PUSHED, i7
