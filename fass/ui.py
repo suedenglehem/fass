@@ -101,6 +101,8 @@ button.small { margin-top: 0; padding: 3px 10px; font-size: 12px; font-weight: 5
 button.danger { background: var(--bad); }
 button#apply-btn { background: #1c5c52; }
 button.ghost { background: none; border: 1px solid var(--border); color: var(--muted); }
+/* the media-info block dims its whole button row while an operation runs */
+#info-mi button:disabled { opacity: .5; cursor: not-allowed; }
 .badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
   font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .b-ready { background: color-mix(in srgb, var(--ready) 15%, transparent); color: var(--ready); }
@@ -289,12 +291,13 @@ a { color: var(--accent); }
           <div><label for="mi-file">File (bare name in that folder)</label>
             <input id="mi-file" placeholder="clip.mp4"></div>
         </div>
-        <button type="button" onclick="showMediaInfo()">Show media info</button>
+        <button type="button" id="mi-showbtn" onclick="showMediaInfo()">Show media info</button>
         <button type="button" id="tsbtn" disabled onclick="showTSAnalyze()">TSAnalyze</button>
-        <button type="button" id="vvizbtn" disabled onclick="showVviz()">bitrate visualisation</button>
+        <button type="button" id="vvizbtn" disabled onclick="showVviz()">Bitrate</button>
+        <button type="button" id="mi-clearbtn" class="ghost" onclick="clearMiPane()">Clear</button>
         <span id="mi-status" class="note"></span>
         <pre id="mi-out" hidden style="margin-top:10px"></pre>
-        <iframe id="vviz-frame" hidden style="margin-top:10px;width:100%;height:640px;border:1px solid #ccc" title="bitrate visualisation"></iframe>
+        <iframe id="vviz-frame" hidden sandbox="allow-scripts" style="margin-top:10px;width:100%;height:640px;border:1px solid #ccc" title="Bitrate chart"></iframe>
       </div>
 
       <div id="info-log" hidden>
@@ -969,22 +972,42 @@ function showInfo(which) {
   if (which === 'mi') fillMi();
   if (which === 'prompts') loadPrompts();
 }
+let vvizBlob = null;
+/* hide the Bitrate chart and release its blob URL (one output at a
+   time: fillMi / clearMiPane / showMediaInfo / showTSAnalyze all call it) */
+function hideVvizFrame() {
+  const frame = $('vviz-frame');
+  frame.hidden = true;
+  frame.src = 'about:blank';
+  if (vvizBlob) { URL.revokeObjectURL(vvizBlob); vvizBlob = null; }
+}
 function fillMi() {
   // auto-fill from the Command tab's fields ('-i ' prefix stripped),
   // still editable by hand
   const src = ($('mi-target').value === 'output')
     ? $('out').value.trim() : $('inp').value.trim();
   $('mi-file').value = src.replace(/^-i\\s+/, '');
-  // the selection changed: TSAnalyze and the bitrate visualisation are
+  // the selection changed: TSAnalyze and the Bitrate chart are
   // enabled again by the next probe
   $('tsbtn').disabled = true;
   $('vvizbtn').disabled = true;
-  $('vviz-frame').hidden = true;
+  hideVvizFrame();
+}
+/* Clear: wipes every output in the media-info block — the ffprobe report /
+   tsanalyze text and the Bitrate chart */
+function clearMiPane() {
+  const out = $('mi-out');
+  out.hidden = true;
+  out.textContent = '';
+  hideVvizFrame();
+  $('mi-status').innerHTML = '';
 }
 async function showMediaInfo() {
   const target = $('mi-target').value;
   const file = $('mi-file').value.trim();
   const out = $('mi-out');
+  // one output at a time: a fresh report replaces the Bitrate chart
+  hideVvizFrame();
   $('mi-status').textContent = 'reading…';
   try {
     const r = await fetch(`/v1/mediainfo?target=${encodeURIComponent(target)}&file=${encodeURIComponent(file)}`);
@@ -1022,6 +1045,8 @@ async function showTSAnalyze() {
   }
   const btn = $('tsbtn');
   btn.disabled = true;
+  // one output at a time: the TS report replaces the Bitrate chart
+  hideVvizFrame();
   $('mi-status').textContent = 'running tsanalyze…';
   try {
     const r = await fetch(`/v1/tsanalyze?target=${encodeURIComponent(target)}&file=${encodeURIComponent(file)}`);
@@ -1044,8 +1069,10 @@ async function showTSAnalyze() {
 /* Bitrate visualisation: vviz_py's interactive frame/GOP/bitrate chart.
    The server brings the source into a temp mp4 in /output (an mp4 is
    copied as-is, any other container is remuxed losslessly) and returns
-   self-contained Plotly HTML for the iframe to embed. A 409 means the
-   remux would be long — confirm, then re-POST with confirm:true. */
+   self-contained Plotly HTML for the sandboxed iframe to embed. A 409
+   means the remux would be long — confirm, then re-POST with confirm:true.
+   While the chart generates the whole button row is dimmed + disabled:
+   the processing can take a while, and other clicks would race it. */
 async function showVviz() {
   const target = $('mi-target').value;
   const file = $('mi-file').value.trim();
@@ -1053,9 +1080,15 @@ async function showVviz() {
     $('mi-status').textContent = 'give the file name first';
     return;
   }
+  // one output at a time: the chart is the only info shown, so the
+  // mediainfo / tsanalyze / previous chart outputs go first
+  clearMiPane();
   const btn = $('vvizbtn');
-  btn.disabled = true;
   const frame = $('vviz-frame');
+  const row = [$('mi-showbtn'), $('tsbtn'), btn, $('mi-clearbtn')];
+  const was = row.map(b => b.disabled);
+  row.forEach(b => { b.disabled = true; });
+  const unlock = () => row.forEach((b, i) => { b.disabled = was[i]; });
   const body = { target, file, confirm: false };
   const post = () => fetch('/v1/vviz', {
     method: 'POST',
@@ -1084,12 +1117,22 @@ async function showVviz() {
       return;
     }
     $('mi-status').textContent = '';
-    frame.srcdoc = text;
+    // unhide first, then load: a document committed while the iframe is
+    // hidden (display:none) gets a 0x0 viewport. Load the document via a
+    // blob: URL, not srcdoc — a sandboxed srcdoc document's root box stays
+    // 0x0 in Chrome (srcdoc takes precedence over src, so the frame is
+    // about:srcdoc), plotly measures 0x0 and renders its 700x450 fallback,
+    // i.e. the "blank page". The same document via blob: fills the iframe,
+    // and the sandbox attribute still blocks download / popup / navigation.
     frame.hidden = false;
+    if (vvizBlob) URL.revokeObjectURL(vvizBlob);
+    vvizBlob = URL.createObjectURL(new Blob([text], { type: 'text/html' }));
+    frame.src = vvizBlob;
   } catch (err) {
     $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
+  } finally {
+    unlock();
   }
-  btn.disabled = false;
 }
 async function loadLogs() {
   const sel = $('log-run');

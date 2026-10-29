@@ -180,6 +180,30 @@ def _vviz_duration(data: dict) -> float | None:
     return None
 
 
+def _vviz_finalize_html(html: str) -> str:
+    """Adapt vviz's self-contained chart page for embedding in the fass UI.
+    Two things the bare page gets wrong on its own:
+
+    - its plotly target div is ``height:100%``, but the page's html/body and
+      the div's wrapper have no height, so the percentage chain cannot
+      resolve and the container collapses to zero (plotly then measures 0x0
+      and falls back to a 700x450 default — the chart is effectively
+      invisible, a blank white page with just the mode bar). Make the whole
+      chain full-height, and pin the plot div to the iframe viewport
+      (``100vw``/``100vh``) as a structure-independent backstop.
+    - plotly.js's mode bar carries "Download Plotly.js HTML" / "Download
+      image" buttons; the user wants everything inside the web UI. Hide the
+      bar (the UI additionally embeds the page in a sandboxed iframe, so even
+      a surviving button could not download or navigate)."""
+    tag = ("<style>html,body{height:100%;margin:0}"
+           "body>div{height:100%}"
+           ".plotly-graph-div{width:100vw!important;height:100vh!important}"
+           ".modebar{display:none!important}</style>")
+    if "</head>" in html:
+        return html.replace("</head>", tag + "</head>", 1)
+    return tag + html
+
+
 def _vviz_run(target: Path, title: str) -> str:
     """Run vviz_py's interactive chart on ``target`` (an mp4) and return the
     self-contained Plotly HTML it writes next to the file. vviz shells out to
@@ -204,7 +228,7 @@ def _vviz_run(target: Path, title: str) -> str:
     if not html_path.is_file():
         raise HTTPException(502, "vviz produced no HTML output: "
                          + (p.stderr.strip()[-500:] or "no .html written"))
-    return html_path.read_text(encoding="utf-8")
+    return _vviz_finalize_html(html_path.read_text(encoding="utf-8"))
 
 
 class CommandRequest(BaseModel):

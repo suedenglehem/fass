@@ -963,10 +963,33 @@ def _vviz_probe(fmt_name, codec, duration="0.500000"):
 
 def test_vviz_button_is_in_the_ui():
     html = client.get("/").text
-    assert 'id="vvizbtn"' in html and "bitrate visualisation" in html
+    assert 'id="vvizbtn"' in html and ">Bitrate</button>" in html
     assert 'id="vviz-frame"' in html and "showVviz()" in html
+    # the chart is embedded in a sandboxed iframe (nothing to download)
+    # and the media-info row carries its own Clear
+    assert 'sandbox="allow-scripts"' in html
+    assert 'id="mi-clearbtn"' in html and "clearMiPane()" in html
     # the button is gated on the probed video codec, like TSAnalyze
     assert "'h264', 'hevc', 'av1', 'vp9'" in html
+
+
+def test_vviz_finalize_html_fixes_embed_page():
+    import fass.api as api
+    html = "<html><head><title>t</title></head><body></body></html>"
+    out = api._vviz_finalize_html(html)
+    # plotly's target div is height:100%; the bare page's root and the
+    # wrapper div have no height, so the percentage chain collapses and the
+    # chart renders at plotly's 700x450 fallback (a blank page). Make the
+    # whole chain full-height and pin the plot to the viewport.
+    assert "html,body{height:100%" in out
+    assert "body>div{height:100%}" in out
+    assert ".plotly-graph-div{width:100vw!important;height:100vh!important}" in out
+    # and the download mode bar is hidden
+    assert ".modebar{display:none!important}" in out
+    assert out.index("html,body") < out.index("</head>")
+    assert out.index(".modebar") < out.index("</head>")
+    # a headless fragment still gets the styles, just prepended
+    assert api._vviz_finalize_html("<div>chart</div>").startswith("<style>")
 
 
 def test_vviz_unavailable_is_503(tmp_path, monkeypatch):
@@ -1134,6 +1157,12 @@ def test_vviz_e2e_h264_mp4(tmp_path, monkeypatch):
     assert r.status_code == 200, r.text[:500]
     assert "text/html" in r.headers["content-type"]
     assert "plotly" in r.text.lower()
+    # the download mode bar is hidden — the chart stays in the web UI
+    assert ".modebar{display:none" in r.text
+    # and the root has full height, so the height:100% plot container
+    # actually renders instead of collapsing to a blank page
+    assert "html,body{height:100%" in r.text
+    assert "body>div{height:100%}" in r.text
     assert list(out_dir.glob(".vviz-*")) == []
 
 
