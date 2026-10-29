@@ -36,7 +36,8 @@ answer, never a silent partial plan.
 ## What it understands
 
 **Shape**: N typed inputs — video, audio, image, local capture sources
-(the web UI has a "+ add input" row for each) → one output that is a file
+(the web UI has a "+ add input" row for each — or several `-i file` tokens
+typed straight into the main input field) → one output that is a file
 **or** a stream destination. Multiple inputs is what makes "replace the
 audio with song.mp3" and "watermark it with a and b" work.
 
@@ -82,8 +83,9 @@ audio with song.mp3" and "watermark it with a and b" work.
   output, the final pass applies vidstabtransform — the response
   carries the plan's `steps` and the execution layer runs them in order
 - **Container conversion** — a broad, codec-matrix-validated set: video in
-  MP4 / MOV / MKV / WebM / MPEG-TS / MXF / AVI / FLV / GIF / WebP with H.264 /
-  H.265 / VP9 / MPEG-2 / ProRes / MJPEG, audio in MP3 / AAC / FLAC / Opus /
+  MP4 / MOV / MKV / WebM / MPEG-TS / MXF / AVI / FLV / GIF / WebP / OGV with
+  H.264 / H.265 / AV1 (libaom, the default) / SVT-AV1 / VP9 / VP8 / Theora /
+  VVC / MPEG-2 / ProRes / MJPEG, audio in MP3 / AAC / FLAC / Opus /
   ALAC / AC-3 / E-AC-3 / PCM, HLS, and more (see
   [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)). When the probes show the input
   streams already match, it **remuxes** (`-c copy`) instead of re-encoding —
@@ -139,8 +141,9 @@ audio with song.mp3" and "watermark it with a and b" work.
   changes
 
 CLI flags, the web API (`POST /v1/commands`, plus `POST /v1/runs` and the
-media endpoints for the execution layer) and the web UI (Command / Runs /
-Config tabs), the security model, validation levels, tests, and the roadmap
+media endpoints for the execution layer) and the web UI (Command, Files,
+Runs, Player, Info/Log, RAG and Config tabs), the security model, validation
+levels, tests, and the roadmap
 live in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Quality comparison (VMAF / PSNR / SSIM)

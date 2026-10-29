@@ -5,7 +5,50 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-28, i7 LLM timeout fix — COMMITTED fbcd8ab +
+- **Last state (2026-10-29, multi-input "Generate does nothing" + RAG
+  `blackdetect` + dead compare regex — COMMITTED 5e38838 + PUSHED, i7
+  DEPLOYED + VERIFIED, suite 1520 passed / 1 skipped; README.md updated
+  UNCOMMITTED):** three bugs fixed. (1) Multi-input: the web UI "input video"
+  field accepted `-i a -i b`; the server `_strip_i_prefix` (api.py) splits on
+  the FIRST whitespace, so the field collapsed to the broken path `a -i b` →
+  dead Generate. Fix (ui.py): client-side `mainInputs()` splits the main field
+  on standalone `-i` tokens before submit → `assets.main` + `assets.m1…`;
+  add-input `kind` read via `.closest('.row')` (was `parentElement` — the
+  `<select>` is a sibling of the input wrapper, not its parent). (2) RAG
+  `blackdetect` → nothing: ffmpeg groups filters under comma-joined headings
+  ("blackdetect, blackdetect_vulkan") with `component_name` NULL (11 such
+  family chunks), so the exact `component_names` SQL filter on a NULL column
+  returned 0 rows. Fix (rag/retrieval.py, code-only, NO re-ingest):
+  `_component_names_for` derives a chunk's names from `component_name` + the
+  heading-leaf comma-tokens (gated by `_IDENT_RX = ^[a-z0-9_-]+$`), the index
+  maps every name → chunk, and `component_names` is applied as a PYTHON
+  post-filter with the exact boost re-applied → `blackdetect` now returns
+  `supported`. (3) Bonus: `CMP_RX` (ui.py:546) compare-detection was DEAD — a
+  single `\b` in the one big non-f-string UI_HTML is a Python backspace (0x08)
+  baked into the served page, so `isCompare()` was always false; doubled all JS
+  regex escapes (`\\b`/`\\s`). **Tests:**
+  `test_ui_multi_input_generate_sends_all_inputs` (webinfo; its global
+  `"\x08" not in html` invariant is what surfaced CMP_RX) +
+  `test_component_name_filter_multi_name_heading` (rag). Full suite **1520
+  passed / 1 skipped** (exit 0). **i7 deploy:** ff-merged 0ffc75a→5e38838
+  (`git fetch origin && git merge --ff-only origin/main`; the local
+  compose.yaml opt-ins + ffprobe.py patch untouched), `docker compose build
+  fass fass-rag` (the retrieval fix is baked into the **fass-rag image** —
+  Dockerfile.rag re-ingests the corpus at build time, NO volume) + `up -d
+  --force-recreate fass fass-rag`; fass-worker/fass-http untouched.
+  **Live-verified:** `POST /v1/rag/query` "blackdetect" → `supported` + the
+  family chunk (was NOTHING pre-fix), "blackdetect_vulkan" supported,
+  "scale_cuda" control intact; served page has no control byte + all
+  multi-input markers. **README.md updated (UNCOMMITTED):** new codecs
+  (AV1-libaom default / SVT-AV1 / VP8 / Theora / VVC) + OGV in the container
+  list; the `-i`-tokens-in-main-field input method; the full UI tab list (was
+  "Command / Runs / Config"). **Next unfinished task:** (a) commit README.md +
+  push (on the user's ask); (b) OPTIONAL — docs/DEVELOPMENT.md line 277 codec
+  list still reads "(H.264 / H.265 / VP9, AAC / Opus)", add the new codecs;
+  (c) user browser E2E on i7 (2 multi-input cases + `blackdetect` in the RAG
+  tab); (d) OPEN (user's call) — the CLI concat of "…48kbps aac audio" emitted
+  `-b:a 160k`, not 48k (an NLU audio-bitrate-parsing matter, not yet touched).
+- **Previous state (2026-10-28, i7 LLM timeout fix — COMMITTED fbcd8ab +
   PUSHED, i7 DEPLOYED + VERIFIED; suite 1473 passed / 1 skipped):**
   User report: "test llm" OK, but generating a command on i7 fails with
   `parser error: LLM provider unreachable: timed out`. Root cause:
