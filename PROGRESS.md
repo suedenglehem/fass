@@ -5,9 +5,51 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, PRESETS feature — COMMITTED 8b54574, NOT yet
-  pushed/deployed (awaiting user green light), suite 1546 passed / 2
-  skipped):** user spec: a preset = a successfully generated ffmpeg
+- **Last state (2026-10-29, FFmpeg button row follows its fields —
+  COMMITTED 880130e, NOT yet pushed/deployed (awaiting user green light),
+  suite 1547 passed / 2 skipped):** user: "on opening FFmpeg tab very
+  first time, after clearing it, deactivate buttons 'Generate' etc, as
+  nothing is entered they cant work" — the same row-state pattern as the
+  Info/Log fix (c0402a5). The whole FFmpeg row (Generate | Save |
+  Mediainfo | Clear) now starts `disabled` in the markup; `cmdButtons()`
+  (replaces `syncMiBtn()`, whose single rule moves inside) re-gates it on
+  every keystroke of `#instr` (with setCompareMode) / `#inp` / `#out` /
+  `#wm` + each extra-input row's field (listener attached in
+  addExtra()) + once at load + after every programmatic fill that
+  bypasses the listeners (clearCmdPane, usePrompt, loadPreset,
+  runMediaInfo's tail): Generate iff instr AND inp non-empty; Mediainfo
+  iff inp non-empty AND instr empty (its original rule); Clear iff any of
+  instr/inp/out/wm/extra-input has content; Save unchanged (gated on
+  lastReady via render()/clearCmdPane()). **Tests:** test_webinfo.py — 3
+  syncMiBtn pins reworked (function name, the mi-btn gating expression,
+  usePrompt comment) + new `test_ui_ffmpeg_button_row_follows_the_fields`
+  (row starts disabled in markup; the three gating expressions; the four
+  plain `addEventListener('input', cmdButtons)` listeners + the instr
+  wrapper; clearCmdPane re-derives the row). **Verified:** headless-Chrome
+  click test ALL GREEN (fresh pane: all four disabled; instruction only:
+  just Clear; + input: Generate on, Mediainfo off (instruction present);
+  input only: Mediainfo on; nothing: all disabled again; extra-input
+  content: Clear enabled; output-only: just Clear; after Clear: fields
+  emptied + no extra rows + all four disabled; no page errors) — throwaway
+  server on tr4 port 8099, exact-PID killed, temp dirs in
+  /tmp/fass_ui_test; full suite 1547 passed / 2 skipped (142.50 s).
+  **Context:** the PRESETS feature (8b54574 + docs 812e236) is ALREADY
+  pushed + deployed to i7 + live-verified this session (21:35Z:
+  presets round-trip in /config/presets, 404 guard, opt-ins + ffprobe
+  patch intact, LLM 8080 untouched) — the user is browser-testing it;
+  this row fix rides the NEXT deploy round. **Next unfinished task:**
+  user green light for push + i7 deploy of this fix (same recipe:
+  ff-merge, `docker compose build fass` + force-recreate, verify
+  opt-ins + ffprobe patch), then user browser test of both the row
+  states and the presets flow. Carry-forward unchanged: user browser
+  E2E of multi-input cases + blackdetect RAG; OPTIONAL
+  docs/DEVELOPMENT.md codec list; the OPEN CLI concat of
+  "…48kbps aac audio" that emitted `-b:a 160k`, not 48k (NLU
+  audio-bitrate-parsing).
+
+- **Previous state (2026-10-29, PRESETS feature — PUSHED + i7 DEPLOYED +
+  live-verified 2026-10-29 21:35Z (code 8b54574, docs 812e236); user
+  browser-test in progress; suite 1546 passed / 2 skipped):** user spec: a preset = a successfully generated ffmpeg
   command set; 'Save' button next to 'Generate' on the FFmpeg pane
   storing Instruction, inputs, outputs, generated ffmpeg string into a
   JSON file named by md5 over instruction+inputs+command; a 'PRESETS'
