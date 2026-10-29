@@ -467,6 +467,30 @@ def test_ui_command_tab_clear_button():
     assert "miSet" not in html
 
 
+def test_ui_multi_input_generate_sends_all_inputs():
+    # "Generate" on a multi-input request must not die silently:
+    #  - the Input field may hold several `-i <file>` pairs ("concatenate two
+    #    files" often lands there); mainInputs() splits them so the first is
+    #    'main' and the rest become extra assets m1..mN
+    #  - each "+ add input" row's kind <select> is a SIBLING of the input's
+    #    wrapper div, so its value must be read via closest('.row') — reading
+    #    parentElement returned null, threw, and aborted the whole submit
+    #  - the split regex must reach the browser as a real `\s` (doubled in the
+    #    .py source); a lone `\s`/`\b` bakes a control char in and the regex
+    #    stops matching
+    html = client.get("/").text
+    # no backspace (0x08) leaked anywhere into the served page
+    assert "\x08" not in html
+    # the main-field splitter: first -i is main, the rest become m1, m2, ...
+    assert "function mainInputs(" in html
+    assert "s.split(/(?:^|\\s)-i\\s+/)" in html
+    assert "assets.main = mainParts[0]" in html
+    assert "assets['m' + mi] = p" in html
+    # the kind select is read off the enclosing row, never off the input's parent
+    assert "i.closest('.row').querySelector('.extra-kind')" in html
+    assert "i.parentElement.querySelector('.extra-kind')" not in html
+
+
 def test_ui_ffmpeg_tab_label_and_prompts_view():
     # the Command pane is renamed FFmpeg (the internal id stays 'cmd'),
     # and the Info/Log pane gains a 'prompts' selector under 'run log'

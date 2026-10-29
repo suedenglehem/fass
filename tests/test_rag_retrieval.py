@@ -177,6 +177,51 @@ def test_component_name_filter(r: Retriever):
     assert resp["chunks"] == []
 
 
+def test_component_name_filter_multi_name_heading(tmp_path: Path):
+    # The manual groups related filters under ONE comma-joined heading
+    # ("blackdetect, blackdetect_vulkan") and leaves component_name NULL; the
+    # component_names filter and the exact component lookup must still reach
+    # the chunk through ANY of the heading's names (regression: the RAG tab
+    # returned nothing for "blackdetect", which fass sends as an exact
+    # component_names request).
+    root = tmp_path / "fam-1"
+    (root / "chunks" / "manual" / "gen-1").mkdir(parents=True)
+    (root / "chunks" / "build-help" / "gen-1").mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps(
+        {"corpus_id": "fam-1", "version_status": "pinned-release"}))
+    (root / "chunks" / "manual" / "generations.json").write_text(
+        json.dumps({"active": 1, "history": []}))
+    (root / "chunks" / "build-help" / "generations.json").write_text(
+        json.dumps({"active": 1, "history": []}))
+    (root / "chunks" / "build-help" / "gen-1" / "chunks.jsonl").write_text("")
+    chunk = dict(chunk_id="c-bd", corpus_id="fam-1",
+                 source_url="https://example.test/f.html", anchor="bd",
+                 heading_path=["Video Filters", "blackdetect, blackdetect_vulkan"],
+                 component_type="filter", component_name=None,
+                 option_names=["d", "pix_th"],
+                 text="Video Filters > blackdetect, blackdetect_vulkan\n\n"
+                      "Detect video intervals that are (almost) black.",
+                 parent_id=None, content_hash="h-bd",
+                 version_status="pinned-release", source_kind="manual",
+                 level=3, oversized=False)
+    (root / "chunks" / "manual" / "gen-1" / "chunks.jsonl").write_text(
+        json.dumps(chunk) + "\n")
+    r = Retriever(root)
+    # reachable via every name in the heading, with an exact/supported match
+    for name in ("blackdetect", "blackdetect_vulkan"):
+        resp = r.search(name, component_names=[name],
+                        component_types=["filter"]).response()
+        assert resp["evidence_status"] == "supported", (name, resp["evidence_status"])
+        assert [c["chunk_id"] for c in resp["chunks"]] == ["c-bd"]
+    # a component name that is NOT one of the heading's is still excluded
+    resp = r.search("blackdetect", component_names=["silenceremove"],
+                    component_types=["filter"]).response()
+    assert resp["chunks"] == []
+    # exact component lookup resolves the family names too
+    assert {c.chunk_id for c in r.get_component("filter", "blackdetect")} == {"c-bd"}
+    assert {c.chunk_id for c in r.get_component("filter", "blackdetect_vulkan")} == {"c-bd"}
+
+
 def test_corpus_mismatch(r: Retriever):
     from rag.retrieval import CorpusMismatch
     with pytest.raises(CorpusMismatch):

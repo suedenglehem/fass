@@ -54,6 +54,11 @@ COMPONENT_UNION_MAX_TOKENS = 3
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-]*")
 _MAX_QUERY_TOKENS = 16
+# An FFmpeg component identifier (filter/encoder/... name): lowercase letters,
+# digits, '_' and '-'. No dots — dotted forms ("component.option") are
+# query-side, never a component name — which also keeps build-help file stems
+# like "encoders.txt" out of the derived name set.
+_IDENT_RX = re.compile(r"^[a-z0-9_\-]+$")
 
 
 class CorpusMismatch(Exception):
@@ -176,6 +181,28 @@ def _match_query(tokens: list[dict]) -> str:
     return " OR ".join(dict.fromkeys(phrases))  # dedupe, keep order
 
 
+def _component_names_for(c: "Chunk") -> frozenset[str]:
+    """Every component a chunk documents, lowercased: its component_name plus
+    each identifier token in its leaf heading. The manual groups related
+    filters under one comma-joined heading ("blackdetect, blackdetect_vulkan",
+    "lut, lutrgb, lutyuv", "setdar, setsar"); the single component_name column
+    can only hold one, so those chunks are otherwise indexed under none of the
+    names and an exact component_names filter (or the exact component lookup)
+    misses them — even though the lexical title search finds them (their title
+    IS the heading). Single-name sections (leaf == component_name) are
+    unaffected: the set is just {component_name}."""
+    names: set[str] = set()
+    if c.component_name:
+        names.add(c.component_name.lower())
+    leaf = c.heading_path[-1] if c.heading_path else None
+    if leaf:
+        for tok in leaf.split(","):
+            tok = tok.strip()
+            if tok and _IDENT_RX.match(tok):
+                names.add(tok.lower())
+    return frozenset(names)
+
+
 class Retriever:
     """Loads one corpus directory (manifest + active generation of BOTH
     kinds) into an in-memory FTS5 index and answers lexical searches."""
@@ -228,14 +255,25 @@ class Retriever:
             c.seq = seq
 
         self._by_id = {c.chunk_id: c for c in self.chunks}
+        # Index under EVERY component name each chunk documents (see
+        # _component_names_for), not just its single component_name column:
+        # the manual groups several filters under one comma-joined heading and
+        # leaves component_name NULL, so exact lookup / the component filter
+        # must reach it through any of the heading's names.
         self._by_component: dict[tuple[str, str], list[Chunk]] = {}
         self._known_components: dict[str, tuple[str, str]] = {}  # lower name -> (type, name)
+        self._chunk_names: dict[str, frozenset[str]] = {}
         for c in self.chunks:
-            if c.component_type and c.component_name:
-                self._by_component.setdefault(
-                    (c.component_type, c.component_name.lower()), []).append(c)
-                self._known_components.setdefault(c.component_name.lower(),
-                                                  (c.component_type, c.component_name))
+            if not c.component_type:
+                continue
+            names = _component_names_for(c)
+            if not names:
+                continue
+            self._chunk_names[c.chunk_id] = names
+            for n in names:
+                self._by_component.setdefault((c.component_type, n), []).append(c)
+                self._known_components.setdefault(
+                    n, (c.component_type, c.component_name or n))
 
         # check_same_thread=False: the FastAPI threadpool serves endpoints off
         # the thread that built the index (tests/test_rag_server.py).
@@ -296,10 +334,10 @@ class Retriever:
         if component_types:
             where.append("component_type IN (%s)" % ",".join("?" * len(component_types)))
             params.extend(component_types)
-        if component_names:
-            where.append("lower(component_name) IN (%s)"
-                         % ",".join("?" * len(component_names)))
-            params.extend([n.lower() for n in component_names])
+        # NOTE: component_names is NOT a SQL filter here. The component_name
+        # column is single-valued, but a chunk can document several components
+        # under one comma-joined heading (component_name NULL), so the filter
+        # is applied in Python over the candidate set via _chunk_names below.
         if source_kinds:
             where.append("source_kind IN (%s)" % ",".join("?" * len(source_kinds)))
             params.extend(source_kinds)
@@ -329,14 +367,21 @@ class Retriever:
                             [match] + params + [c.chunk_id]).fetchone()
                         if row is not None:
                             cand[c.chunk_id] = row[0]
-        hits = [self._score(self._by_id[cid], tokens, rank)
-                for cid, rank in cand.items()]
         # An explicit component_names filter is an exact component request
-        # (PRD 5.5 example: NL query + component_names -> supported).
+        # (PRD 5.5 example: NL query + component_names -> supported). It
+        # matches the names each candidate DOCUMENTS (see _component_names_for)
+        # — a family-heading chunk ("blackdetect, blackdetect_vulkan") matches
+        # component_names=["blackdetect"] even though its component_name column
+        # is NULL — not just the single component_name column.
         if component_names:
             wanted = {n.lower() for n in component_names}
+            cand = {cid: rank for cid, rank in cand.items()
+                    if wanted & self._chunk_names.get(cid, frozenset())}
+        hits = [self._score(self._by_id[cid], tokens, rank)
+                for cid, rank in cand.items()]
+        if component_names:
             for h in hits:
-                if h.chunk.component_name and h.chunk.component_name.lower() in wanted:
+                if wanted & self._chunk_names.get(h.chunk.chunk_id, frozenset()):
                     h.boost += EXACT_COMPONENT_BOOST
                     h.exact = True
         hits = self._dedupe(hits)

@@ -543,7 +543,7 @@ function showTab(t) {
    folder), the Output field the distorted clip — its name from the output
    folder; Output empty means the server auto-detects it. Nothing is
    written; the score lands in the run log. */
-const CMP_RX = /\bcompar(?:e[sd]?|ison|ing)\b|\bquality\\s+(?:loss|difference|degradation|drop|impact)\b|\blib-?vmaf\b|\bpsnr\b|\bssim\b/i;
+const CMP_RX = /\\bcompar(?:e[sd]?|ison|ing)\\b|\\bquality\\s+(?:loss|difference|degradation|drop|impact)\\b|\\blib-?vmaf\\b|\\bpsnr\\b|\\bssim\\b/i;
 const INP_LBL = $('lbl-inp'), OUT_LBL = $('lbl-out');
 const INP_HTML = INP_LBL.innerHTML, OUT_HTML = OUT_LBL.innerHTML;
 function isCompare() { return CMP_RX.test($('instr').value); }
@@ -581,6 +581,17 @@ function addExtra() {
     <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
   $('extra').appendChild(row);
 }
+function mainInputs(raw) {
+  // the Input field may carry several `-i <file>` pairs (its placeholder
+  // invites `-i clip.mp4`, so "concatenate two files" often lands here as
+  // `-i a.ts -i b.ts`). Split on standalone `-i` tokens: the first is 'main',
+  // the rest become extra inputs. A value with no standalone `-i` — a stream
+  // URL or a bare/previous-run filename, which may hold spaces or an embedded
+  // "-i" — is returned whole.
+  const s = raw.trim();
+  if (!s) return [];
+  return s.split(/(?:^|\\s)-i\\s+/).map(p => p.trim()).filter(Boolean);
+}
 async function submit(e) {
   e.preventDefault();
   const cmp = isCompare();
@@ -595,13 +606,25 @@ async function submit(e) {
     const outv = $('out').value.trim();
     if (outv) assets.distorted = { path: outv, kind: 'video' };
   } else {
-    assets.main = $('inp').value.trim();
+    // several `-i <file>` pairs in the Input field → the first is 'main', the
+    // rest are extra inputs, so a "concatenate two files" request has a second
+    // input to bind (the "+ add input" rows are an equivalent way to add one)
+    const mainParts = mainInputs($('inp').value);
+    assets.main = mainParts[0] || $('inp').value.trim();
+    let mi = 0;
+    for (const p of mainParts.slice(1)) {
+      mi += 1;
+      assets['m' + mi] = p;
+    }
     if ($('wm').value.trim()) assets.watermark = $('wm').value.trim();
   }
   document.querySelectorAll('.extra-inp').forEach(i => {
     const v = i.value.trim();
     if (!v) return;
-    const kind = i.parentElement.querySelector('.extra-kind').value;
+    // the kind <select> is a SIBLING of the input's wrapper <div> (not a
+    // descendant of it), so it must be read from the enclosing row — reading
+    // it off i.parentElement returned null and threw, killing "Generate"
+    const kind = i.closest('.row').querySelector('.extra-kind').value;
     assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };
   });
   const body = {
