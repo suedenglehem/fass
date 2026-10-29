@@ -5,7 +5,82 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, Info/Log row follows the File field (user
+- **Last state (2026-10-29, PRESETS feature — COMMITTED 8b54574, NOT yet
+  pushed/deployed (awaiting user green light), suite 1546 passed / 2
+  skipped):** user spec: a preset = a successfully generated ffmpeg
+  command set; 'Save' button next to 'Generate' on the FFmpeg pane
+  storing Instruction, inputs, outputs, generated ffmpeg string into a
+  JSON file named by md5 over instruction+inputs+command; a 'PRESETS'
+  block under 'WHAT TO LOOK AT' in Info/Log with a selector whose
+  selection shows the full content line-by-line in a small div; on
+  confirm the FFmpeg pane fields are filled from the preset and set to
+  the generation-accomplished state. **Server (fass/api.py):**
+  `PresetSaveRequest` (extra=forbid; instruction/command min_length=1);
+  `_presets_dir()` = `$FASS_PRESETS_DIR` (tests) else `config_path().parent
+  / "presets"` → container `/config/presets`, persisted by the EXISTING
+  /config volume — NO compose change; `_preset_name()` = md5 over
+  `instruction + "\n" + json.dumps(assets, sort_keys=True,
+  separators=(",",":")) + "\n" + command` + `.json` (assets key order
+  does not change the name); `GET /v1/presets` (newest first, corrupt /
+  non-preset files skipped, never a 500; rows: name/instruction/
+  command[:120]/saved_at/size); `POST /v1/presets` (idempotent
+  overwrite; file written WITHOUT sort_keys so the assets' insertion
+  order = the -i order survives for the preview; saved_at =
+  `time.strftime('%Y-%m-%dT%H:%M:%SZ', gmtime())`); `GET
+  /v1/presets/{name}` (raw text, content-type application/json; strict
+  `re.fullmatch(r"[0-9a-f]{32}\.json", name)` = the path-traversal
+  guard; unsaved → 404, corrupt → 500). **UI (fass/ui.py):** `#savebtn`
+  (ghost, next to Generate, `disabled` until a ready render) + `#save-
+  status`; `let lastReady = null` — `render()` sets it to the response
+  when `d.status === 'ready'` else null and re-gates the button;
+  `clearCmdPane()` resets it. `collectAssets()` extracted verbatim from
+  `submit()` (compare main/distorted; non-cmp `mainInputs()` split →
+  main+m1..mn, watermark, `.extra-inp` rows reading kind via
+  `.closest('.row')`) and shared by `submit()` and `savePreset()` — a
+  preset always stores exactly what the form would send. `savePreset()`:
+  posts instruction + collectAssets() + `$('cmd').value` + output +
+  adapter + the three checkboxes + lastReady's arguments/summary/
+  defaults/warnings/validation_level/checks/evidence → status "saved
+  as <name> (Info / Log tab → presets)". Info/Log: 4th radio
+  `#sel-presets` → `#info-presets` (lazy-loaded by `showInfo`, like
+  prompts): `#preset-sel` (newest first, option text = instruction +
+  saved_at) + ↻ refresh + `#preset-status` + `#preset-preview` (pre,
+  max-height 220px, white-space:pre-wrap — the FULL raw file, line by
+  line) + `#preset-loadbtn` (ghost, disabled until a preview loaded).
+  `previewPreset()` fetches the raw text, sets `presetCurrent`, enables
+  Load. `loadPreset()` = restore-by-synthesis: fills instr/inp/out/wm
+  (cmp branch when the stored instruction is compare-detect — same test
+  the next Generate runs), adapter + the three checkboxes, recreates the
+  extra-input rows with their ORIGINAL `inN` ids (so a re-save lands on
+  the same md5) bumping `extraN` past them, then `render({status:
+  'ready', command, arguments, summary, defaults, warnings,
+  validation_level, checks, evidence, raw_llm: null})` +
+  `showTab('cmd')` — pixel-identical generation-accomplished state, no
+  re-generation (no LLM nondeterminism). **Tests:** NEW
+  tests/test_presets.py, 10 tests, ALL PASS (list-empty dir;
+  save+list roundtrip + full file shape + assets key order preserved;
+  idempotent re-save; name tracks instruction/inputs/command +
+  key-order invariant; raw-JSON get; non-preset-name 404s incl. no-.json
+  and no-hex; corrupt/foreign files skipped by the list + corrupt
+  direct read → 500; malformed bodies 422 (empty command/instruction,
+  extra field); Save-button UI markup; PRESETS-block UI markup).
+  tests/test_webinfo.py: the `verbose: $('verbose').checked` count
+  assertion 2 → 3 (savePreset() is the third site, legitimately).
+  **Full suite 1546 passed / 2 skipped (142.76 s).** **Next unfinished
+  task:** user green light for push + i7 deploy (deploy = `git fetch
+  origin && git merge --ff-only origin/main` + `docker compose -f
+  docker/compose.yaml build fass` + `up -d --force-recreate fass` — NO
+  compose change; presets land in /config/presets on the existing
+  volume; verify opt-ins + ffprobe patch intact after merge), then
+  user browser test: Save a generation → Info/Log → presets → select →
+  read the preview → Load → FFmpeg pane filled + generation-accomplished
+  state; re-Save from the restored pane → same md5 (idempotent). Carry-
+  forward still open: user browser E2E of multi-input cases +
+  blackdetect RAG; OPTIONAL docs/DEVELOPMENT.md codec list; the OPEN
+  CLI concat of "…48kbps aac audio" that emitted `-b:a 160k`, not 48k
+  (NLU audio-bitrate-parsing).
+
+- **Previous state (2026-10-29, Info/Log row follows the File field (user
   round 2) — COMMITTED c0402a5 + PUSHED, i7 RE-DEPLOYED + VERIFIED, suite
   1536 passed / 2 skipped):** user: opening Info/Log → ALL buttons disabled
   (nothing can run until a file is selected); file name entered → ALL
