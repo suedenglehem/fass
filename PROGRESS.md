@@ -5,7 +5,44 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, FFmpeg button row follows its fields —
+- **Last state (2026-10-29, programmatic-fill row re-gate + Run now restore —
+  COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
+  suite 1548 passed / 2 skipped):** two user-reported bugs from
+  live-testing the deployed row-state build (dae2e31). (1) "buttons are
+  disabled on opening … right click->'as input' … at that moment button
+  'Mediainfo' must become active !" — the Files-tab right-clicks fill
+  fields PROGRAMMATICALLY (no input event), so the rows never re-gated:
+  "as input" fills #inp (FFmpeg row stayed all-disabled) and the same
+  class for "tsanalyze" filling Info/Log's #mi-file. Fix: `cmdButtons();`
+  at the as-input fill site, `miButtons();` at the tsanalyze fill site;
+  the other programmatic fills (clearCmdPane/usePrompt/loadPreset)
+  already re-gated. (2) "executed a generation … it finished ok, but …
+  last button got stuck in state 'starting...'" — runCmd() restored
+  '▶ Run now' only in the two failure branches; a single restore() now
+  runs on success / HTTP error / network error (the old failure restore
+  also dropped the ▶ glyph). **Tests:** row-state test +4 assertions
+  (re-gate pinned at both fill sites) + new
+  test_ui_run_now_restores_after_every_outcome (restore() count == 3).
+  **Verified:** headless-Chrome click test ALL GREEN (the user's exact
+  as-input scenario → Mediainfo+Clear on, Generate/Save off; tsanalyze
+  row all four on; Run now across all three stubbed outcomes) — one
+  false alarm: the first run "failed" on the failure branch because the
+  TEST's fetch-stub swap was a call, not an assignment (missing `=`), so
+  the "failure" case hit the success stub; the app path was green in
+  isolation. **i7 deploy:** pushed 2fc427f..138a563; i7 ff-merged
+  dae2e31→138a563 (compose opt-ins + ffprobe "Exiting with exit code"
+  patch intact); compose build + force-recreate; live-verified: healthz
+  ok, served-page markers (both re-gate calls ×1, restore def ×1,
+  restore() ×3, old stuck string ×0, ▶ Run now markup ×1),
+  worker/rag unharmed, fass-http pre-existing Exited(127), LLM 8080 →
+  200. **Next unfinished task:** user re-test on i7 (as input →
+  Mediainfo/Clear come on at the fill moment; Run now restores after a
+  run, success or failure). Carry-forward unchanged: user browser E2E of
+  multi-input cases + blackdetect RAG; OPTIONAL docs/DEVELOPMENT.md
+  codec list; the OPEN CLI concat of "…48kbps aac audio" that emitted
+  `-b:a 160k`, not 48k (NLU audio-bitrate-parsing).
+
+- **Previous state (2026-10-29, FFmpeg button row follows its fields —
   COMMITTED 880130e + PUSHED, i7 RE-DEPLOYED + live-verified 22:14Z,
   suite 1547 passed / 2 skipped; user browser-test in progress):** user: "on opening FFmpeg tab very
   first time, after clearing it, deactivate buttons 'Generate' etc, as
