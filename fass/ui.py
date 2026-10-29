@@ -233,10 +233,10 @@ a { color: var(--accent); }
     <label class="check"><input type="checkbox" id="verbose"> verbose log <span class="note">(every pass runs with -loglevel verbose; the log lands in the output folder's log/ directory — see the Info / Log tab)</span></label>
     <label class="check"><input type="checkbox" id="servehttp"> serve over http <span class="note">(the output lands in the fass-http sidecar's tree — open it in the Player tab; for .m3u8 / .mpd outputs)</span></label>
     <div class="row" style="align-items:center">
-      <button type="submit" id="genbtn">Generate</button>
+      <button type="submit" id="genbtn" disabled>Generate</button>
       <button type="button" id="savebtn" class="ghost" disabled onclick="savePreset()" title="Freeze this generation as a preset (find it back under Info / Log → presets)">Save</button>
-      <button type="button" id="mi-btn" onclick="runMediaInfo()">Mediainfo</button>
-      <button type="button" id="clearbtn" class="ghost" onclick="clearCmdPane()">Clear</button>
+      <button type="button" id="mi-btn" disabled onclick="runMediaInfo()">Mediainfo</button>
+      <button type="button" id="clearbtn" class="ghost" disabled onclick="clearCmdPane()">Clear</button>
       <span id="save-status" class="note"></span>
     </div>
   </form>
@@ -576,15 +576,28 @@ function setCompareMode() {
     ? 'Distorted (the transcoded clip — its name from the output folder; leave empty to auto-detect)'
     : OUT_HTML;
 }
-function syncMiBtn() {
-  // Mediainfo is a peek that ignores the instruction — disable the button
-  // while any instruction is present so a real command is never silently
-  // replaced by a report; it can only fire with an empty Instruction
-  $('mi-btn').disabled = $('instr').value.trim() !== '';
+function cmdButtons() {
+  // the FFmpeg pane's button row follows its fields, like the Info/Log row:
+  // nothing entered → nothing can work, so on a fresh pane (and after Clear)
+  // the row is disabled. Generate needs both required fields; Mediainfo a
+  // file AND an empty Instruction (it is a peek that ignores the
+  // instruction, so a real command is never silently replaced by a
+  // report); Clear needs something to clear. Save stays gated on lastReady
+  // (a ready render), which render() and clearCmdPane() manage.
+  const instr = $('instr').value.trim();
+  const inp = $('inp').value.trim();
+  $('genbtn').disabled = !(instr && inp);
+  $('mi-btn').disabled = !inp || instr !== '';
+  const any = instr || inp || $('out').value.trim() || $('wm').value.trim() ||
+    Array.from(document.querySelectorAll('.extra-inp')).some(i => i.value.trim());
+  $('clearbtn').disabled = !any;
 }
-$('instr').addEventListener('input', () => { setCompareMode(); syncMiBtn(); });
+$('instr').addEventListener('input', () => { setCompareMode(); cmdButtons(); });
+$('inp').addEventListener('input', cmdButtons);
+$('out').addEventListener('input', cmdButtons);
+$('wm').addEventListener('input', cmdButtons);
 setCompareMode();
-syncMiBtn();
+cmdButtons();
 let extraN = 0;
 function addExtra() {
   extraN += 1;
@@ -599,6 +612,7 @@ function addExtra() {
     </select></div>
     <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
   $('extra').appendChild(row);
+  row.querySelector('.extra-inp').addEventListener('input', cmdButtons);
 }
 function mainInputs(raw) {
   // the Input field may carry several `-i <file>` pairs (its placeholder
@@ -748,7 +762,7 @@ async function runMediaInfo() {
     $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
   }
   btn.textContent = 'Mediainfo';
-  syncMiBtn();
+  cmdButtons();
 }
 function lists(items) {
   if (!items || !items.length) return '';
@@ -888,9 +902,9 @@ function clearCmdPane() {
   $('savebtn').disabled = true;
   $('save-status').textContent = '';
   // a programmatic .value never fires the input listener, so re-derive both
-  // the compare labels and the Mediainfo button's disabled state
+  // the compare labels and the button row (every field empty → all disabled)
   setCompareMode();
-  syncMiBtn();
+  cmdButtons();
 }
 
 /* ------------------------------------------------------------ runs tab */
@@ -1294,9 +1308,9 @@ async function loadPrompts() {
 function usePrompt(text) {
   $('instr').value = text;
   // a programmatic value never fires the input listener — re-derive both the
-  // compare labels and the Mediainfo button (which disables on an instruction)
+  // compare labels and the button row (Mediainfo disables on an instruction)
   setCompareMode();
-  syncMiBtn();
+  cmdButtons();
   showTab('cmd');
 }
 /* the PRESETS block: the generations saved by the FFmpeg tab's Save button.
@@ -1413,7 +1427,7 @@ function loadPreset() {
   $('verbose').checked = !!p.verbose;
   $('servehttp').checked = !!p.servehttp;
   setCompareMode();
-  syncMiBtn();
+  cmdButtons();
   // the 'generation accomplished' state: re-render the stored ready response
   // (command + everything the result pane shows) instead of re-generating
   $('res').hidden = false;

@@ -438,18 +438,22 @@ def test_ui_mediainfo_button_independent_of_instruction():
     # the Instruction field stays required (the peek no longer needs to lift it)
     cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
     assert '<textarea id="instr" required' in cmd_pane
-    # syncMiBtn disables the button while any instruction is present
-    assert "function syncMiBtn()" in html
-    assert "$('mi-btn').disabled = $('instr').value.trim() !== ''" in html
+    # cmdButtons disables the button while any instruction is present (or
+    # no file is entered)
+    assert "function cmdButtons()" in html
+    assert "$('mi-btn').disabled = !inp || instr !== ''" in html
     # and it runs on every keystroke (and once at load) alongside compare mode
-    assert "setCompareMode(); syncMiBtn()" in html
+    assert "setCompareMode(); cmdButtons()" in html
+    # the row starts disabled on a fresh pane — nothing can work
+    assert '<button type="submit" id="genbtn" disabled>' in html
+    assert 'id="mi-btn" disabled onclick="runMediaInfo()"' in html
 
 
 def test_ui_command_tab_clear_button():
-    # the button row is Generate | Mediainfo | Clear; Clear resets the whole
-    # FFmpeg pane: every field, the option checkboxes, the adapter, the extra
-    # inputs, the result area, and the two derived states (the compare labels
-    # and the Mediainfo button)
+    # the button row is Generate | Save | Mediainfo | Clear; Clear resets the
+    # whole FFmpeg pane: every field, the option checkboxes, the adapter, the
+    # extra inputs, the result area, and the derived states (the compare
+    # labels and the button row — every field empty → all disabled again)
     html = client.get("/").text
     cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
     assert 'id="genbtn"' in cmd_pane and 'id="mi-btn"' in cmd_pane and 'id="clearbtn"' in cmd_pane
@@ -461,10 +465,44 @@ def test_ui_command_tab_clear_button():
                    "$('ad').value = 'auto'", "$('extra').innerHTML = ''",
                    "$('pf').checked = false", "$('verbose').checked = false",
                    "$('servehttp').checked = false", "setCompareMode()",
-                   "syncMiBtn()"):
+                   "cmdButtons()"):
         assert needle in html
     # the old miSet helper is fully gone
     assert "miSet" not in html
+
+
+def test_ui_ffmpeg_button_row_follows_the_fields():
+    # like the Info/Log row: on a fresh pane (and after Clear) nothing is
+    # entered, so the whole button row is disabled — nothing can work. The
+    # fields' input listeners re-gate it on every keystroke: Generate needs
+    # both required fields, Mediainfo a file + an empty Instruction, Clear
+    # any content (Save stays gated on lastReady — a ready render).
+    html = client.get("/").text
+    # the row starts disabled on a fresh pane
+    for needle in ('<button type="submit" id="genbtn" disabled>',
+                   'id="mi-btn" disabled onclick="runMediaInfo()"',
+                   'id="clearbtn" class="ghost" disabled onclick="clearCmdPane()"'):
+        assert needle in html
+    # the gating expressions
+    assert "const instr = $('instr').value.trim()" in html
+    assert "const inp = $('inp').value.trim()" in html
+    assert "$('genbtn').disabled = !(instr && inp)" in html
+    assert "$('mi-btn').disabled = !inp || instr !== ''" in html
+    assert "$('clearbtn').disabled = !any" in html
+    # re-gated on every keystroke: instr (with the compare labels), inp,
+    # out, wm, and each extra-input row's field
+    assert "setCompareMode(); cmdButtons()" in html
+    assert "$('inp').addEventListener('input', cmdButtons)" in html
+    assert "$('out').addEventListener('input', cmdButtons)" in html
+    assert "$('wm').addEventListener('input', cmdButtons)" in html
+    assert "row.querySelector('.extra-inp').addEventListener('input', cmdButtons)" in html
+    # exactly those four plain listeners (instr wraps cmdButtons with the
+    # compare-label re-derivation)
+    assert html.count("addEventListener('input', cmdButtons)") == 4
+    # and Clear's programmatic reset re-derives the row — every field is
+    # empty, so the row is all-disabled again
+    clear_body = html.split("function clearCmdPane()")[1].split("\n}")[0]
+    assert "setCompareMode();" in clear_body and "cmdButtons();" in clear_body
 
 
 def test_ui_multi_input_generate_sends_all_inputs():
@@ -514,9 +552,9 @@ def test_ui_ffmpeg_tab_label_and_prompts_view():
     assert "function usePrompt(text)" in html
     assert "$('instr').value = text" in html
     # a programmatic fill never fires the input listener, so usePrompt
-    # re-derives both states (the compare labels + the Mediainfo button)
-    assert "compare labels and the Mediainfo button (which disables on an instruction)" in html
-    assert "syncMiBtn();" in html
+    # re-derives both states (the compare labels + the button row)
+    assert "compare labels and the button row (Mediainfo disables on an instruction)" in html
+    assert "cmdButtons();" in html
 
 
 def test_ui_run_cmd_sends_the_instruction():
