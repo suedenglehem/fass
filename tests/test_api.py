@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -916,6 +917,224 @@ def test_ui_content_width_values_are_css_valid():
     assert 'value="1260px"' in html
     assert 'value="1060' not in html
     assert "endsWith('px')" in html and "=== '1060px'" in html
+
+
+# ------------------------------------------------- vviz (bitrate visualisation)
+
+def _vviz_env(tmp_path, monkeypatch, probe, remux_exit=0):
+    """Volumes + a working vviz: ffprobe/ffmpeg/_vviz_run faked, the
+    availability gate and the plotly runner stubbed. Returns (in_dir,
+    out_dir, calls) — calls is the ordered list of subprocess argvs the
+    endpoint ran (ffprobe / ffmpeg; an mp4 source never runs ffmpeg)."""
+    import fass.api as api
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        if cmd[0] == "ffprobe":
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(probe), stderr="")
+        if cmd[0] == "ffmpeg":
+            if remux_exit == 0:
+                Path(cmd[-1]).write_bytes(b"fake-mp4")
+            return subprocess.CompletedProcess(
+                cmd, remux_exit, stdout="",
+                stderr="" if remux_exit == 0 else "remux blew up")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setattr(api, "vviz_available", lambda: True)
+    vviz_calls: list[tuple[str, str]] = []
+
+    def fake_vviz_run(target, title):
+        vviz_calls.append((str(target), title))
+        assert Path(target).is_file(), "vviz must read a real temp file"
+        return "<html>chart</html>"
+
+    monkeypatch.setattr(api, "_vviz_run", fake_vviz_run)
+    return in_dir, out_dir, calls
+
+
+def _vviz_probe(fmt_name, codec, duration="0.500000"):
+    return {"format": {"format_name": fmt_name, "duration": duration},
+            "streams": [{"codec_type": "video", "codec_name": codec}]}
+
+
+def test_vviz_button_is_in_the_ui():
+    html = client.get("/").text
+    assert 'id="vvizbtn"' in html and "bitrate visualisation" in html
+    assert 'id="vviz-frame"' in html and "showVviz()" in html
+    # the button is gated on the probed video codec, like TSAnalyze
+    assert "'h264', 'hevc', 'av1', 'vp9'" in html
+
+
+def test_vviz_unavailable_is_503(tmp_path, monkeypatch):
+    import fass.api as api
+    _vols(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "vviz_available", lambda: False)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4"})
+    assert r.status_code == 503
+    assert "not available" in r.json()["detail"]
+
+
+def test_vviz_bare_names_and_schema(tmp_path, monkeypatch):
+    in_dir, _out, _calls = _vviz_env(tmp_path, monkeypatch,
+                                     _vviz_probe("mp4", "h264"))
+    (in_dir / "clip.mp4").write_bytes(b"x" * 10)
+    for bad in ("../x", "a/b.mp4", ".."):
+        r = client.post("/v1/vviz", json={"target": "input", "file": bad})
+        assert r.status_code == 400, bad
+    # an empty name is a schema rejection, not a jail escape
+    assert client.post("/v1/vviz", json={"target": "input",
+                                         "file": ""}).status_code == 422
+    # extra fields are rejected (extra="forbid"), unknown target is 422
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4",
+                                      "bogus": 1})
+    assert r.status_code == 422
+    assert client.post("/v1/vviz", json={"target": "bogus",
+                                         "file": "clip.mp4"}).status_code == 422
+
+
+def test_vviz_missing_file_is_404(tmp_path, monkeypatch):
+    _vviz_env(tmp_path, monkeypatch, _vviz_probe("mp4", "h264"))
+    r = client.post("/v1/vviz", json={"target": "input", "file": "ghost.mp4"})
+    assert r.status_code == 404
+    assert "ghost.mp4" in r.json()["detail"]
+
+
+def test_vviz_unsupported_codec_is_400(tmp_path, monkeypatch):
+    in_dir, _out, calls = _vviz_env(tmp_path, monkeypatch,
+                                    _vviz_probe("mp4", "mpeg4"))
+    (in_dir / "clip.mp4").write_bytes(b"x" * 10)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4"})
+    assert r.status_code == 400
+    assert "mpeg4" in r.json()["detail"]
+    # no temp file, no remux, no chart
+    assert [c[0] for c in calls] == ["ffprobe"]
+    assert list(_out.glob(".vviz-*")) == []
+    # audio-only (no video stream) is the same rejection
+    in_dir2, _out2, _calls2 = _vviz_env(
+        tmp_path, monkeypatch,
+        {"format": {"format_name": "mp3", "duration": "1.0"},
+         "streams": [{"codec_type": "audio", "codec_name": "mp3"}]})
+    (in_dir2 / "song.mp3").write_bytes(b"x" * 10)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "song.mp3"})
+    assert r.status_code == 400
+    assert "none" in r.json()["detail"]
+
+
+def test_vviz_output_volume_source(tmp_path, monkeypatch):
+    # the option works on the output folder too, not only the input one
+    _in, out_dir, calls = _vviz_env(tmp_path, monkeypatch,
+                                    _vviz_probe("mp4", "hevc"))
+    (out_dir / "res.mp4").write_bytes(b"x" * 10)
+    r = client.post("/v1/vviz", json={"target": "output", "file": "res.mp4"})
+    assert r.status_code == 200
+    assert r.text == "<html>chart</html>"
+    assert "text/html" in r.headers["content-type"]
+    # the working copy still lives in the OUTPUT volume
+    target = next(a for a in calls if a and a[0] == "ffprobe")
+    assert str(target[-1]) == str(out_dir / "res.mp4")
+    assert list(out_dir.glob(".vviz-*")) == []
+
+
+def test_vviz_mp4_is_copied_not_remuxed(tmp_path, monkeypatch):
+    in_dir, out_dir, calls = _vviz_env(tmp_path, monkeypatch,
+                                       _vviz_probe("mp4", "h264"))
+    payload = b"mp4-bytes" * 100
+    (in_dir / "clip.mp4").write_bytes(payload)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4"})
+    assert r.status_code == 200
+    assert r.text == "<html>chart</html>"
+    # only ffprobe ran — an mp4 is byte-copied, never re-packaged
+    assert [c[0] for c in calls] == ["ffprobe"]
+    assert list(out_dir.glob(".vviz-*")) == []
+
+
+def test_vviz_long_non_mp4_asks_to_confirm(tmp_path, monkeypatch):
+    in_dir, out_dir, calls = _vviz_env(
+        tmp_path, monkeypatch, _vviz_probe("mpegts", "h264", duration="3600.0"))
+    (in_dir / "clip.ts").write_bytes(b"ts" * 100)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.ts",
+                                      "confirm": False})
+    assert r.status_code == 409
+    assert "remuxed" in r.json()["detail"]
+    # the confirm gate happens before the remux
+    assert [c[0] for c in calls] == ["ffprobe"]
+    assert list(out_dir.glob(".vviz-*")) == []
+    # …and the same POST with confirm goes through
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.ts",
+                                      "confirm": True})
+    assert r.status_code == 200
+    assert r.text == "<html>chart</html>"
+    ffmpeg = [c for c in calls if c[0] == "ffmpeg"]
+    assert len(ffmpeg) == 1
+    assert "-c" in ffmpeg[0] and "copy" in ffmpeg[0]
+    assert "-f" in ffmpeg[0] and "mp4" in ffmpeg[0]
+    assert list(out_dir.glob(".vviz-*")) == []
+
+
+def test_vviz_short_non_mp4_remuxes_without_confirm(tmp_path, monkeypatch):
+    in_dir, out_dir, calls = _vviz_env(
+        tmp_path, monkeypatch, _vviz_probe("matroska,webm", "av1"))
+    (in_dir / "clip.mkv").write_bytes(b"mkv" * 100)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mkv"})
+    assert r.status_code == 200, r.text
+    assert [c[0] for c in calls] == ["ffprobe", "ffmpeg"]
+    assert list(out_dir.glob(".vviz-*")) == []
+
+
+def test_vviz_remux_failure_is_400(tmp_path, monkeypatch):
+    in_dir, out_dir, _calls = _vviz_env(
+        tmp_path, monkeypatch, _vviz_probe("mpegts", "h264"), remux_exit=1)
+    (in_dir / "clip.ts").write_bytes(b"ts" * 100)
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.ts",
+                                      "confirm": True})
+    assert r.status_code == 400
+    assert "remux" in r.json()["detail"]
+    assert list(out_dir.glob(".vviz-*")) == []
+
+
+def test_vviz_no_room_in_output_is_507(tmp_path, monkeypatch):
+    import fass.api as api
+    in_dir, out_dir, _calls = _vviz_env(tmp_path, monkeypatch,
+                                        _vviz_probe("mp4", "h264"))
+    (in_dir / "clip.mp4").write_bytes(b"x" * 100)
+    monkeypatch.setattr(
+        api.shutil, "disk_usage",
+        lambda p: types.SimpleNamespace(total=1000, free=5, used=995))
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4"})
+    assert r.status_code == 507
+    assert "no room" in r.json()["detail"]
+    assert list(out_dir.glob(".vviz-*")) == []
+
+
+def test_vviz_unmounted_output_is_503(tmp_path, monkeypatch):
+    import fass.api as api
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "vviz_available", lambda: True)
+    (in_dir / "clip.mp4").write_bytes(b"x" * 10)
+    monkeypatch.setattr(execute, "_output_dir", lambda: "")
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4"})
+    assert r.status_code == 503
+    assert "output folder" in r.json()["detail"]
+
+
+def test_vviz_e2e_h264_mp4(tmp_path, monkeypatch):
+    """The real stack (ffprobe + mp4dump + vviz_py + plotly in this
+    interpreter) against a real clip — skipped wherever it is absent
+    (the docker image is where the full E2E runs)."""
+    import fass.api as api
+    if not (FFMPEG and api.vviz_available() and shutil.which("ffprobe")):
+        pytest.skip("vviz stack (ffprobe/mp4dump/vviz_py/plotly) not here")
+    in_dir, out_dir = _vols(tmp_path, monkeypatch)
+    _make_clip(in_dir / "clip.mp4")
+    r = client.post("/v1/vviz", json={"target": "input", "file": "clip.mp4"})
+    assert r.status_code == 200, r.text[:500]
+    assert "text/html" in r.headers["content-type"]
+    assert "plotly" in r.text.lower()
+    assert list(out_dir.glob(".vviz-*")) == []
 
 
 # --------------------------------------------- edited command (expert override)

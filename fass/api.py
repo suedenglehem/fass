@@ -26,9 +26,11 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -82,6 +84,25 @@ class AssetRef(BaseModel):
     kind: AssetKind | None = None
 
 
+class VvizRequest(BaseModel):
+    """POST /v1/vviz body (the Info/Log tab's "bitrate visualisation").
+
+    Runs vviz_py's bitrate/GOP/frame-size chart on one video file of a
+    deployment volume. ``file`` is a bare basename of the selected volume —
+    the same stance as /v1/mediainfo and the /media routes. vviz reads mp4
+    only, so a non-mp4 container with a supported codec (h264/hevc/av1/vp9)
+    is losslessly remuxed to a temp mp4 in the output volume first (checked
+    for free space), run, then deleted. ``confirm`` gates that remux for long
+    files: the first call returns a 409 ``needs_confirm`` warning, the second
+    (``confirm=true``) does the remux."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["input", "output"] = "input"
+    file: str = Field(min_length=1, max_length=1024)
+    confirm: bool = False
+
+
 def _strip_i_prefix(path: str) -> str:
     """Input convention (web UI): `-i <file>` names a file in the input
     folder — the `-i ` prefix is accepted everywhere a plain filename is
@@ -92,6 +113,98 @@ def _strip_i_prefix(path: str) -> str:
     if parts[0] == "-i" and len(parts) > 1:
         return parts[1].strip()
     return path
+
+
+# --------------------------------------------- vviz (bitrate visualisation)
+
+VVIZ_VIDEO_CODECS = frozenset({"h264", "hevc", "av1", "vp9"})
+# Fixed temp basename inside the per-request workdir (vviz writes its HTML
+# next to the file it reads; a space-free name avoids vviz's shell=True
+# ffprobe call tripping on a user-supplied filename with spaces).
+VVIZ_TMP_NAME = "vviz_src.mp4"
+
+
+def _vviz_py_path() -> str:
+    """The vviz_py entry point (FASS_VVIZ_PY; /opt/vviz_py/vviz.py in the
+    docker build)."""
+    return os.environ.get("FASS_VVIZ_PY", "/opt/vviz_py/vviz.py")
+
+
+def _vviz_mp4dump() -> str:
+    """The mp4dump (Bento4) executable name or path (FASS_VVIZ_MP4DUMP)."""
+    return os.environ.get("FASS_VVIZ_MP4DUMP", "mp4dump")
+
+
+def _vviz_remux_warn_seconds() -> float:
+    """Duration above which a non-mp4 remux asks for confirmation
+    (FASS_VVIZ_REMUX_WARN_SECONDS; default 1200 = 20 minutes)."""
+    try:
+        return float(os.environ.get("FASS_VVIZ_REMUX_WARN_SECONDS", "1200"))
+    except ValueError:
+        return 1200.0
+
+
+def _vviz_timeout() -> float:
+    """Subprocess timeout for the remux and the vviz run (FASS_VVIZ_TIMEOUT;
+    default 900s — a copy-speed remux of a long clip plus vviz's per-frame
+    analysis)."""
+    try:
+        return float(os.environ.get("FASS_VVIZ_TIMEOUT", "900"))
+    except ValueError:
+        return 900.0
+
+
+def vviz_available() -> bool:
+    """True when this build can run vviz: both the vviz_py entry point and
+    the mp4dump (Bento4) binary are present. The Info/Log button stays
+    available for UI gating on the codec alone, but the endpoint 503s here
+    when the tool is not installed (e.g. a dev checkout without the docker
+    build)."""
+    return (shutil.which(_vviz_mp4dump()) is not None
+            and Path(_vviz_py_path()).is_file())
+
+
+def _vviz_duration(data: dict) -> float | None:
+    """The probed container's duration in seconds, or None — vviz needs it to
+    gate the long-remux confirmation (the ffprobe report the UI already shows
+    carries it under format.duration, else the first video stream's)."""
+    try:
+        d = (data.get("format") or {}).get("duration")
+        if d:
+            return float(d)
+        for s in (data.get("streams") or []):
+            if s.get("codec_type") == "video" and s.get("duration"):
+                return float(s["duration"])
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _vviz_run(target: Path, title: str) -> str:
+    """Run vviz_py's interactive chart on ``target`` (an mp4) and return the
+    self-contained Plotly HTML it writes next to the file. vviz shells out to
+    ``ffprobe``/``mp4dump`` (the ``--*-exec`` flags), uses this process's own
+    interpreter for its plotly/pandas/scipy imports, and names its output
+    ``<target>.html`` — the caller passes a file inside a temp workdir it
+    owns and deletes, so the HTML is always readable and always cleaned up."""
+    cmd = [sys.executable, _vviz_py_path(), str(target),
+           "-f", "interactive",
+           "--ffprobe-exec", "ffprobe",
+           "--mp4dump-exec", _vviz_mp4dump(),
+           "-t", title]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=_vviz_timeout(), check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(502, f"vviz failed: {e}")
+    if p.returncode != 0:
+        raise HTTPException(502, "vviz failed: "
+                         + (p.stderr.strip()[-2000:] or f"exit {p.returncode}"))
+    html_path = Path(str(target) + ".html")
+    if not html_path.is_file():
+        raise HTTPException(502, "vviz produced no HTML output: "
+                         + (p.stderr.strip()[-500:] or "no .html written"))
+    return html_path.read_text(encoding="utf-8")
 
 
 class CommandRequest(BaseModel):
@@ -773,6 +886,108 @@ def create_app() -> FastAPI:
                 502, f"tsanalyze failed: "
                      f"{(proc.stderr or '')[-500:] or f'exit {proc.returncode}'}")
         return out
+
+    @app.post("/v1/vviz")
+    def vviz(req: VvizRequest):
+        """Bitrate visualisation = vviz_py's interactive frame/GOP/bitrate
+        chart on one video file of the input or output volume. vviz_py reads
+        mp4 only, and because it shells out and writes its HTML next to the
+        file it analyses, it must run on a copy in a writable workdir — so
+        the source is always brought into a temp mp4 in /output: an mp4
+        source is copied byte-for-byte (no repackage, no wait) and a
+        non-mp4 source (.ts/.mov/.mpeg/.ps/...) is remuxed losslessly
+        (`-c copy`). The temp must fit in the output volume either way
+        (507 when it does not). A remux longer than the warn threshold
+        (20 min default, FASS_VVIZ_REMUX_WARN_SECONDS) answers 409 with a
+        message; the UI re-POSTs with confirm=true. The video codec must be
+        one of h264/hevc/av1/vp9 — vviz's frame/GOP parsing is built around
+        those (400 otherwise). On success the self-contained Plotly HTML is
+        returned for the UI's iframe to embed."""
+        if not vviz_available():
+            raise HTTPException(503, "vviz is not available on this build "
+                                     "(mp4dump or /opt/vviz_py missing)")
+        name = _strip_i_prefix(req.file.strip())
+        if not name:
+            raise HTTPException(400, "file: give a bare filename")
+        if "/" in name or name.startswith(".."):
+            raise HTTPException(
+                400, "file must be a bare name in the input or output folder")
+        path = execute.volume_file(req.target, name)
+        if path is None:
+            raise HTTPException(404, f"{name} not found in the {req.target} folder")
+        out_dir = execute._output_dir()
+        if not out_dir:
+            raise HTTPException(503, "the output folder is not mounted "
+                                     "(vviz needs a writable workdir)")
+        if not ffprobe_available():
+            raise HTTPException(502, "ffprobe is not installed on this build")
+
+        # Probe for the codec (the gate) and the duration (the remux warning).
+        probe = ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_format", "-show_streams", str(path)]
+        try:
+            p = subprocess.run(probe, capture_output=True, text=True,
+                               timeout=120, check=False)
+            data = json.loads(p.stdout)
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+            raise HTTPException(502, f"ffprobe failed: {e}")
+        if p.returncode != 0:
+            raise HTTPException(502, f"ffprobe failed: {p.stderr[-500:]}")
+        fmt = (data.get("format") or {}).get("format_name", "")
+        codec = None
+        for s in (data.get("streams") or []):
+            if s.get("codec_type") == "video":
+                codec = (s.get("codec_name") or "").lower()
+                break
+        if codec not in VVIZ_VIDEO_CODECS:
+            raise HTTPException(
+                400, f"{name} has video codec {codec or 'none'}, which vviz "
+                     f"cannot visualise (supported: "
+                     f"{', '.join(sorted(VVIZ_VIDEO_CODECS))})")
+        duration = _vviz_duration(data)
+
+        # An mp4 the probe agrees is a plain mp4 is read directly (a byte
+        # copy, no repackage); everything else is remuxed to one.
+        is_mp4 = ("mp4" in {f.strip().lower() for f in fmt.split(",")}
+                  and path.suffix.lower() in (".mp4", ""))
+
+        workdir = Path(tempfile.mkdtemp(prefix=".vviz-", dir=out_dir))
+        try:
+            target = workdir / VVIZ_TMP_NAME
+            # The temp copy (or remux) must fit in the output volume.
+            size = path.stat().st_size
+            if shutil.disk_usage(out_dir).free <= size:
+                raise HTTPException(
+                    507, f"the output folder has no room for the "
+                         f"~{size // (1024 * 1024)} MiB working copy vviz "
+                         f"needs for {name}")
+            if is_mp4:
+                shutil.copyfile(path, target)
+            else:
+                if (duration is not None
+                        and duration > _vviz_remux_warn_seconds()
+                        and not req.confirm):
+                    raise HTTPException(
+                        409, f"{name} is {duration / 60:.0f} min — vviz reads "
+                             f"mp4 only, so it must first be remuxed to a "
+                             f"temporary mp4 (lossless, in the output "
+                             f"folder, deleted after the chart). Confirm to "
+                             f"wait for the conversion.")
+                try:
+                    r = subprocess.run(
+                        ["ffmpeg", "-y", "-v", "error", "-i", str(path),
+                         "-c", "copy", "-f", "mp4", str(target)],
+                        capture_output=True, text=True,
+                        timeout=_vviz_timeout(), check=False)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    raise HTTPException(502, f"remux to mp4 failed: {e}")
+                if r.returncode != 0 or not target.is_file():
+                    raise HTTPException(
+                        400, f"could not remux {name} to mp4: "
+                             f"{(r.stderr or '').strip()[-500:] or f'exit {r.returncode}'}")
+            return HTMLResponse(_vviz_run(target, name))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
     # ------------------------------------------------------ files (Files tab)
 

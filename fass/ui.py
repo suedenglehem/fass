@@ -291,8 +291,10 @@ a { color: var(--accent); }
         </div>
         <button type="button" onclick="showMediaInfo()">Show media info</button>
         <button type="button" id="tsbtn" disabled onclick="showTSAnalyze()">TSAnalyze</button>
+        <button type="button" id="vvizbtn" disabled onclick="showVviz()">bitrate visualisation</button>
         <span id="mi-status" class="note"></span>
         <pre id="mi-out" hidden style="margin-top:10px"></pre>
+        <iframe id="vviz-frame" hidden style="margin-top:10px;width:100%;height:640px;border:1px solid #ccc" title="bitrate visualisation"></iframe>
       </div>
 
       <div id="info-log" hidden>
@@ -973,8 +975,11 @@ function fillMi() {
   const src = ($('mi-target').value === 'output')
     ? $('out').value.trim() : $('inp').value.trim();
   $('mi-file').value = src.replace(/^-i\\s+/, '');
-  // the selection changed: TSAnalyze is enabled again by the next probe
+  // the selection changed: TSAnalyze and the bitrate visualisation are
+  // enabled again by the next probe
   $('tsbtn').disabled = true;
+  $('vvizbtn').disabled = true;
+  $('vviz-frame').hidden = true;
 }
 async function showMediaInfo() {
   const target = $('mi-target').value;
@@ -996,6 +1001,11 @@ async function showMediaInfo() {
     // probed file is one (the server enforces the same check)
     const fmt = (data && data.format && data.format.format_name) || '';
     $('tsbtn').disabled = !/^mpegts/i.test(fmt);
+    // The bitrate visualisation (vviz_py) charts h264/hevc/av1/vp9 video
+    // only — enable it when the probed video codec is one of them (the
+    // server enforces the same set)
+    const vcodec = ((data && data.streams) || []).find(s => s.codec_type === 'video');
+    $('vvizbtn').disabled = !vcodec || !['h264', 'hevc', 'av1', 'vp9'].includes((vcodec.codec_name || '').toLowerCase());
   } catch (err) {
     out.hidden = true;
     $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
@@ -1026,6 +1036,56 @@ async function showTSAnalyze() {
     $('mi-status').textContent = '';
     $('mi-out').textContent = text;
     $('mi-out').hidden = false;
+  } catch (err) {
+    $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
+  }
+  btn.disabled = false;
+}
+/* Bitrate visualisation: vviz_py's interactive frame/GOP/bitrate chart.
+   The server brings the source into a temp mp4 in /output (an mp4 is
+   copied as-is, any other container is remuxed losslessly) and returns
+   self-contained Plotly HTML for the iframe to embed. A 409 means the
+   remux would be long — confirm, then re-POST with confirm:true. */
+async function showVviz() {
+  const target = $('mi-target').value;
+  const file = $('mi-file').value.trim();
+  if (!file) {
+    $('mi-status').textContent = 'give the file name first';
+    return;
+  }
+  const btn = $('vvizbtn');
+  btn.disabled = true;
+  const frame = $('vviz-frame');
+  const body = { target, file, confirm: false };
+  const post = () => fetch('/v1/vviz', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  try {
+    $('mi-status').textContent = 'generating the chart (non-mp4 files are remuxed to mp4 first, that can take a while)…';
+    let r = await post();
+    if (r.status === 409) {
+      let detail = '';
+      try { detail = (await r.json()).detail || ''; } catch (_) {}
+      if (!confirm(detail || 'This file is long; wait for the remux to mp4?')) {
+        $('mi-status').textContent = 'cancelled';
+        return;
+      }
+      body.confirm = true;
+      $('mi-status').textContent = 'remuxing to mp4…';
+      r = await post();
+    }
+    const text = await r.text();
+    if (!r.ok) {
+      let detail = text;
+      try { detail = JSON.parse(text).detail || text; } catch (_) {}
+      $('mi-status').innerHTML = `<span class="err">${esc(detail)}</span>`;
+      return;
+    }
+    $('mi-status').textContent = '';
+    frame.srcdoc = text;
+    frame.hidden = false;
   } catch (err) {
     $('mi-status').innerHTML = `<span class="err">${esc(err)}</span>`;
   }

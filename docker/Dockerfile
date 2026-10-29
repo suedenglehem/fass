@@ -15,6 +15,11 @@
 # TSDuck's tsanalyze (the Info/Log tab's TSAnalyze button) is compiled in a
 # builder stage on the same Ubuntu release (matching glibc) and installed
 # under /usr/local, which does not clash with the ffmpeg binaries.
+#
+# vviz_py (the Info/Log tab's "bitrate visualisation" button) is cloned into
+# /opt/vviz_py and its hard dependency, Bento4's mp4dump, is a prebuilt
+# static binary copied in from a builder stage; its Python deps (plotly et
+# al.) are installed into the same /opt/venv.
 
 # ---------- tsanalyze builder ----------
 # Same Ubuntu release as the base image so libtsduck links against the same
@@ -46,6 +51,26 @@ RUN cd /src/tsduck \
     && make -j"${JOBS}" ${OPTS} \
     && make install ${OPTS} SYSROOT=/install SYSPREFIX=/usr/local
 
+# ---------- bento4 mp4dump builder ----------
+# mp4dump (Bento4) is a hard dependency of vviz_py — the bitrate
+# visualisation (Info/Log tab's "bitrate visualisation" button) is built from
+# the mp4 box structure it dumps. The official prebuilt Linux SDK ships a
+# self-contained static binary (the GitHub mirrors are 404); it is dropped
+# into the runtime image and runs on the same glibc as the base.
+FROM ubuntu:24.04 AS bento
+ARG BENTO_VERSION=1-6-0-641
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL -o /tmp/bento.zip \
+        "https://www.bok.net/Bento4/binaries/Bento4-SDK-${BENTO_VERSION}.x86_64-unknown-linux.zip" \
+    && (cd /tmp && unzip -q bento.zip) \
+    && cp "/tmp/Bento4-SDK-${BENTO_VERSION}.x86_64-unknown-linux/bin/mp4dump" \
+        /usr/local/bin/mp4dump \
+    && chmod +x /usr/local/bin/mp4dump \
+    && test -x /usr/local/bin/mp4dump
+
 # ---------- fass ----------
 FROM jrottenberg/ffmpeg:9.0-nvidia2404
 
@@ -55,11 +80,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # mediainfo: the Files tab's mediainfo inspect path (api.py) 503s when the
 # binary is absent — the base image ships only FFmpeg.
+# git: clones vviz_py (the Info/Log tab's bitrate visualisation) at build time.
 # libcurl4t64: the only RUNTIME dependency tsanalyze needs that the base
 # image does not ship (libssl3, zlib1g, libstdc++6 are already installed).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv ca-certificates mediainfo \
+        python3 python3-pip python3-venv ca-certificates mediainfo git \
         libcurl4t64 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -74,9 +100,18 @@ COPY docker/models/ /opt/vmaf-models/
 # (/usr/local/lib), plugins (/usr/local/lib/tsduck), data files
 # (/usr/local/share/tsduck).
 COPY --from=tsduck /install/usr/local /usr/local
+# Bento4 mp4dump: vviz_py's hard dependency (read above, dropped in here).
+COPY --from=bento /usr/local/bin/mp4dump /usr/local/bin/mp4dump
 RUN chmod +x /entrypoint.sh \
     && python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir ".[api]" \
+    # vviz_py (bitrate visualisation): its own runtime deps — plotly renders
+    # the self-contained interactive HTML the iframe embeds.
+    && /opt/venv/bin/pip install --no-cache-dir "plotly==5.24.1" pandas scipy pytz \
+    && git clone --depth 1 https://github.com/wabiloo/vviz_py.git /opt/vviz_py \
+    # ffprobe>=5 dropped 'pkt_pts' from -show_frames JSON; fall back to 'pts'.
+    && sed -i "s/self.pkt_pts = json\['pkt_pts'\]/self.pkt_pts = json.get('pkt_pts', json.get('pts'))/" /opt/vviz_py/models.py \
+    && grep -q "json.get('pkt_pts'" /opt/vviz_py/models.py \
     && ldconfig
 
 ENV PATH="/opt/venv/bin:$PATH" \
