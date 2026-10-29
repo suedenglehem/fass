@@ -5,7 +5,56 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, vviz bitrate visualisation — COMMITTED 3e3a25b +
+- **Last state (2026-10-29, vviz UI fix batch (user's first live test) —
+  COMMITTED 255fc2e + PUSHED, i7 RE-DEPLOYED + VERIFIED, suite 1536 passed /
+  2 skipped):** user live-tested the i7 build: clicking Bitrate gave a "blank
+  browser page, and then it is downloaded"; "the button does not
+  disable/dim"; plus: clear the previous outputs (mediainfo/tsanalyze/other
+  vviz) before the chart; the chart must NOT be downloadable (everything
+  stays inside the web UI); button "Bitrate"; while processing all other
+  row buttons dim + disable; a "Clear" button next to "Bitrate". **Root
+  cause of the blank page (empirical A/B matrix, /tmp/vviz_e2e/iframe_diag7-
+  13.py):** a SANDBOXED SRCDOC document's root box stays 0×0 in Chrome
+  (srcdoc takes precedence over src; the frame is about:srcdoc) → plotly.js
+  measures 0×0 and falls back to a 700×450 svg (invisible chart). Same
+  document: no sandbox → renders; sandbox + real URL → renders; only
+  srcdoc+sandbox breaks. **Fixes (fass/ui.py + fass/api.py):** `showVviz()`
+  loads the self-contained Plotly document via a blob: URL in the sandboxed
+  iframe (`frame.src = URL.createObjectURL(new Blob([text],{type:'text/html'}))`,
+  previous blob revoked, unhide before load) — sandbox `allow-scripts`
+  stays, so download/popup/navigation remain structurally blocked;
+  `hideVvizFrame()` (hidden + src=about:blank + revoke) centralises the
+  one-output-at-a-time clearing (fillMi/clearMiPane/showMediaInfo/
+  showTSAnalyze); row lock disables all four buttons while generating
+  (restored in `finally { unlock(); }`) + `#info-mi button:disabled{opacity:.5}`
+  dim + remux status text; `#mi-clearbtn` (Clear) wipes report + chart +
+  status; "Bitrate" label. `_vviz_finalize_html()` (renamed from
+  _vviz_strip_modebar) injects into the head: `html,body{height:100%;margin:0}`
+  + `body>div{height:100%}` (vviz's plot div is height:100% inside an
+  auto-height wrapper — the percentage chain cannot resolve without it) +
+  `.plotly-graph-div{width:100vw!important;height:100vh!important}`
+  (viewport-pinned, structure-independent backstop) +
+  `.modebar{display:none!important}` (plotly's download bar). **Verified:**
+  headless-Chrome click test on tr4 ALL GREEN (chart renders INSIDE the
+  sandboxed iframe at 792×638 via the blob URL, svg matches the frame,
+  modebar display:none, no new window, lock/clear/restore, no JS page
+  errors); full suite 1536 passed / 2 skipped; i7 re-deploy (ff-merged →
+  255fc2e; compose opt-ins + ffprobe.py patch intact; `docker compose build
+  fass` + `up -d --force-recreate fass`) live-verified (healthz ok; UI
+  tokens incl. createObjectURL/hideVvizFrame; titan.mp4 → 200 + plotly + all
+  new CSS rules; titan.ts remux → 200; no `.vviz-*` leftovers;
+  fass-worker/fass-rag healthy; LLM 8080 → 200). **Next unfinished task:**
+  user browser re-test of the fixed build on i7, then the queued PRESETS
+  feature (Save button next to Generate on the FFmpeg pane; PRESETS block
+  under "WHAT TO LOOK AT" in Info/Log; preset JSON files named by md5 over
+  Instruction+inputs+ffmpeg command; selector → line-by-line preview in a
+  small div → confirm fills the FFmpeg pane fields and leaves it in the
+  generation-accomplished state). Carry-forward still open: OPTIONAL
+  docs/DEVELOPMENT.md codec list; the OPEN (user's call) CLI concat of
+  "…48kbps aac audio" that emitted `-b:a 160k`, not 48k (NLU
+  audio-bitrate-parsing).
+
+- **Previous state (2026-10-29, vviz bitrate visualisation — COMMITTED 3e3a25b +
   PUSHED, i7 DEPLOYED + VERIFIED, suite 1535 passed / 2 skipped):**
   vviz_py (bitrate/GOP/fragment/frame Plotly chart; reads mp4 only, needs
   Bento4 mp4dump) baked into the image: new `bento` builder stage → static
