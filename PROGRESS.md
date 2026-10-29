@@ -6,8 +6,8 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
 - **Last state (2026-10-29, FFmpeg button row follows its fields —
-  COMMITTED 880130e, NOT yet pushed/deployed (awaiting user green light),
-  suite 1547 passed / 2 skipped):** user: "on opening FFmpeg tab very
+  COMMITTED 880130e + PUSHED, i7 RE-DEPLOYED + live-verified 22:14Z,
+  suite 1547 passed / 2 skipped; user browser-test in progress):** user: "on opening FFmpeg tab very
   first time, after clearing it, deactivate buttons 'Generate' etc, as
   nothing is entered they cant work" — the same row-state pattern as the
   Info/Log fix (c0402a5). The whole FFmpeg row (Generate | Save |
@@ -33,15 +33,18 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   emptied + no extra rows + all four disabled; no page errors) — throwaway
   server on tr4 port 8099, exact-PID killed, temp dirs in
   /tmp/fass_ui_test; full suite 1547 passed / 2 skipped (142.50 s).
-  **Context:** the PRESETS feature (8b54574 + docs 812e236) is ALREADY
-  pushed + deployed to i7 + live-verified this session (21:35Z:
-  presets round-trip in /config/presets, 404 guard, opt-ins + ffprobe
-  patch intact, LLM 8080 untouched) — the user is browser-testing it;
-  this row fix rides the NEXT deploy round. **Next unfinished task:**
-  user green light for push + i7 deploy of this fix (same recipe:
-  ff-merge, `docker compose build fass` + force-recreate, verify
-  opt-ins + ffprobe patch), then user browser test of both the row
-  states and the presets flow. Carry-forward unchanged: user browser
+  **Context:** the PRESETS feature (8b54574 + docs 812e236) was pushed +
+  deployed to i7 + live-verified earlier this session (21:35Z: presets
+  round-trip in /config/presets, 404 guard, opt-ins + ffprobe patch
+  intact, LLM 8080 untouched); this row fix rode its own deploy round on
+  top (22:14Z, same recipe — pushed 812e236..dae2e31, ff-merged
+  812e236→dae2e31 with opt-ins + ffprobe patch intact, compose build +
+  force-recreate; live-verified: healthz, all row-state markers + exactly
+  4 cmdButtons listeners + zero syncMiBtn, presets regression round-trip
+  OK, worker/rag unharmed, LLM 8080 200). **Next unfinished task:** user
+  browser test of the row states (fresh tab all-disabled; instruction →
+  just Clear; + input → Generate on, Mediainfo off; no instruction →
+  Mediainfo on; Clear → wiped + all-disabled) + the presets flow. Carry-forward unchanged: user browser
   E2E of multi-input cases + blackdetect RAG; OPTIONAL
   docs/DEVELOPMENT.md codec list; the OPEN CLI concat of
   "…48kbps aac audio" that emitted `-b:a 160k`, not 48k (NLU
