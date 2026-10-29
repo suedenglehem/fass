@@ -69,6 +69,43 @@ def test_no_y_flag_ever():
         assert "-y" not in argv_for(**kw)
 
 
+def test_av1_default_crf():
+    # AV1 maps to the CPU reference encoder libaom-av1; no gpu/qsv coder
+    # exists for it, so the default CPU quality preset (-crf 32) is emitted.
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="av1"))
+    i = argv.index("-c:v")
+    assert argv[i + 1] == "libaom-av1"
+    j = argv.index("-crf")
+    assert argv[j + 1] == "32"
+
+
+def test_av1_svt_encoder():
+    # SVT-AV1 is its own codec (av1_svt -> libsvtav1), not an alias for av1.
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="av1_svt"))
+    i = argv.index("-c:v")
+    assert argv[i + 1] == "libsvtav1"
+
+
+def test_av1_nvenc_on_gpu():
+    # AV1 gained a GPU form (av1 in gpu.coders -> av1_nvenc); the generic
+    # nvenc branch picks the coder for the requested codec.
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="av1", gpu=True))
+    i = argv.index("-c:v")
+    assert argv[i + 1] == "av1_nvenc"
+
+
+def test_vp8_encoder():
+    argv = argv_for(output=OutputSpec(container="webm", video_codec="vp8"))
+    i = argv.index("-c:v")
+    assert argv[i + 1] == "libvpx"
+
+
+def test_theora_encoder_ogv():
+    argv = argv_for(output=OutputSpec(container="ogv", video_codec="theora"))
+    i = argv.index("-c:v")
+    assert argv[i + 1] == "libtheora"
+
+
 def test_copy_mode_when_compatible():
     media = make_media(video_codec="h264", audio_codec="aac", has_audio=True)
     ep = ep_for(output=OutputSpec(container="mp4", video_codec="h264"), media=media)

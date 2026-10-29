@@ -339,6 +339,53 @@ def test_vp9_webm(gen):
     assert r.plan["output"]["video_codec"] == "vp9"
 
 
+def test_av1_detection(gen):
+    r = gen("encode as AV1", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["video_codec"] == "av1"
+
+
+def test_av1_webm(gen):
+    r = gen("convert to WebM with AV1", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["container"] == "webm"
+    assert r.plan["output"]["video_codec"] == "av1"
+
+
+def test_av1_svt_detection(gen):
+    # "SVT-AV1" is its own codec (libsvtav1), distinct from the plain AV1
+    # (libaom) — the "SVT" qualifier must win the match over bare "AV1".
+    r = gen("encode as SVT-AV1", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["video_codec"] == "av1_svt"
+
+
+def test_vp8_webm(gen):
+    r = gen("convert to WebM with VP8", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["container"] == "webm"
+    assert r.plan["output"]["video_codec"] == "vp8"
+
+
+def test_theora_lands_in_ogv(gen):
+    r = gen("re-encode with theora", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["video_codec"] == "theora"
+    assert r.plan["output"]["container"] == "ogv"
+
+
+def test_vvc_detection(gen):
+    r = gen("encode as VVC", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["video_codec"] == "vvc"
+
+
+def test_h266_detection(gen):
+    r = gen("encode as H.266", "clip.mp4")
+    assert r.status == "ready", r.errors
+    assert r.plan["output"]["video_codec"] == "vvc"
+
+
 def test_h264_in_webm_is_unsupported(gen):
     r = gen("convert to WebM with H.264", "clip.mp4")
     assert r.status == "unsupported"

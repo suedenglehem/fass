@@ -825,7 +825,7 @@ def plan_execution(
         if coder is None:
             errors.append(
                 f"GPU encoding is not available for {out.video_codec.upper()} — "
-                "it is CPU-only (libvpx-vp9); use H.264 or H.265 on the GPU"
+                "it is CPU-only; use H.264, H.265 or AV1 on the GPU"
             )
         else:
             if out.video_preset is not None:

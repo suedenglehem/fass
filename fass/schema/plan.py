@@ -181,13 +181,13 @@ class OutputSpec(BaseModel):
     container: Literal[
         "mp4", "mov", "mkv", "webm", "mpegts", "flv", "rtsp", "srt", "hls",
         "dash", "tee",
-        "avi", "mxf", "vob", "asf", "3gp", "dv", "gif", "webp",
+        "avi", "mxf", "vob", "asf", "3gp", "dv", "gif", "webp", "ogv",
         "mp3", "mp2", "m4a", "aac", "ogg", "flac", "wav", "aiff", "mka",
         "opus", "srt_file", "vtt_file", "ass_file",
     ]
     video_codec: Literal[
-        "h264", "h265", "vp9", "prores", "mpeg2", "mpeg4", "mjpeg",
-        "dv", "gif", "webp",
+        "h264", "h265", "av1", "av1_svt", "vp9", "vp8", "theora", "vvc",
+        "prores", "mpeg2", "mpeg4", "mjpeg", "dv", "gif", "webp",
     ] | None = None
     audio_codec: Literal[
         "aac", "fdk_aac", "opus", "mp2", "mp3", "ac3", "eac3", "alac",

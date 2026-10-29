@@ -4,7 +4,7 @@
   "tested_ffmpeg": {
     "version": "6.1.1 / 9.0.1",
     "builds": "Ubuntu 24.04 package (6.1.1-3ubuntu5) and jrottenberg/ffmpeg:9.0-nvidia2404 (9.0.1) — both carry every encoder and muxer in this registry (the 6.1.1 build lacks the standalone AAC/ADTS muxer; preflight reports it)",
-    "notes": "libx264, libx265, libvpx-vp9, libmp3lame, libvorbis, libopus, prores_ks, mpeg2video, mpeg4, mjpeg, gif, libwebp, mp2, ac3, eac3, alac, flac, pcm_*, dvvideo verified present on both; h264_nvenc/hevc_nvenc present on both (no GPU on this host — argv-level verification only); h264_qsv/hevc_qsv present on 6.1.1 only; libfdk_aac present on 9.0.1 only; libvvenc on neither (docs reference only)"
+    "notes": "libx264, libx265, libaom-av1, libsvtav1, libvpx-vp9, libvpx (VP8), libtheora, libmp3lame, libvorbis, libopus, prores_ks, mpeg2video, mpeg4, mjpeg, gif, libwebp, mp2, ac3, eac3, alac, flac, pcm_*, dvvideo verified present on both; h264_nvenc/hevc_nvenc/av1_nvenc present on both (no GPU on this host — argv-level verification only); h264_qsv/hevc_qsv/av1_qsv present on 6.1.1 only; libfdk_aac present on 9.0.1 only; libvvenc on neither (docs reference only; declared for libvvenc-capable builds)"
   },
   "containers": {
     "mp4": { "extensions": ["mp4", "m4v"], "muxer": "mp4" },
@@ -31,6 +31,7 @@
     "m4a": { "extensions": ["m4a"], "muxer": "mp4", "note": "audio only (MPEG-4 audio file)" },
     "aac": { "extensions": ["aac"], "muxer": "adts", "note": "audio only, ADTS framing — the muxer's name in FFmpeg is 'adts' (the 'aac' format entry is demux-only)" },
     "ogg": { "extensions": ["ogg", "oga"], "muxer": "ogg", "note": "audio only" },
+    "ogv": { "extensions": ["ogv"], "muxer": "ogg", "note": "Ogg video (Theora + Vorbis/Opus) — the video sibling of the audio-only ogg/oga" },
     "flac": { "extensions": ["flac"], "muxer": "flac", "note": "audio only, lossless" },
     "wav": { "extensions": ["wav"], "muxer": "wav", "note": "audio only, PCM" },
     "aiff": { "extensions": ["aiff", "aif"], "muxer": "aiff", "note": "audio only, PCM" },
@@ -55,12 +56,47 @@
       "requires": "libx265 — present in both verified builds (local 6.1.1, docker 9.0.1); libhevc is the built-in fallback",
       "note": "Smaller files than H.264 at similar quality; slower to encode."
     },
+    "av1": {
+      "encoder": "libaom-av1",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 32 },
+      "requires": "libaom — present in both verified builds (local 6.1.1, docker 9.0.1); libsvtav1 (the 'av1_svt' codec) / av1_nvenc are the faster / GPU alternatives",
+      "note": "AV1 — next-generation codec, best compression of the three at similar quality; libaom is the reference-quality encoder and encodes slowly on the CPU."
+    },
+    "av1_svt": {
+      "encoder": "libsvtav1",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 32 },
+      "requires": "libsvtav1 — present in both verified builds (local 6.1.1, docker 9.0.1); the fast AV1 encoder (a fraction of libaom's encode time, same codec as 'av1')",
+      "note": "SVT-AV1 — the same AV1 bitstream as 'av1' but from the much faster SVT encoder. Same containers and the same crf 32 quality target as 'av1'; choose it when encode speed matters over reference quality."
+    },
     "vp9": {
       "encoder": "libvpx-vp9",
       "pix_fmt": "yuv420p",
       "preset": { "crf": 32, "bitrate": "0" },
       "requires": "libvpx — built into FFmpeg",
       "note": "The standard WebM video codec."
+    },
+    "vp8": {
+      "encoder": "libvpx",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 10, "bitrate": "0" },
+      "requires": "libvpx (VP8) — present in both verified builds (local 6.1.1, docker 9.0.1); built into FFmpeg",
+      "note": "VP8 — the older WebM video codec (VP9's predecessor). Constant-quality (crf 10, the libvpx default); legacy but still widely supported."
+    },
+    "theora": {
+      "encoder": "libtheora",
+      "pix_fmt": "yuv420p",
+      "preset": { "bitrate": "1000k" },
+      "requires": "libtheora — present in both verified builds (local 6.1.1, docker 9.0.1); built into FFmpeg",
+      "note": "Theora — the classic Ogg video codec, paired with Vorbis/Opus in an .ogv file. Bitrate-targeted (no CRF); a legacy format, largely superseded by VP8/VP9."
+    },
+    "vvc": {
+      "encoder": "libvvenc",
+      "pix_fmt": "yuv420p",
+      "preset": { "crf": 30 },
+      "requires": "libvvenc — NOT present in either verified build (local 6.1.1, docker 9.0.1); declared for builds that ship it, --preflight reports it missing here",
+      "note": "VVC / H.266 — the next-generation successor to HEVC (~50% better compression at equal quality). Declared for libvvenc-capable builds; the current verified builds do not carry it, so preflight flags it as unavailable."
     },
     "prores": {
       "encoder": "prores_ks",
@@ -113,14 +149,15 @@
     }
   },
   "gpu": {
-    "description": "NVIDIA GPU encoding (M6). When plan.output.gpu is true the video encoder switches to the nvenc coder for the requested codec: h264 -> h264_nvenc, h265 -> hevc_nvenc. Every other codec (VP9, ProRes, MPEG-2, …) is CPU-only and rejected. Audio is always CPU-encoded — nvenc carries video only. The deployment must expose a GPU (docker --gpus / compose device reservation; see the gpu block of the deployment config).",
+    "description": "NVIDIA GPU encoding (M6). When plan.output.gpu is true the video encoder switches to the nvenc coder for the requested codec: h264 -> h264_nvenc, h265 -> hevc_nvenc, av1 -> av1_nvenc. Every other codec (VP9, VP8, Theora, VVC, ProRes, MPEG-2, …) is CPU-only and rejected. Audio is always CPU-encoded — nvenc carries video only. The deployment must expose a GPU (docker --gpus / compose device reservation; see the gpu block of the deployment config).",
     "coders": {
       "h264": { "encoder": "h264_nvenc", "profiles": ["main", "high"] },
-      "h265": { "encoder": "hevc_nvenc", "profiles": ["main", "high"] }
+      "h265": { "encoder": "hevc_nvenc", "profiles": ["main", "high"] },
+      "av1": { "encoder": "av1_nvenc", "profiles": ["main", "main10"] }
     },
     "constraints": {
       "vp9": "VP9 encoding is CPU-only (libvpx-vp9) — GPU is not available for it",
-      "other_codecs": "ProRes, MPEG-2, MPEG-4, MJPEG, DV, GIF and WebP are CPU-only (no nvenc coder)",
+      "other_codecs": "VP9, VP8, Theora, VVC, ProRes, MPEG-2, MPEG-4, MJPEG, DV, GIF and WebP are CPU-only (no nvenc coder)",
       "video_preset": "x264 speed presets (ultrafast..veryslow) are x264-specific and do not apply to nvenc",
       "video_profile": "nvenc supports the 'main' and 'high' profiles only; 'baseline' has no nvenc form",
       "bitrate": "a target video bitrate works unchanged: -b:v/-maxrate (nvenc's CBR-style target)",
@@ -164,17 +201,18 @@
     "pcm_f32le": "wav", "ac3": "mp4", "eac3": "mp4"
   },
   "matrix": {
-    "mp4":  { "video": ["h264", "h265", "vp9", "prores", "mjpeg"], "audio": ["aac", "fdk_aac", "opus", "ac3", "eac3", "alac", "mp3"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
-    "mov":  { "video": ["h264", "h265", "prores", "mjpeg"], "audio": ["aac", "fdk_aac", "alac", "ac3", "eac3", "mp3", "pcm_s16le"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
-    "mkv":  { "video": ["h264", "h265", "vp9", "prores", "mpeg4", "mjpeg"], "audio": ["aac", "fdk_aac", "opus", "vorbis", "mp3", "ac3", "eac3", "flac", "alac", "pcm_s16le"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
-    "webm": { "video": ["vp9"], "audio": ["opus", "vorbis"], "default_video": "vp9", "audio_codec": "opus", "flags": [] },
-    "mpegts": { "video": ["h264", "h265", "mpeg2", "mpeg4"], "audio": ["aac", "fdk_aac", "mp2", "ac3", "eac3"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "mp4":  { "video": ["h264", "h265", "av1", "av1_svt", "vp9", "prores", "mjpeg", "vvc"], "audio": ["aac", "fdk_aac", "opus", "ac3", "eac3", "alac", "mp3"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
+    "mov":  { "video": ["h264", "h265", "av1", "av1_svt", "prores", "mjpeg", "vvc"], "audio": ["aac", "fdk_aac", "alac", "ac3", "eac3", "mp3", "pcm_s16le"], "default_video": "h264", "audio_codec": "aac", "flags": ["-movflags", "+faststart"] },
+    "mkv":  { "video": ["h264", "h265", "av1", "av1_svt", "vp9", "prores", "mpeg4", "mjpeg", "vvc"], "audio": ["aac", "fdk_aac", "opus", "vorbis", "mp3", "ac3", "eac3", "flac", "alac", "pcm_s16le"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
+    "webm": { "video": ["vp9", "av1", "av1_svt", "vp8"], "audio": ["opus", "vorbis"], "default_video": "vp9", "audio_codec": "opus", "flags": [] },
+    "ogv":  { "video": ["theora"], "audio": ["vorbis", "opus"], "default_video": "theora", "audio_codec": "vorbis", "flags": [], "note": "Ogg video (Theora + Vorbis/Opus) — distinct from the audio-only ogg/oga" },
+    "mpegts": { "video": ["h264", "h265", "av1", "av1_svt", "mpeg2", "mpeg4"], "audio": ["aac", "fdk_aac", "mp2", "ac3", "eac3"], "default_video": "h264", "audio_codec": "aac", "flags": [] },
     "flv": { "video": ["h264", "mpeg4"], "audio": ["aac", "fdk_aac", "mp3"], "default_video": "h264", "audio_codec": "aac", "flags": [], "stream_only_note": "RTMP/RTMPS endpoints carry h264/mpeg4 + aac/mp3" },
     "rtsp": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an rtsp(s):// destination; never a file" },
     "srt": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "file": false, "stream_only_note": "output only to an srt:// destination; never a file" },
-    "hls": { "video": ["h264", "h265", "mpeg2"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "HLS: .m3u8 playlist + transport segments in the output directory; tune with hls_* format options" },
-    "dash": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "DASH: .mpd manifest + fMP4 segments in the output directory; tune with dash_* format options" },
-    "tee": { "video": ["h264", "h265"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "tee multi-output (M13.5): passthrough — the tee muxer accepts what its branches accept, so the row is the hls ∩ dash intersection (hls + dash branches); the destination is the bracket template, per-branch options ride inside the brackets" },
+    "hls": { "video": ["h264", "h265", "av1", "av1_svt", "mpeg2"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "HLS: .m3u8 playlist + transport segments in the output directory; tune with hls_* format options" },
+    "dash": { "video": ["h264", "h265", "av1", "av1_svt"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "DASH: .mpd manifest + fMP4 segments in the output directory; tune with dash_* format options" },
+    "tee": { "video": ["h264", "h265", "av1", "av1_svt"], "audio": ["aac", "fdk_aac"], "default_video": "h264", "audio_codec": "aac", "flags": [], "note": "tee multi-output (M13.5): passthrough — the tee muxer accepts what its branches accept, so the row is the hls ∩ dash intersection (hls + dash branches); the destination is the bracket template, per-branch options ride inside the brackets" },
     "avi": { "video": ["mpeg4", "mjpeg", "h264", "mpeg2"], "audio": ["pcm_s16le", "mp3", "mp2", "ac3"], "default_video": "mpeg4", "audio_codec": "pcm_s16le", "flags": [] },
     "mxf": { "video": ["h264", "mpeg2", "prores"], "audio": ["pcm_s16le", "pcm_s24le", "pcm_s32le"], "default_video": "h264", "audio_codec": "pcm_s16le", "flags": [], "note": "MXF is a broadcast master format: audio must be PCM (the mxf muxer rejects aac/ac3), and the video is re-encoded into it even when the codec matches" },
     "vob": { "video": ["mpeg2"], "audio": ["mp2", "ac3"], "default_video": "mpeg2", "audio_codec": "mp2", "flags": [] },

@@ -855,6 +855,16 @@ def _detect_codec(t: str) -> str | None:
         return "h265"
     if re.search(r"\bvp9\b|v-p9", t, re.I):
         return "vp9"
+    if re.search(r"\bvp[-\s]?8\b", t, re.I):
+        return "vp8"
+    if re.search(r"\bsvt\b", t, re.I) and re.search(r"\bav[-\s]?1\b", t, re.I):
+        return "av1_svt"
+    if re.search(r"\bav[-\s]?1\b", t, re.I):
+        return "av1"
+    if re.search(r"\btheora\b", t, re.I):
+        return "theora"
+    if re.search(r"\bvvc\b|h\.?\s?266", t, re.I):
+        return "vvc"
     if re.search(r"\bprores\b|\bpro[-\s]res\b", t, re.I):
         return "prores"
     if re.search(r"\bm[-\s]?jpeg\b|\bmjpeg\b", t, re.I):
@@ -882,7 +892,7 @@ _EXT_TO_CONTAINER["srt"] = "srt_file"
 # target); 'save as .ts' is caught by the dedicated '.ts' alternative.
 _VIDEO_CONTAINER_RX = re.compile(
     r"(?<![\w./-])(mpeg[-\s]?ts|transport\s+stream|mpeg2?\s+ts|m2ts|mts|quicktime|"
-    r"hls|dash|avi|mxf|vob|flv|asf|wmv|3gp|gif|webp|webm|mkv|mov|m4v|mp4|dv)\b"
+    r"hls|dash|avi|mxf|vob|flv|asf|wmv|3gp|gif|webp|webm|mkv|mov|m4v|mp4|dv|ogv)\b"
     r"|\.ts\b|(\.mpd\b)|\bts\s+file\b",
     re.I,
 )
@@ -892,7 +902,7 @@ _WORD_TO_VIDEO_CONTAINER = {
     "quicktime": "mov", "hls": "hls", "dash": "dash", "mpd": "dash",
     "avi": "avi", "mxf": "mxf",
     "vob": "vob", "flv": "flv", "asf": "asf", "wmv": "asf", "3gp": "3gp",
-    "gif": "gif", "webp": "webp", "webm": "webm", "mkv": "mkv",
+    "gif": "gif", "webp": "webp", "webm": "webm", "mkv": "mkv", "ogv": "ogv",
     "mov": "mov", "m4v": "mp4", "mp4": "mp4", "dv": "dv",
 }
 
@@ -963,9 +973,10 @@ _VIDEO_CONTAINERS = frozenset(
 )
 
 # An explicit video codec with no named container lands in its natural
-# home — ProRes is a .mov file, MPEG-2 a broadcast .ts, MPEG-4 an .avi.
+# home — ProRes is a .mov file, MPEG-2 a broadcast .ts, MPEG-4 an .avi,
+# Theora an Ogg .ogv file (it has no other container in the matrix).
 # An explicitly named container always wins over this.
-_NATURAL_VIDEO_CONTAINER = {"prores": "mov", "mpeg2": "mpegts", "mpeg4": "avi"}
+_NATURAL_VIDEO_CONTAINER = {"prores": "mov", "mpeg2": "mpegts", "mpeg4": "avi", "theora": "ogv"}
 
 
 def _resolve_audio_container(video_container: str | None, audio_container: str | None,
