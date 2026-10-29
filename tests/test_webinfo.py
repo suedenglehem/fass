@@ -503,6 +503,35 @@ def test_ui_ffmpeg_button_row_follows_the_fields():
     # empty, so the row is all-disabled again
     clear_body = html.split("function clearCmdPane()")[1].split("\n}")[0]
     assert "setCompareMode();" in clear_body and "cmdButtons();" in clear_body
+    # the Files tab's "as input" right-click is a programmatic fill (no
+    # input event) — the row must re-gate right there, or Mediainfo/Clear
+    # stay stuck off on a fresh pane
+    as_input = html.split("if (tool === 'as-input') {")[1].split("}")[0]
+    assert "$('inp').value = name;" in as_input
+    assert "cmdButtons();" in as_input
+    # and the same for the tsanalyze right-click, which fills the Info/Log
+    # tab's File field — its row (miButtons) re-gates the same way
+    ts_body = html.split("if (tool === 'tsanalyze') {")[1].split("\n  }")[0]
+    assert "$('mi-file').value = name;" in ts_body
+    assert "miButtons();" in ts_body
+
+
+def test_ui_run_now_restores_after_every_outcome():
+    # '▶ Run now' flips to 'starting…' while POST /v1/runs is in flight and
+    # must come back on EVERY outcome — success included: the run is
+    # server-side (tracked in the Runs tab), so a successful start never
+    # consumed the button. It used to restore only on the two failure
+    # branches, leaving the button stuck at 'starting…' after a run that
+    # finished fine.
+    html = client.get("/").text
+    assert 'onclick="runCmd()">▶ Run now</button>' in html
+    body = html.split("async function runCmd()")[1].split("\n}")[0]
+    assert "btn.disabled = true; btn.textContent = 'starting…'" in body
+    assert ("const restore = () => { btn.disabled = false; "
+            "btn.textContent = '▶ Run now'; };") in body
+    # the failure branch, the success branch and the network-error branch
+    # all restore
+    assert body.count("restore();") == 3
 
 
 def test_ui_multi_input_generate_sends_all_inputs():

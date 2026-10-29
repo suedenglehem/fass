@@ -857,6 +857,11 @@ async function runCmd() {
   // an untouched textarea keeps the exact generated argv, as before
   if (text.trim() !== $('cmdorig').textContent.trim()) body.command = text;
   const btn = $('runbtn');
+  // the button returns to '▶ Run now' on EVERY outcome — success included:
+  // the run is server-side (tracked in the Runs tab), so a successful start
+  // does not consume the button; leaving it stuck at 'starting…' made a
+  // finished run look stuck too
+  const restore = () => { btn.disabled = false; btn.textContent = '▶ Run now'; };
   btn.disabled = true; btn.textContent = 'starting…';
   try {
     const r = await fetch('/v1/runs', {
@@ -865,16 +870,17 @@ async function runCmd() {
     });
     const data = await r.json();
     if (!r.ok) {
-      $('runbtn').disabled = false; $('runbtn').textContent = 'Run now';
+      restore();
       $('rune').textContent = 'run failed: ' + (typeof data.detail === 'string' ? data.detail : JSON.stringify(data));
       return;
     }
     lastRunId = data.run.id;
+    restore();
     $('rune').innerHTML = `run <span class="mono">${esc(data.run.id)}</span> started`;
     showTab('runs');
     setTimeout(loadRuns, 1200);
   } catch (err) {
-    $('runbtn').disabled = false; $('runbtn').textContent = 'Run now';
+    restore();
     $('rune').textContent = 'run failed: ' + err;
   }
 }
@@ -1794,6 +1800,7 @@ async function fileAction(tool) {
   if (tool === 'as-input') {
     // put this input-folder file into the Command tab's input field
     $('inp').value = name;
+    cmdButtons(); // programmatic fill — no input event, re-gate the row
     openModal(name + ' — as input',
       `<p class="note">Copied into the FFmpeg tab's
        <span class="mono">Input video</span> field — switch to FFmpeg
@@ -1827,6 +1834,7 @@ async function fileAction(tool) {
     $('mi-target').value = dir; // the pane the file was right-clicked in
     if ($('info-mi').hidden) showInfo('mi');
     $('mi-file').value = name;
+    miButtons(); // programmatic fill — no input event, re-gate the row
     showTSAnalyze();
     return;
   }
