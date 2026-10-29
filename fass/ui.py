@@ -490,7 +490,7 @@ let lastRunId = null;
 let EXEC_ENABLED = false;
 fetch('/v1/env').then(r => r.json()).then(d => {
   EXEC_ENABLED = !!d.execution;
-  if (d.version) $('ver').textContent = 'v' + d.version;
+  if (d.version) $('ver').textContent = d.version; // the string carries its own v
   // ffmpeg build info: `ffmpeg -version` minus the lib* lines (pre-line CSS
   // keeps the line breaks — version, built-with and configuration lines)
   if (d.build) { $('ffver').textContent = d.build; $('ffbr').hidden = false; }
