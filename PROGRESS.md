@@ -5,7 +5,42 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, vviz UI fix batch (user's first live test) —
+- **Last state (2026-10-29, Info/Log row follows the File field (user
+  round 2) — COMMITTED c0402a5 + PUSHED, i7 RE-DEPLOYED + VERIFIED, suite
+  1536 passed / 2 skipped):** user: opening Info/Log → ALL buttons disabled
+  (nothing can run until a file is selected); file name entered → ALL
+  enabled; Clear press → the File field is emptied too. All four buttons
+  (Show media info / TSAnalyze / Bitrate / Clear) start `disabled` in the
+  markup and in `fillMi()`; `miButtons()` on the File input's `oninput`
+  enables all four iff the field is non-empty (typed or auto-filled) and
+  re-disables when emptied; `clearMiPane(wipeFile)` — Clear calls
+  `clearMiPane(true)` — additionally empties the field (→ row disabled),
+  while `showVviz()`'s internal `clearMiPane()` keeps the file; `miBusy`
+  keeps the vviz row lock in force mid-generation. `showMediaInfo()` still
+  re-gates TSAnalyze/Bitrate by the probed format/codec (server enforces
+  the same checks). Also fixed: `showTSAnalyze()` re-enables its button in
+  a `finally` (a 400 previously left it stuck disabled — now a wide path
+  since any entered file enables the row). test_api.py +5 assertions.
+  **Verified:** headless-Chrome click test ALL GREEN (tab open no file →
+  all four disabled; file entered → all four enabled; Clear → field
+  emptied + row disabled; Bitrate flow unchanged: chart 792×638 in the
+  sandboxed blob iframe, modebar hidden, lock/clear/restore, no JS errors);
+  full suite 1536 passed / 2 skipped; i7 re-deploy (ff-merged → c0402a5,
+  compose opt-ins + ffprobe.py patch intact, compose build +
+  force-recreate) live-verified (healthz ok; UI tokens incl.
+  `oninput="miButtons()"` / `clearMiPane(true)` / disabled mi-showbtn;
+  titan.mp4 → 200 + plotly; fass-worker/fass-rag healthy). **Next
+  unfinished task:** user browser re-test of the fixed build on i7, then
+  the queued PRESETS feature (Save button next to Generate on the FFmpeg
+  pane; PRESETS block under "WHAT TO LOOK AT" in Info/Log; preset JSON
+  files named by md5 over Instruction+inputs+ffmpeg command; selector →
+  line-by-line preview in a small div → confirm fills the FFmpeg pane
+  fields and leaves it in the generation-accomplished state). Carry-forward
+  still open: OPTIONAL docs/DEVELOPMENT.md codec list; the OPEN (user's
+  call) CLI concat of "…48kbps aac audio" that emitted `-b:a 160k`, not 48k
+  (NLU audio-bitrate-parsing).
+
+- **Previous state (2026-10-29, vviz UI fix batch (user's first live test) —
   COMMITTED 255fc2e + PUSHED, i7 RE-DEPLOYED + VERIFIED, suite 1536 passed /
   2 skipped):** user live-tested the i7 build: clicking Bitrate gave a "blank
   browser page, and then it is downloaded"; "the button does not
