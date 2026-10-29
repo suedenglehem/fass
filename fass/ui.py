@@ -234,8 +234,10 @@ a { color: var(--accent); }
     <label class="check"><input type="checkbox" id="servehttp"> serve over http <span class="note">(the output lands in the fass-http sidecar's tree — open it in the Player tab; for .m3u8 / .mpd outputs)</span></label>
     <div class="row" style="align-items:center">
       <button type="submit" id="genbtn">Generate</button>
+      <button type="button" id="savebtn" class="ghost" disabled onclick="savePreset()" title="Freeze this generation as a preset (find it back under Info / Log → presets)">Save</button>
       <button type="button" id="mi-btn" onclick="runMediaInfo()">Mediainfo</button>
       <button type="button" id="clearbtn" class="ghost" onclick="clearCmdPane()">Clear</button>
+      <span id="save-status" class="note"></span>
     </div>
   </form>
   <div class="result" id="res" hidden></div>
@@ -283,6 +285,7 @@ a { color: var(--accent); }
       <label class="check" style="margin-top:0"><input type="radio" name="infosel" id="sel-mi" checked onchange="showInfo('mi')"> media info <span class="note">(ffprobe report on one file)</span></label>
       <label class="check"><input type="radio" name="infosel" id="sel-log" onchange="showInfo('log')"> run log <span class="note">(what ffmpeg printed while running)</span></label>
       <label class="check"><input type="radio" name="infosel" id="sel-prompt" onchange="showInfo('prompts')"> prompts <span class="note">(the last 1000 instructions the model accepted — click one to reuse it in the FFmpeg tab)</span></label>
+      <label class="check"><input type="radio" name="infosel" id="sel-presets" onchange="showInfo('presets')"> presets <span class="note">(saved generations — pick one, read its full JSON, and Load it back into the FFmpeg tab)</span></label>
 
       <div id="info-mi">
         <div class="row">
@@ -318,6 +321,17 @@ a { color: var(--accent); }
         </div>
         <span id="prompt-status" class="note"></span>
         <div id="prompt-out" style="margin-top:10px"></div>
+      </div>
+
+      <div id="info-presets" hidden>
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:1 1 auto"><label for="preset-sel">Preset (newest first)<span class="tip" data-tip="One JSON file per saved generation, named by the md5 of instruction + inputs + ffmpeg command — re-saving the same generation overwrites its file.">?</span></label>
+            <select id="preset-sel" onchange="previewPreset()"></select></div>
+          <div style="flex:0 0 auto"><button type="button" class="copy" onclick="loadPresets()">↻ refresh</button></div>
+        </div>
+        <span id="preset-status" class="note"></span>
+        <pre id="preset-preview" hidden style="margin-top:10px;max-height:220px;overflow:auto;font-size:12px;white-space:pre-wrap"></pre>
+        <button type="button" id="preset-loadbtn" class="ghost" disabled onclick="loadPreset()" title="Fill the FFmpeg tab from this preset and re-render its stored command">Load into the FFmpeg tab</button>
       </div>
     </div>
   </div>
@@ -597,8 +611,11 @@ function mainInputs(raw) {
   if (!s) return [];
   return s.split(/(?:^|\\s)-i\\s+/).map(p => p.trim()).filter(Boolean);
 }
-async function submit(e) {
-  e.preventDefault();
+/* the asset map the /v1/commands body carries — compare convention, the
+   multi `-i` split of the Input field, the watermark, and the extra-input
+   rows. Shared by submit() and savePreset() so a preset always restores
+   exactly what the form would have sent. */
+function collectAssets() {
   const cmp = isCompare();
   const assets = {};
   if (cmp) {
@@ -632,6 +649,12 @@ async function submit(e) {
     const kind = i.closest('.row').querySelector('.extra-kind').value;
     assets[i.dataset.id] = (kind === 'auto') ? v : { path: v, kind };
   });
+  return assets;
+}
+async function submit(e) {
+  e.preventDefault();
+  const cmp = isCompare();
+  const assets = collectAssets();
   const body = {
     instruction: $('instr').value.trim(),
     assets, target_shell: 'posix', adapter: $('ad').value, preflight: $('pf').checked,
@@ -655,6 +678,49 @@ async function submit(e) {
   } catch (err) {
     $('res').innerHTML = `<span class="badge b-bad">request failed</span><pre>${esc(err)}</pre>`;
   }
+}
+/* Save: freeze the current generation as a preset — the instruction, the
+   fields (as the asset map /v1/commands carries), the command as it stands
+   in the (editable) textarea, and the full ready response — into the
+   presets dir. The button is enabled only while the result area holds a
+   ready response (lastReady); re-saving the same state overwrites the same
+   md5-named file. */
+async function savePreset() {
+  if (!lastReady) return;
+  const btn = $('savebtn');
+  const cmp = isCompare();
+  btn.disabled = true;
+  $('save-status').textContent = 'saving…';
+  const body = {
+    instruction: $('instr').value.trim(),
+    assets: collectAssets(),
+    command: $('cmd').value,
+    output_filename: (!cmp && $('out').value.trim()) ? $('out').value.trim() : null,
+    adapter: $('ad').value,
+    preflight: $('pf').checked,
+    verbose: $('verbose').checked,
+    servehttp: $('servehttp').checked,
+    arguments: lastReady.arguments,
+    summary: lastReady.summary,
+    defaults: lastReady.defaults,
+    warnings: lastReady.warnings,
+    validation_level: lastReady.validation_level,
+    checks: lastReady.checks,
+    evidence: lastReady.evidence,
+  };
+  try {
+    const r = await fetch('/v1/presets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok)
+      throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data));
+    $('save-status').textContent = 'saved as ' + data.name + ' (Info / Log tab → presets)';
+  } catch (err) {
+    $('save-status').innerHTML = `<span class="err">save failed: ${esc(err)}</span>`;
+  }
+  btn.disabled = !lastReady;
 }
 /* the Mediainfo button: a peek, not a command — probe the input file and
    print its ffprobe report in the result area. It never goes through the
@@ -722,6 +788,10 @@ function rawLlmHtml(d) {
   return `<details class="sources"><summary>raw LLM output <span class="note">(the model's verbatim reply — before any processing)</span></summary>
     <pre>${esc(d.raw_llm)}</pre></details>`;
 }
+/* the response last rendered while status:'ready' — the Save button
+   captures exactly this (fields + response) into a preset; a non-ready
+   render clears it, so a stale command is never re-saved */
+let lastReady = null;
 function render(d) {
   const badge = d.status === 'ready' ? 'b-ready' :
                 d.status === 'needs_clarification' ? 'b-clar' : 'b-bad';
@@ -755,6 +825,8 @@ function render(d) {
   }
   html += rawLlmHtml(d);
   $('res').innerHTML = html;
+  lastReady = (d.status === 'ready') ? d : null;
+  $('savebtn').disabled = !lastReady;
 }
 async function runCmd() {
   const argv = JSON.parse($('cmdargs').textContent);
@@ -812,6 +884,9 @@ function clearCmdPane() {
   $('servehttp').checked = false;
   $('res').hidden = true;
   $('res').innerHTML = '';
+  lastReady = null;
+  $('savebtn').disabled = true;
+  $('save-status').textContent = '';
   // a programmatic .value never fires the input listener, so re-derive both
   // the compare labels and the Mediainfo button's disabled state
   setCompareMode();
@@ -969,8 +1044,10 @@ function showInfo(which) {
   $('info-mi').hidden = (which !== 'mi');
   $('info-log').hidden = (which !== 'log');
   $('info-prompts').hidden = (which !== 'prompts');
+  $('info-presets').hidden = (which !== 'presets');
   if (which === 'mi') fillMi();
   if (which === 'prompts') loadPrompts();
+  if (which === 'presets') loadPresets();
 }
 let vvizBlob = null;
 let miBusy = false;
@@ -1220,6 +1297,138 @@ function usePrompt(text) {
   // compare labels and the Mediainfo button (which disables on an instruction)
   setCompareMode();
   syncMiBtn();
+  showTab('cmd');
+}
+/* the PRESETS block: the generations saved by the FFmpeg tab's Save button.
+   The selector lists the preset files newest first; picking one shows its
+   full JSON in the preview pane; Load fills the FFmpeg fields from the
+   preset and re-renders the stored ready response, so the pane lands
+   exactly where a fresh generation left it. */
+let presetCurrent = null; // the selected preset's JSON object
+function assetText(v) {
+  // an asset value is a plain path/URL or {path, kind}
+  return typeof v === 'string' ? v : (v && v.path) || '';
+}
+async function loadPresets() {
+  const sel = $('preset-sel');
+  $('preset-status').textContent = 'loading…';
+  presetCurrent = null;
+  $('preset-loadbtn').disabled = true;
+  $('preset-preview').hidden = true;
+  $('preset-preview').textContent = '';
+  try {
+    const r = await fetch('/v1/presets');
+    const data = await r.json();
+    if (!r.ok)
+      throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data));
+    const presets = data.presets || [];
+    sel.innerHTML = '';
+    if (!presets.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(no presets yet — Save a generation in the FFmpeg tab)';
+      sel.appendChild(opt);
+      $('preset-status').textContent = 'no presets saved on this deployment yet';
+      return;
+    }
+    for (const p of presets) {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      const when = p.saved_at ? new Date(p.saved_at).toLocaleString() : '';
+      opt.textContent = (p.instruction || p.name) + (when ? '  —  ' + when : '');
+      sel.appendChild(opt);
+    }
+    $('preset-status').textContent = '';
+  } catch (e) {
+    sel.innerHTML = '';
+    $('preset-status').innerHTML = `<span class="err">preset list failed: ${esc(e)}</span>`;
+  }
+}
+async function previewPreset() {
+  const name = $('preset-sel').value;
+  presetCurrent = null;
+  $('preset-loadbtn').disabled = true;
+  if (!name) {
+    $('preset-preview').hidden = true;
+    $('preset-preview').textContent = '';
+    return;
+  }
+  $('preset-status').textContent = 'loading…';
+  try {
+    const r = await fetch('/v1/presets/' + encodeURIComponent(name));
+    const text = await r.text();
+    if (!r.ok) throw new Error(text);
+    presetCurrent = JSON.parse(text);
+    $('preset-status').textContent = '';
+    // the full file, line by line
+    $('preset-preview').textContent = text;
+    $('preset-preview').hidden = false;
+    $('preset-loadbtn').disabled = false;
+  } catch (e) {
+    $('preset-preview').hidden = true;
+    $('preset-preview').textContent = '';
+    $('preset-status').innerHTML = `<span class="err">preset load failed: ${esc(e)}</span>`;
+  }
+}
+function loadPreset() {
+  const p = presetCurrent;
+  if (!p) return;
+  const assets = p.assets || {};
+  $('instr').value = p.instruction || '';
+  // derive the compare mode from the stored instruction — the same test the
+  // next Generate runs, so the fields round-trip through collectAssets()
+  const cmp = isCompare();
+  if (cmp) {
+    $('inp').value = assetText(assets.main);
+    $('out').value = assetText(assets.distorted); // '' = server auto-detects
+  } else {
+    const mains = [assetText(assets.main)];
+    let mi = 1;
+    while (assets['m' + mi]) { mains.push(assetText(assets['m' + mi])); mi += 1; }
+    $('inp').value = mains.map(m => '-i ' + m).join(' ');
+    $('out').value = p.output_filename || '';
+    $('wm').value = assetText(assets.watermark);
+  }
+  $('ad').value = p.adapter || 'auto';
+  // keep the extra rows' original asset ids (in1, in7, …) so a re-save lands
+  // on the same md5 — and bump the id counter past them so "+ add input"
+  // can't collide
+  for (const k of Object.keys(assets)) {
+    const m = /^in(\\d+)$/.exec(k);
+    if (m) extraN = Math.max(extraN, parseInt(m[1], 10));
+  }
+  $('extra').innerHTML = '';
+  for (const [k, v] of Object.entries(assets)) {
+    if (k === 'main' || k === 'watermark' || k === 'distorted' || /^m\\d+$/.test(k)) continue;
+    addExtra();
+    const row = $('extra').lastElementChild;
+    const inp = row.querySelector('.extra-inp');
+    inp.dataset.id = k;
+    inp.placeholder = 'e.g. -i song.mp3 (id: ' + k + ')';
+    inp.value = assetText(v);
+    const kind = (typeof v === 'object' && v.kind) ? v.kind : 'auto';
+    row.querySelector('.extra-kind').value = kind;
+  }
+  $('pf').checked = !!p.preflight;
+  $('verbose').checked = !!p.verbose;
+  $('servehttp').checked = !!p.servehttp;
+  setCompareMode();
+  syncMiBtn();
+  // the 'generation accomplished' state: re-render the stored ready response
+  // (command + everything the result pane shows) instead of re-generating
+  $('res').hidden = false;
+  render({
+    status: 'ready',
+    command: p.command,
+    arguments: p.arguments,
+    summary: p.summary,
+    defaults: p.defaults,
+    warnings: p.warnings,
+    validation_level: p.validation_level,
+    checks: p.checks,
+    evidence: p.evidence,
+    raw_llm: null,
+  });
   showTab('cmd');
 }
 

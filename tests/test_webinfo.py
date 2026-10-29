@@ -382,9 +382,9 @@ def test_ui_has_the_verbose_toggle_and_the_info_tab():
     assert "['cmd','runs','info','cfg']" in html
     for needle in ("mi-target", "mi-file", "log-run", "Show media info", "Show log"):
         assert needle in html
-    # the toggles are wired into both POSTs
+    # the toggles are wired into every POST that carries the pane state
     assert "verbose: $('verbose').checked" in html
-    assert html.count("verbose: $('verbose').checked") == 2  # submit() + runCmd()
+    assert html.count("verbose: $('verbose').checked") == 3  # submit() + savePreset() + runCmd()
 
 
 def test_ui_mediainfo_ticker_on_the_command_tab():

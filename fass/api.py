@@ -25,8 +25,10 @@ Run:  fass serve [--host 0.0.0.0] [--port 8000]
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -36,10 +38,11 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import (FileResponse, HTMLResponse, PlainTextResponse,
+                               Response)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fass import __version__, dockerctl, execute
@@ -387,6 +390,35 @@ class CopyToInputRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=1024)
+
+
+class PresetSaveRequest(BaseModel):
+    """POST /v1/presets body (the FFmpeg pane's 'Save' button): the whole
+    state of one successful generation — instruction, inputs, generated
+    command, and everything the result pane shows — frozen into a JSON file
+    in the presets dir so the command can be re-loaded with one click. The
+    filename is derived server-side (md5 over instruction + inputs +
+    command), so re-saving the same generation is idempotent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instruction: str = Field(min_length=1, max_length=4000)
+    assets: dict[str, Any] = Field(
+        description="asset id -> path/URL or {path, kind} — exactly what the "
+                    "UI sent for /v1/commands")
+    command: str = Field(min_length=1, max_length=65536)
+    output_filename: str | None = Field(default=None, max_length=1024)
+    adapter: str | None = None
+    preflight: bool = True
+    verbose: bool = False
+    servehttp: bool = False
+    arguments: list[str] | None = None
+    summary: list[str] | None = None
+    defaults: list[str] | None = None
+    warnings: list[str] | None = None
+    validation_level: str | None = None
+    checks: list[dict] | None = None
+    evidence: dict | None = None
 
 
 def _llm_status() -> dict:
@@ -1012,6 +1044,105 @@ def create_app() -> FastAPI:
             return HTMLResponse(_vviz_run(target, name))
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    # ------------------------------------------------------ presets (Save button, Info/Log tab)
+
+    def _presets_dir() -> Path:
+        """The presets folder: $FASS_PRESETS_DIR when set (tests), else
+        <config dir>/presets — in the container that is /config/presets,
+        persisted by the existing /config volume (no compose change)."""
+        env = os.environ.get("FASS_PRESETS_DIR", "").strip()
+        if env:
+            return Path(env)
+        return config_path().parent / "presets"
+
+    def _preset_name(instruction: str, assets: dict, command: str) -> str:
+        """The preset filename: md5 over instruction + inputs + command, so
+        re-saving the same generation lands on the same file while a
+        changed instruction, input, or command creates a new one."""
+        basis = instruction + "\n" + json.dumps(
+            assets, sort_keys=True, separators=(",", ":")) + "\n" + command
+        return hashlib.md5(basis.encode("utf-8")).hexdigest() + ".json"
+
+    @app.get("/v1/presets")
+    def presets_list():
+        """Every preset in the presets dir, newest first — the rows of the
+        Info/Log tab's PRESETS selector. A corrupt or non-preset file is
+        skipped, never a 500."""
+        d = _presets_dir()
+        presets = []
+        if d.is_dir():
+            for p in d.iterdir():
+                if not p.is_file() or not p.name.endswith(".json"):
+                    continue
+                try:
+                    doc = json.loads(p.read_text(encoding="utf-8"))
+                    if not isinstance(doc, dict):
+                        continue
+                except (OSError, ValueError):
+                    continue
+                presets.append({
+                    "name": p.name,
+                    "instruction": str(doc.get("instruction", "")),
+                    "command": str(doc.get("command", ""))[:120],
+                    "saved_at": str(doc.get("saved_at", "")),
+                    "size": p.stat().st_size,
+                })
+        presets.sort(key=lambda r: (r["saved_at"], r["name"]), reverse=True)
+        return {"presets": presets, "dir": str(d)}
+
+    @app.post("/v1/presets")
+    def presets_save(body: PresetSaveRequest):
+        """Freeze one successful generation into <md5>.json in the presets
+        dir. Same instruction + inputs + command overwrites the same file
+        (idempotent); a changed command writes a new one."""
+        name = _preset_name(body.instruction, body.assets, body.command)
+        doc = {
+            "schema": 1,
+            "name": name,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "instruction": body.instruction,
+            "assets": body.assets,
+            "output_filename": body.output_filename,
+            "adapter": body.adapter,
+            "preflight": body.preflight,
+            "verbose": body.verbose,
+            "servehttp": body.servehttp,
+            "command": body.command,
+            "arguments": body.arguments,
+            "summary": body.summary,
+            "defaults": body.defaults,
+            "warnings": body.warnings,
+            "validation_level": body.validation_level,
+            "checks": body.checks,
+            "evidence": body.evidence,
+        }
+        d = _presets_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        # no sort_keys: the assets' insertion order is the order the -i
+        # flags take in a regenerated command — the preview shows it as-is
+        # (the md5 in _preset_name still canonicalizes key order)
+        (d / name).write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        return {"name": name, "saved_at": doc["saved_at"], "dir": str(d)}
+
+    @app.get("/v1/presets/{name}")
+    def presets_get(name: str):
+        """One preset's raw JSON text — the Info/Log tab renders it
+        line-by-line in its preview pane before the user confirms the load.
+        Only a 32-hex-digit .json name is a preset; anything else is a 404
+        (the filename itself is the path-traversal guard)."""
+        if not re.fullmatch(r"[0-9a-f]{32}\.json", name):
+            raise HTTPException(404, "preset not found")
+        p = _presets_dir() / name
+        if not p.is_file():
+            raise HTTPException(404, "preset not found")
+        text = p.read_text(encoding="utf-8")
+        try:
+            json.loads(text)
+        except ValueError:
+            raise HTTPException(500, f"preset {name} is corrupt")
+        return Response(content=text, media_type="application/json")
 
     # ------------------------------------------------------ files (Files tab)
 
