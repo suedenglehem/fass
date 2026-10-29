@@ -1034,6 +1034,43 @@ def test_ladder_explicit_levels_argv_exact():
     assert "copy" not in argv
 
 
+def test_vod_hls_defaults_list_size_zero():
+    # FFmpeg 9 defaults hls_list_size to 5, which keeps only the last 5
+    # segments of a finite (VOD) clip; a VOD plan must keep the whole clip.
+    ep = ep_for(output=OutputSpec(container="hls", video_codec="h264"),
+                media=make_media())
+    argv = build_argv(ep)
+    assert argv[-1].endswith(".m3u8")
+    assert "-hls_list_size" in argv
+    assert argv[argv.index("-hls_list_size") + 1] == "0"
+
+
+def test_vod_hls_keeps_explicit_list_size():
+    # an explicit playlist window is honored — not overridden by the VOD
+    # keep-all default.
+    argv = argv_for(output=OutputSpec(
+        container="hls", video_codec="h264",
+        format_options={"hls_list_size": "8"}),
+        media=make_media())
+    assert argv[argv.index("-hls_list_size") + 1] == "8"
+
+
+def test_event_hls_is_not_forced_to_keep_all():
+    # a live (event) playlist is a deliberate rolling window: no keep-all
+    # default is injected, and an explicit window is left in place.
+    argv = argv_for(output=OutputSpec(
+        container="hls", video_codec="h264",
+        format_options={"hls_playlist_type": "event"}),
+        media=make_media())
+    assert "-hls_list_size" not in argv
+    argv2 = argv_for(output=OutputSpec(
+        container="hls", video_codec="h264",
+        format_options={"hls_playlist_type": "event",
+                        "hls_list_size": "10"}),
+        media=make_media())
+    assert argv2[argv2.index("-hls_list_size") + 1] == "10"
+
+
 def test_ladder_default_table_picks_top3_fit_input():
     # 1080p input, no explicit levels -> the three tallest default rows that
     # fit: 480p / 720p / 1080p (never upscales)
@@ -1244,12 +1281,14 @@ def test_ladder_bufsize_is_double_bitrate():
 
 
 def test_single_variant_hls_argv_regression_guard():
-    # M13.3 must not change the single-variant HLS argv (a h264/aac input to
-    # hls still stream-copies, with the maps from the builder's map loop):
-    # byte-identical to the pre-M13 shape
+    # A h264/aac input to hls still stream-copies, with the maps from the
+    # builder's map loop. A VOD (non-event) playlist keeps the whole clip:
+    # the VOD keep-all default appends -hls_list_size 0 (FFmpeg 9's default
+    # of 5 would drop all but the last 5 segments).
     ep = ep_for(output=OutputSpec(container="hls", video_codec="h264"),
                 media=make_media())
     assert build_argv(ep) == [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "clip.mp4",
         "-map", "0:v:0", "-map", "0:a?", "-f", "hls", "-c", "copy",
+        "-hls_list_size", "0",
         "clip.m3u8"]

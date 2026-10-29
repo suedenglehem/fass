@@ -983,7 +983,9 @@ def test_tee_argv_bracket_template(gen):
     assert r.status == "ready"
     a = r.arguments
     assert a[a.index("-f") + 1] == "tee"
-    assert a[-1] == "[f=hls]clip.m3u8|[f=dash]clip.mpd"
+    # a VOD hls branch keeps the whole clip (hls_list_size=0); the dash
+    # branch is unaffected
+    assert a[-1] == "[f=hls:hls_list_size=0]clip.m3u8|[f=dash]clip.mpd"
 
 
 def test_tee_live_window_routes_into_hls_branch(gen):
@@ -1235,7 +1237,9 @@ def test_hls_segment_duration(gen):
     assert r.status == "ready"
     out = r.plan["output"]
     assert out["container"] == "hls"
-    assert out["format_options"] == {"hls_time": "6"}
+    # the requested segment length, plus the VOD keep-all default (FFmpeg 9
+    # otherwise keeps only the last 5 segments of a finite clip)
+    assert out["format_options"] == {"hls_time": "6", "hls_list_size": "0"}
 
 
 def test_http_output_destination(gen):

@@ -1607,6 +1607,18 @@ def plan_execution(
                     "#EXT-X-ENDLIST — a live player will play through and "
                     "then stop; for true live use a stream input (or -re "
                     "for a paced pseudo-live)")
+            # FFmpeg 9's default hls_list_size is 5, so a VOD (non-event)
+            # playlist keeps only its last 5 segments and rolls — silently
+            # dropping the rest of a finite clip. Keep the whole clip; a
+            # live/event window is deliberate, so an explicit value (or the
+            # muxer default) is left in place there.
+            if out.format_options.get("hls_playlist_type") != "event" \
+                    and "hls_list_size" not in out.format_options:
+                out.format_options["hls_list_size"] = "0"
+                defaults.append(
+                    "VOD HLS keeps the whole clip — -hls_list_size 0 "
+                    "(FFmpeg 9 defaults to 5, keeping only the last 5 "
+                    "segments)")
 
         if out.container == "dash" and out_path:
             # DASH on disk is the .mpd manifest; the muxer writes the fMP4
@@ -1626,6 +1638,13 @@ def plan_execution(
             # parses. Per-branch options ride INSIDE the brackets
             # ([f=hls:key=value]path), never as separate -key value flags.
             muxer = "tee"
+            # VOD keep-all default for the hls branch (the branch split below
+            # routes hls_list_size into it): FFmpeg 9's default of 5 would
+            # truncate a finite clip. An event hls branch is a deliberate
+            # rolling window (or carries an explicit list_size) — left alone.
+            if out.format_options.get("hls_playlist_type") != "event" \
+                    and "hls_list_size" not in out.format_options:
+                out.format_options["hls_list_size"] = "0"
             hls_opts, dash_opts, fo_errors = _tee_branch_options(
                 out.format_options)
             if fo_errors:
