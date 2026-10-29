@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,9 @@ def test_version():
     r = run_cli("--version")
     assert r.returncode == 0
     assert "fass" in r.stdout
+    # commit-based versioning: vVERSION_ID.Commit_ID, where Commit_ID is
+    # the short sha of the code commit the version was cut from
+    assert re.fullmatch(r"fass v\d+\.\d+\.[0-9a-f]{7}", r.stdout.strip())
 
 
 def test_ready_exit_zero_and_json():
