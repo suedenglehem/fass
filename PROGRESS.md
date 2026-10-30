@@ -36,9 +36,11 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   bug-shape instruction came back ready via the direct second try
   (first pass: parser error); suite 1640 passed / 2 skipped; remote
   volume mapping (FTP/SFTP/S3) + S3 uuid naming COMMITTED 5eca3ab +
-  bump 0771014 (v1.137036.5eca3ab) — LOCAL, i7 DOWN (user away),
-  live-verified on tr4 host:8099 — s3/s3-uuid/ftp/sftp/none all green,
-  suite 1710 passed / 2 skipped)):**
+  bump 0771014 (v1.137036.5eca3ab), PUSHED (cec7bd2..c06106d) + i7
+  DEPLOYED + live-verified v1.137036.5eca3ab (i7 was DOWN all round;
+  after the host reboot strata LLM needed /usr/local/bin/strata3 start
+  — functional /v1/commands ready), live-verified on tr4 host:8099 —
+  s3/s3-uuid/ftp/sftp/none all green, suite 1710 passed / 2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -389,8 +391,11 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   is LOCAL, unpushed — rides with the next user-authorized push.**
   (8) **Remote volume mapping (FTP/SFTP/S3) + S3 uuid naming —
   IMPLEMENTED + COMMITTED `5eca3ab` (10 files, +2352/−14) + version
-  bump `0771014` (v1.137036.5eca3ab). i7 was DOWN all round (user away
-  ~2 h) → NO i7 deploy; live-verified on the tr4 HOST dev server,
+  bump `0771014` (v1.137036.5eca3ab); PUSHED (cec7bd2..c06106d) + i7
+  DEPLOYED + live-verified v1.137036.5eca3ab (i7 was DOWN all round —
+  deployed 2026-10-30 after the host reboot; record at the end of this
+  item); live-verified on
+  the tr4 HOST dev server,
   port 8099, against the tr4 test stores (MinIO 127.0.0.1:9100
   path-style minioadmin, pure-ftpd 127.0.0.1:21 ftpuser, host sshd
   127.0.0.1:22 andrei, LocalStack 127.0.0.1:4566).** Each of the three
@@ -481,12 +486,27 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   runs/<id>.log + runs/<id>.json mirrored on the remote, verified by
   fetching them back), uuid mode raw-key check (UUID key +
   fass_name=out1.mp4 metadata), a forced-failing run (output NOT
-  uploaded, log + record uploaded). **Next: push (same user-authorized
-  sequence) — i7 deploy DEFERRED until i7 is back (the host was down
-  all round); `_detect_distorted` scans local /output only (a
-  distorted clip existing only on a remote output is out of scope);
-  stream-purge deletions are not mirrored to remotes (noted, out of
-  scope).**
+  uploaded, log + record uploaded). **i7 DEPLOYED + live-verified
+  v1.137036.5eca3ab (2026-10-30, i7 back after the ~2 h outage): ff-merged
+  cec7bd2..c06106d on i7 — the predicted compose.yaml stash-pop conflict
+  resolved in one hunk (kept BOTH i7's uncommented docker.sock mounts AND
+  upstream's extra_hosts block); `docker compose build fass` +
+  `up -d --force-recreate fass`. Live-verified: healthz 200; /v1/env →
+  v1.137036.5eca3ab; extra_hosts live in the container (inspect +
+  getent hosts host.docker.internal); GPU pin intact (device_ids ["1"] +
+  CUDA_VISIBLE_DEVICES=0); fass-worker {"ok":true} (internal :8001) +
+  fass-rag {"status":"ok"} unharmed. NOTE: strata LLM (172.17.0.1:8080)
+  was DOWN after the host reboot (it is a manually-started service —
+  no strata container, nothing listening on 8080); started with the
+  user's `/usr/local/bin/strata3 start` (loaded in 103 s, GPU 0), then
+  200 + qwen3.8-27b loaded, and a functional `POST /v1/commands`
+  ("resize the video to 480p and re-encode with h264", titan_10s.mp4)
+  → status ready — full NL→strata→validated path on i7. **Carried park
+  from item 7 unchanged (48kbps NLU, multi-input + blackdetect RAG
+  E2E, docs/DEVELOPMENT.md codec list); out-of-scope notes:
+  `_detect_distorted` scans local /output only (a distorted clip
+  existing only on a remote output is out of scope); stream-purge
+  deletions are not mirrored to remotes.**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
