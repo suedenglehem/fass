@@ -7,10 +7,14 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 
 - **Last state (2026-10-30, audio stream copy COMMITTED 91f1bf1 + version
   bump 3a15f7c, PUSHED + i7 DEPLOYED + live-verified; versioning rule
-  commits now also pushed + on i7; "Enter" button IMPLEMENTED + VERIFIED
-  + COMMITTED 1cdefcd + version bump 25d7418 (local — NOT pushed, NOT on
-  i7; deploy on the user's green light); video stream copy DELEGATED to
-  a dispatcher worker (running); suite 1567 passed / 2 skipped):**
+  commits now also pushed + on i7; "Enter" button COMMITTED 1cdefcd +
+  version bump 25d7418, PUSHED (e0810f2..522b1d2) + i7 DEPLOYED +
+  live-verified v1.137036.1cdefcd, the user is browser-testing; video
+  stream copy INTEGRATED onto main — job j_5566e75d4d succeeded, feature
+  98fc460 + bump 35370a2 (v1.137036.98fc460) merged as 2813db3 after a
+  full diff review, version.py conflict resolved to the job's bump value,
+  dispatch_integrate recorded, suite 1593 passed / 2 skipped (local —
+  NOT pushed, NOT on i7; push + i7 deploy on the user's green light)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -109,7 +113,8 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   re-disables). (4) **Video stream copy — DELEGATED to a dispatcher
   worker (job j_5566e75d4d, backend i7 LLM; worker process + git worktree
   run on tr4 where the daemon lives, i7 = inference endpoint only, so
-  i7 looks idle while the job runs), RUNNING:** the mirror of 91f1bf1 for
+  i7 looks idle while the job runs), SUCCEEDED + REVIEWED + INTEGRATED
+  onto main as merge 2813db3 (local):** the mirror of 91f1bf1 for
   video — the user's failing instruction "transcode audio to aac 180kbps
   and copy video as is" → schema error "a video output needs a
   video_codec" (plan.py:374). Brief: add "copy" to the video_codec
@@ -124,10 +129,24 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   no-op check); llm.py prompt documents video_codec "copy" (REQUIRED —
   the failing instruction goes through the LLM path); explain.py line;
   12 + 5 test mirrors + bench-094 (user's exact) / bench-095 + ablation
-  pin 93→95; MANDATORY version bump (contracts_text). DONE = full suite
-  green (baseline 1566 + new) AND two commits (feature + bump). NOT yet
-  pushed/deployed — review the diff, integrate onto main, re-run the
-  suite, then push + i7 deploy only on the user's explicit green light.
+  pin 93→95; MANDATORY version bump (contracts_text). Worker (cc-worker,
+  xhigh; i7 LLM) SUCCEEDED: two commits — feature 98fc460 + bump 35370a2
+  (v1.137036.98fc460), worktree suite 1592 passed / 2 skipped (1566 +
+  26 new). Review verdict: APPLIED — the diff is a clean mirror of
+  91f1bf1 (schema "copy" in the Literal + codec-branch guards, planner
+  upfront conflict block + `-c:v copy` builder branch with the whole
+  encoder block moved into its else, `_VIDEO_COPY` rules +
+  clarification/no-op fixes + audio_bitrate now applied on the video
+  branch (required — main never applied an audio bitrate on a video
+  plan, so the user's 180k would have been silently dropped), llm.py
+  prompt, explain.py, 15 planner + 5 rules tests, bench-094/095).
+  Integrated: merge 2813db3 onto main; the predicted version.py conflict
+  (v1.137036.1cdefcd vs v1.137036.98fc460) resolved to the job's bump
+  value (98fc460 is now the newest code commit on main); full suite on
+  the merged tree 1593 passed / 2 skipped / 0 failed (143.34s);
+  dispatch_integrate(j_5566e75d4d, 2813db3) recorded (accepted). NOT
+  yet pushed/deployed — push + i7 deploy only on the user's explicit
+  green light.
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
