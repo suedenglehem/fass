@@ -835,6 +835,7 @@ function render(d) {
   } else if (d.status === 'unsupported') {
     html += '<h2>Not supported in the MVP</h2>' + lists(
       (d.unsupported || []).map(u => (u.reason || '') + (u.hint ? ' — ' + u.hint : ''))) +
+      (d.errors && d.errors.length ? '<h2>Second try (direct LLM)</h2>' + lists(d.errors) : '') +
       '<h2>Supported instead</h2><p>' + esc(d.unsupported && d.unsupported[0] && d.unsupported[0].hint || '') + '</p>' +
       sourcesHtml(d.evidence);
   } else {

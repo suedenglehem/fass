@@ -211,30 +211,78 @@ def test_unsupported_rag_off_no_note(monkeypatch):
     assert resp.evidence is None
 
 
-# ------------------------------------------------- second try (LLM paths)
+# ------------------------------------------------- second try (direct LLM)
+# The second approach is a DIRECT call for a raw ffmpeg command string —
+# no EditPlan schema in the prompt — shlex-split and run through the same
+# validate_argv gate an expert hand-edit goes through.
 
-def _patch_retry(monkeypatch, rules_result, llm_result, llm_parse=None):
-    """First pass on the rules adapter, the second try on the LLM adapter —
-    get_adapter routed by name. Volume dirs are pinned so the expected
-    query string is host-independent. Returns the LLM fake (records calls)."""
+RETRY_QUERY = (
+    "generate ffmpeg command for: copy the audio and video tracks, and "
+    "add the audio track of clip2.mp4 as a second audio track. "
+    "input1=/input/clip.mp4, input2=/input/clip2.mp4, "
+    "output=/output/out.mp4")
+RETRY_REPLY = (
+    "Here is the command:\n\n```bash\n"
+    "ffmpeg -i /input/clip.mp4 -i /input/clip2.mp4 "
+    "-map 0:v:0 -map 0:a:0 -map 1:a:0 -c:v copy -c:a copy "
+    "/output/out.mp4\n```\n")
+RETRY_ARGV = [
+    "ffmpeg", "-i", "/input/clip.mp4", "-i", "/input/clip2.mp4",
+    "-map", "0:v:0", "-map", "0:a:0", "-map", "1:a:0",
+    "-c:v", "copy", "-c:a", "copy", "/output/out.mp4",
+]
+
+
+class FakeDirectLLM:
+    """The LLM adapter as the direct second-try call sees it: a provider
+    with _chat_openai(system, user) — no parse(), no EditPlan schema."""
+    name = "llm"
+    provider = "openai"
+    model = "fake"
+
+    def __init__(self, reply):
+        self._reply = reply
+        self.queries = []
+
+    def available(self):
+        return True
+
+    def _chat_openai(self, system, user):
+        self.queries.append({"system": system, "user": user})
+        if isinstance(self._reply, Exception):
+            raise self._reply
+        return self._reply
+
+
+def _patch_retry(monkeypatch, rules_result, direct_reply,
+                 llm_configured=True):
+    """First pass on the rules adapter; the second try is a direct LLM
+    call (get_adapter('llm') -> fake with _chat_openai). Volume dirs are
+    pinned so the expected query string is host-independent. Returns the
+    direct fake (records the (system, user) pairs), or None when the LLM
+    is not configured."""
     rules = FakeRulesAdapter(rules_result)
-    llm = FakeLLMAdapter(llm_result)
-    if llm_parse is not None:
-        llm.parse = llm_parse
-    monkeypatch.setattr(
-        pipe, "get_adapter",
-        lambda name="auto": rules if name == "rules" else llm)
+    direct = FakeDirectLLM(direct_reply) if llm_configured else None
+
+    def fake_get_adapter(name="auto"):
+        if name == "llm":
+            if direct is None:
+                raise AdapterError("no LLM provider configured")
+            return direct
+        return rules
+
+    monkeypatch.setattr(pipe, "get_adapter", fake_get_adapter)
     monkeypatch.setattr(pipe, "resolved_rag",
                         lambda: RagConfig(enabled=False))
     monkeypatch.setattr(pipe, "_input_dir", lambda: "/input")
     monkeypatch.setattr(pipe, "_output_dir", lambda: "/output")
-    return llm
+    return direct
 
 
-def test_unsupported_retries_llm_with_paths_and_uses_ready_plan(monkeypatch):
-    llm = _patch_retry(monkeypatch,
-                       ParseResult(status=ParseStatus.UNSUPPORTED),
-                       _ready())
+def test_unsupported_second_try_direct_command_ready(monkeypatch):
+    direct = _patch_retry(monkeypatch,
+                          ParseResult(status=ParseStatus.UNSUPPORTED),
+                          RETRY_REPLY)
     resp = generate(
         "copy the audio and video tracks, and add the audio track of "
         "clip2.mp4 as a second audio track",
@@ -244,47 +292,122 @@ def test_unsupported_retries_llm_with_paths_and_uses_ready_plan(monkeypatch):
         adapter_name="rules")
     assert resp.status == "ready"
     assert resp.adapter == "llm"
-    # one retry, with the exact second-pass query: prefix + verbatim
+    # one direct call, with the exact second-pass query: prefix + verbatim
     # instruction + full stop, then ALL inputs enumerated input1=/input2=
     # with full deployment paths, output= last
-    assert len(llm.calls) == 1
-    assert llm.calls[0]["instruction"] == (
-        "generate ffmpeg command for copy the audio and video tracks, and "
-        "add the audio track of clip2.mp4 as a second audio track. "
-        "input1=/input/clip.mp4, input2=/input/clip2.mp4, "
-        "output=/output/out.mp4")
-    # the retry plan passed the normal planning step
-    assert resp.command is not None
-    # the response notes that the plan came from the second pass
-    assert any("second LLM pass" in d for d in resp.defaults)
+    assert len(direct.queries) == 1
+    assert direct.queries[0]["user"] == RETRY_QUERY
+    # the prompt carries NO EditPlan schema — it asks for the command
+    assert "EditPlan" not in direct.queries[0]["system"]
+    assert "schema" not in direct.queries[0]["system"].lower()
+    assert "command" in direct.queries[0]["system"]
+    # the reply's command passed the hand-edit gate and is returned as-is
+    assert resp.arguments == RETRY_ARGV
+    assert resp.command == pipe.render_posix(RETRY_ARGV)
+    assert resp.raw_llm == RETRY_REPLY
+    assert resp.plan is None
+    assert resp.validation_level == "static"
+    # the response logs that the first attempt failed and the second
+    # approach (direct command) was used
+    note = [d for d in resp.defaults
+            if "first attempt" in d and "second approach" in d]
+    assert len(note) == 1
 
 
-def test_unsupported_retry_also_unsupported_keeps_first_pass(monkeypatch):
-    llm = _patch_retry(monkeypatch,
-                       ParseResult(status=ParseStatus.UNSUPPORTED),
-                       ParseResult(status=ParseStatus.UNSUPPORTED))
+def test_unsupported_second_try_reply_without_command_keeps_first_pass(
+        monkeypatch):
+    direct = _patch_retry(monkeypatch,
+                          ParseResult(status=ParseStatus.UNSUPPORTED),
+                          "I'm sorry, I can't help with that request.")
+    resp = generate("do selective color grading on clip.mp4", _assets(),
+                    adapter_name="rules")
+    assert resp.status == "unsupported"
+    assert resp.adapter == "rules"
+    assert resp.command is None and resp.arguments is None
+    # exactly one attempt, and the second try's own error is surfaced
+    assert len(direct.queries) == 1
+    assert direct.queries[0]["user"].startswith(
+        "generate ffmpeg command for: do selective color grading")
+    assert len(resp.errors) == 1
+    assert "second LLM try failed" in resp.errors[0]
+    assert "no ffmpeg command" in resp.errors[0]
+    # the verbatim second reply is what the user sees
+    assert resp.raw_llm == "I'm sorry, I can't help with that request."
+
+
+def test_unsupported_second_try_command_rejected_by_gate_keeps_first_pass(
+        monkeypatch):
+    reply = ("ffmpeg -i /input/clip.mp4 -definitely_not_a_flag "
+             "/output/out.mp4\n")
+    _patch_retry(monkeypatch,
+                 ParseResult(status=ParseStatus.UNSUPPORTED), reply)
+    resp = generate("do selective color grading on clip.mp4", _assets(),
+                    adapter_name="rules")
+    assert resp.status == "unsupported"
+    assert resp.command is None
+    assert len(resp.errors) == 1
+    assert "failed validation" in resp.errors[0]
+    assert "unknown flag" in resp.errors[0]
+    assert resp.raw_llm == reply
+
+
+def test_unsupported_second_try_llm_call_error_is_surfaced(monkeypatch):
+    _patch_retry(monkeypatch,
+                 ParseResult(status=ParseStatus.UNSUPPORTED),
+                 RuntimeError("LLM provider unreachable: connection refused"))
     resp = generate("do selective color grading on clip.mp4", _assets(),
                     adapter_name="rules")
     assert resp.status == "unsupported"
     assert resp.adapter == "rules"
     assert resp.command is None
-    # exactly one retry attempt, then the first pass stands
-    assert len(llm.calls) == 1
-    assert llm.calls[0]["instruction"].startswith(
-        "generate ffmpeg command for do selective color grading")
+    assert len(resp.errors) == 1
+    assert "LLM call failed" in resp.errors[0]
+    assert "connection refused" in resp.errors[0]
 
 
 def test_unsupported_no_llm_configured_first_pass_stands(monkeypatch):
-    def no_llm(name="auto"):
-        if name == "llm":
-            raise AdapterError("no LLM provider configured")
-        return FakeRulesAdapter(ParseResult(status=ParseStatus.UNSUPPORTED))
-
-    monkeypatch.setattr(pipe, "get_adapter", no_llm)
-    monkeypatch.setattr(pipe, "resolved_rag",
-                        lambda: RagConfig(enabled=False))
+    _patch_retry(monkeypatch,
+                 ParseResult(status=ParseStatus.UNSUPPORTED), None,
+                 llm_configured=False)
     resp = generate("do selective color grading on clip.mp4", _assets(),
                     adapter_name="rules")
     assert resp.status == "unsupported"
     assert resp.adapter == "rules"
     assert resp.command is None
+    assert len(resp.errors) == 1
+    assert "no LLM provider configured" in resp.errors[0]
+
+
+# ------------------------------------------------- command extraction
+
+def test_extract_command_bare():
+    assert pipe._extract_ffmpeg_command("ffmpeg -i a.mp4 -f null -") == \
+        "ffmpeg -i a.mp4 -f null -"
+
+
+def test_extract_command_fenced_with_prose():
+    text = ("Sure! Here you go:\n\n```bash\n"
+            "ffmpeg -i a.mp4 -c:v libx264 out.mp4\n```\n\nHope that helps.")
+    assert pipe._extract_ffmpeg_command(text) == \
+        "ffmpeg -i a.mp4 -c:v libx264 out.mp4"
+
+
+def test_extract_command_backslash_continuations():
+    text = "ffmpeg -i a.mp4 \\\n  -i b.mp4 \\\n  -map 0:v:0 -map 1:a:0 out.ts"
+    assert pipe._extract_ffmpeg_command(text) == \
+        "ffmpeg -i a.mp4 -i b.mp4 -map 0:v:0 -map 1:a:0 out.ts"
+
+
+def test_extract_command_bullet_start():
+    assert pipe._extract_ffmpeg_command(
+        "- ffmpeg -i a.mp4 -f null -\n") == "ffmpeg -i a.mp4 -f null -"
+
+
+def test_extract_command_stops_at_prose_after_command():
+    text = "ffmpeg -i a.mp4 -f null -\nUse this one, it works."
+    assert pipe._extract_ffmpeg_command(text) == "ffmpeg -i a.mp4 -f null -"
+
+
+def test_extract_command_none_when_absent():
+    assert pipe._extract_ffmpeg_command("I cannot do that.") is None
+    assert pipe._extract_ffmpeg_command("") is None

@@ -130,12 +130,16 @@ def collect_files(targets: list[str]) -> list[str]:
 
 
 def _snippet(resp: GenerationResponse) -> str:
-    """The failed file's reason, as one short line for the table."""
-    if resp.errors:
-        msg = resp.errors[0]
-    elif resp.unsupported:
+    """The failed file's reason, as one short line for the table.
+
+    The first pass's unsupported reason leads — resp.errors now carries
+    the second LLM try's own failure ('second LLM try failed: …'), which
+    is meta about the retry, not the file's reason."""
+    if resp.unsupported:
         u = resp.unsupported[0]
         msg = f"{u.get('fragment')}: {u.get('reason')}"
+    elif resp.errors:
+        msg = resp.errors[0]
     elif resp.clarifications:
         msg = resp.clarifications[0].get("question") or "clarification required"
     else:

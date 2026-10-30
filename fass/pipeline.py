@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from fass.builder import build_argv, build_argv_all, render_posix
 from fass.config import load_config, resolved_rag
-from fass.execute import _input_dir, _output_dir, resolve_input_name
+from fass.execute import _input_dir, _output_dir, resolve_input_name, validate_argv
 from fass.explain import summarize
 from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
@@ -355,7 +356,7 @@ def _full_volume_path(name: str, vol: str) -> str:
 
 def _retry_instruction(instruction: str, assets: AssetMap,
                        output_filename: str | None) -> str:
-    """The second-pass query: 'generate ffmpeg command for ' + the original
+    """The second-pass query: 'generate ffmpeg command for: ' + the original
     instruction verbatim, ended with a full stop, then a space and ALL
     inputs enumerated as 'input1=', 'input2=', ... — the main input first,
     the additional inputs in the given order — each with its full
@@ -363,7 +364,7 @@ def _retry_instruction(instruction: str, assets: AssetMap,
     text = instruction.strip()
     if text and text[-1] not in ".?!":
         text += "."
-    parts = [f"generate ffmpeg command for {text}"]
+    parts = [f"generate ffmpeg command for: {text}"]
     ids = list(assets)
     if ids:
         main_id = "main" if "main" in ids else ids[0]
@@ -377,26 +378,76 @@ def _retry_instruction(instruction: str, assets: AssetMap,
     return " ".join(parts)
 
 
-def _llm_paths_retry(instruction, assets, output_filename, previous_plan,
-                     media, evidence_block):
-    """One LLM pass over an instruction the first pass marked
-    'unsupported' — the rules (or the model's first read) can be too
-    shallow for a phrasing the LLM can still plan, so it gets the
-    instruction again with the prompt prefix and the concrete file paths.
-    Best-effort: None when no LLM provider is configured or the retry
-    itself fails — then the first pass's 'unsupported' stands."""
+def _extract_ffmpeg_command(text: str) -> str | None:
+    """The first ffmpeg command in a free-form LLM reply.
+
+    Tolerates code fences and surrounding prose: fence marker lines are
+    dropped, the first line starting with 'ffmpeg' is taken (bullet or
+    bold markers allowed) and its backslash continuations are joined.
+    None when the reply carries no command at all."""
+    if not text:
+        return None
+    lines = [ln for ln in text.splitlines()
+             if not ln.strip().startswith("```")]
+    cmd: list[str] = []
+    for ln in lines:
+        s = ln.strip()
+        if not cmd:
+            core = s.lstrip("*-• ").strip("* ").strip()
+            if not core.startswith("ffmpeg"):
+                continue
+            cmd.append(core)
+        elif cmd[-1].endswith("\\"):
+            cmd[-1] = cmd[-1][:-1] + s
+        else:
+            break
+    return " ".join(cmd).strip() if cmd else None
+
+
+def _llm_direct_command(instruction: str, assets: AssetMap,
+                        output_filename: str | None,
+                        evidence_block: str | None) -> tuple:
+    """The second approach for an 'unsupported' first pass: one DIRECT
+    call to the LLM for a raw ffmpeg command string.
+
+    Same query as _retry_instruction ('generate ffmpeg command for: …
+    input1=…, input2=…, output=…'), but the prompt carries NO EditPlan
+    schema — the model answers with the command itself, and the string
+    is then shlex-split and run through the same validate_argv gate an
+    expert hand-edit goes through before it may be returned as ready.
+
+    Returns (argv, raw, error): on success argv is the validated command
+    and raw the verbatim reply; on failure argv is None and error a
+    human-readable reason (no provider, transport error, no command in
+    the reply, quote error, or the gate's verdict) — the first pass's
+    'unsupported' stands and the reason is surfaced to the user."""
     try:
         llm = get_adapter("llm")
     except AdapterError:
-        return None
-    instr = _retry_instruction(instruction, assets, output_filename)
+        return None, None, "no LLM provider configured"
+    query = _retry_instruction(instruction, assets, output_filename)
+    if evidence_block:
+        query = query + "\n\n" + evidence_block
+    system = ("You generate FFmpeg commands. Answer with the ffmpeg "
+              "command only — no explanations, no markdown.")
     try:
-        if evidence_block:
-            return llm.parse(instr, assets, previous_plan, media,
-                             evidence=evidence_block)
-        return llm.parse(instr, assets, previous_plan, media)
-    except Exception:  # noqa: BLE001 — a failed retry keeps the first pass
-        return None
+        raw = (llm._chat_openai(system, query)
+               if llm.provider == "openai"
+               else llm._chat_anthropic(system, query))
+    except Exception as e:  # noqa: BLE001 — surfaced as the retry's error
+        return None, None, f"LLM call failed: {e}"
+    command = _extract_ffmpeg_command(raw)
+    if command is None:
+        return None, raw, ("the reply contains no ffmpeg command — see "
+                           "the raw LLM output")
+    try:
+        argv = shlex.split(command, posix=True)
+    except ValueError as e:
+        return None, raw, f"the command has unbalanced quotes: {e}"
+    problems = validate_argv(argv)
+    if problems:
+        return None, raw, "the command failed validation: " + "; ".join(problems)
+    return argv, raw, None
 
 
 def generate(
@@ -475,31 +526,53 @@ def generate(
         resp.raw_llm = getattr(e, "raw_output", None)
         return resp
 
-    # Second try: an 'unsupported' first pass is not final — the rules (or
-    # the model's first read) can be too shallow for a phrasing the LLM can
-    # still plan. One LLM pass with the prompt prefix and the full file
-    # paths; a READY retry plan flows through the same validation below.
-    # Any other outcome keeps the first pass as-is.
-    retry_used = False
+    # Second try (DIRECT): an 'unsupported' first pass is not final — the
+    # rules (or the model's first read) can be too shallow for a phrasing
+    # the LLM can still answer. The second approach asks the LLM directly
+    # for the ffmpeg command string (no EditPlan schema in the prompt, the
+    # same 'generate ffmpeg command for: … input1=… output=…' query) and
+    # runs the answer through the validate_argv gate the expert hand-edit
+    # goes through. On success a ready response is returned with the
+    # validated command; on any failure the first pass's 'unsupported'
+    # stands and the second try's own error is surfaced.
+    raw_override: str | None = None
     if result.status is ParseStatus.UNSUPPORTED:
-        retry = _llm_paths_retry(
-            instruction, assets, output_filename, previous_plan, media,
-            evidence_block)
-        if (retry is not None and retry.status is ParseStatus.READY
-                and retry.plan is not None):
-            result = retry
+        argv, second_raw, second_err = _llm_direct_command(
+            instruction, assets, output_filename, evidence_block)
+        if argv is not None:
+            resp.status = "ready"
             resp.adapter = "llm"
-            retry_used = True
+            resp.arguments = argv
+            resp.command = render_posix(argv)
+            resp.raw_llm = second_raw
+            resp.validation_level = "static"
+            resp.summary.append(
+                "direct ffmpeg command from the LLM's second approach — "
+                "the raw command string, validated by the same gate as "
+                "expert hand-edits")
+            resp.defaults.append(
+                "the first attempt (structured plan) found no supported "
+                "plan — the second approach asked the LLM directly for "
+                "the ffmpeg command string, with the file paths made "
+                "explicit, and it passed the command validation gate")
+            for aid in assets:
+                p = assets[aid].path
+                if (stream_scheme(p) is None and not is_source_spec(p)
+                        and not Path(resolve_input_name(p)).exists()):
+                    resp.warnings.append(
+                        f"input file '{aid}' was not found on this machine "
+                        "— the command references it exactly as given")
+            return resp
+        resp.errors.append(f"second LLM try failed: {second_err}")
+        if second_raw is not None:
+            # the second reply is what the user needs to see — it is what
+            # the second approach actually got from the model
+            raw_override = second_raw
 
-    resp.raw_llm = result.raw
+    resp.raw_llm = raw_override or result.raw
     resp.clarifications = [c.model_dump() for c in result.clarifications]
     resp.unsupported = [u.model_dump() for u in result.unsupported]
     resp.defaults.extend(result.defaults)
-    if retry_used:
-        resp.defaults.append(
-            "the first pass found no supported plan — this plan came from a "
-            "second LLM pass over the instruction with the file paths "
-            "made explicit")
 
     if result.status is not ParseStatus.READY or result.plan is None:
         resp.status = result.status.value
