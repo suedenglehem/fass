@@ -21,8 +21,12 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   i7 REDEPLOYED + live-verified: the user's exact instruction returns
   ready/preflight with -c:v copy -c:a aac -b:a 180k; second audio
   track (audio_add) + one second LLM try on unsupported COMMITTED
-  d1c41d0 + bump 0f32519 (v1.137036.d1c41d0), LOCAL — not yet
-  pushed/deployed, suite 1627 passed / 2 skipped)):**
+  d1c41d0 + bump 0f32519, PUSHED (d79c56b..b9184d2) + i7 DEPLOYED +
+  live-verified v1.137036.d1c41d0 — the user's exact instruction
+  (rules pass: unsupported) reached the SECOND LLM TRY and came back
+  ready/preflight: -i titan.ts -i titan.mp4 -map 0:v:0 -map '0:a?'
+  -map 1:a:0 -c:v copy -c:a copy, no -shortest; suite 1627 passed /
+  2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -182,8 +186,8 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   unharmed (fass-http pre-existing Exited(127) ignored). (5)
   **Second audio track (audio_add) + one second LLM try on
   unsupported — IMPLEMENTED + COMMITTED `d1c41d0` (14 files,
-  +722/−19) + version bump `0f32519` (v1.137036.d1c41d0; LOCAL,
-  NOT yet pushed/deployed):** the user's remux — "copy audio and
+  +722/−19) + version bump `0f32519` (v1.137036.d1c41d0); PUSHED
+  (d79c56b..b9184d2) + i7 DEPLOYED + live-verified:** the user's remux — "copy audio and
   video tracks from the first video, add the audio track of the
   second video as a second audio track" → `ffmpeg -i A -i B -map
   0:v:0 -map '0:a?' -map 1:a:0 -c:v copy -c:a copy` (NO -shortest —
@@ -225,8 +229,25 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   + points FASS_CONFIG at an empty `{}` (the tr4 shell carries a real
   ANTHROPIC_API_KEY — without the fixture the retry would reach the
   real provider). **Full suite: 1627 passed / 2 skipped / 0 failed
-  (143.76 s).** Next: push + i7 deploy + live-verify with the
-  user's exact instruction — on explicit green light only.
+  (143.76 s).** PUSHED (d79c56b..b9184d2) + i7 DEPLOYED + live-verified
+  (2026-10-30, user-authorized "push and deploy to i7, i will test
+  it"): i7 ff-merge da6eeed→b9184d2 (compose opt-in + ffprobe patch
+  verified intact), rebuild + force-recreate; live-verified from i7 —
+  healthz ok, /v1/env = v1.137036.d1c41d0, the user's EXACT
+  instruction ("copy audo and video tracks from second video, add
+  audio track from first video as second audio track" — the "audo"
+  typo + inverted first/second defeats the rules pass → unsupported)
+  on titan.mp4 + titan.ts (deca3.mov absent on i7) → the SECOND LLM
+  TRY fired (qwen3.8-27b @ 172.17.0.1:8080) and returned
+  ready/preflight with input_id="second" + audio_add("main") — the
+  LLM honored the inverted wording: `ffmpeg -hide_banner -loglevel
+  error -i titan.ts -i titan.mp4 -map 0:v:0 -map '0:a?' -map 1:a:0
+  -c:v copy -c:a copy -movflags +faststart test_1lm_2.mp4` (no
+  -shortest); fass-worker / fass-rag unharmed, LLM 8080 → 200.
+  **Next: the user is browser-testing. Carry-forward (user's call,
+  not started): multi-input + blackdetect RAG E2E; optional
+  docs/DEVELOPMENT.md codec list; OPEN NLU issue — CLI concat "…48kbps
+  aac audio" emitted -b:a 160k not 48k.**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
