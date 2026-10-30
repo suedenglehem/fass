@@ -450,7 +450,8 @@ def test_ui_mediainfo_button_independent_of_instruction():
 
 
 def test_ui_command_tab_clear_button():
-    # the button row is Generate | Save | Mediainfo | Clear; Clear resets the
+    # the button row is Generate | Save | Enter | Mediainfo | Clear; Clear
+    # resets the
     # whole FFmpeg pane: every field, the option checkboxes, the adapter, the
     # extra inputs, the result area, and the derived states (the compare
     # labels and the button row — every field empty → all disabled again)
@@ -458,6 +459,8 @@ def test_ui_command_tab_clear_button():
     cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
     assert 'id="genbtn"' in cmd_pane and 'id="mi-btn"' in cmd_pane and 'id="clearbtn"' in cmd_pane
     assert cmd_pane.index('id="genbtn"') < cmd_pane.index('id="mi-btn"') < cmd_pane.index('id="clearbtn"')
+    # Enter sits between Save and Mediainfo
+    assert cmd_pane.index('id="savebtn"') < cmd_pane.index('id="enterbtn"') < cmd_pane.index('id="mi-btn"')
     assert 'onclick="clearCmdPane()"' in cmd_pane
     assert "function clearCmdPane()" in html
     for needle in ("$('instr').value = ''", "$('inp').value = ''",
@@ -480,6 +483,7 @@ def test_ui_ffmpeg_button_row_follows_the_fields():
     html = client.get("/").text
     # the row starts disabled on a fresh pane
     for needle in ('<button type="submit" id="genbtn" disabled>',
+                   'id="enterbtn" disabled onclick="enterCmd()"',
                    'id="mi-btn" disabled onclick="runMediaInfo()"',
                    'id="clearbtn" class="ghost" disabled onclick="clearCmdPane()"'):
         assert needle in html
@@ -487,6 +491,9 @@ def test_ui_ffmpeg_button_row_follows_the_fields():
     assert "const instr = $('instr').value.trim()" in html
     assert "const inp = $('inp').value.trim()" in html
     assert "$('genbtn').disabled = !(instr && inp)" in html
+    # Enter needs only a file — it skips the instruction entirely (that is
+    # its point: a power user writes the command themselves)
+    assert "$('enterbtn').disabled = !inp" in html
     assert "$('mi-btn').disabled = !inp || instr !== ''" in html
     assert "$('clearbtn').disabled = !any" in html
     # re-gated on every keystroke: instr (with the compare labels), inp,
@@ -514,6 +521,46 @@ def test_ui_ffmpeg_button_row_follows_the_fields():
     ts_body = html.split("if (tool === 'tsanalyze') {")[1].split("\n  }")[0]
     assert "$('mi-file').value = name;" in ts_body
     assert "miButtons();" in ts_body
+
+
+def test_ui_enter_button_manual_skeleton():
+    # the Enter button (between Save and Mediainfo) is for people who write
+    # ffmpeg commands themselves: it skips the NLU/LLM entirely and prefills
+    # the editable command line as a skeleton — `ffmpeg -i <in1> [-i <in2> …]
+    # -o <out>` — from the form fields, rendered as a synthetic ready
+    # response (no server call).
+    html = client.get("/").text
+    cmd_pane = html.split('<div id="pane-cmd">')[1].split('<div id="pane-runs"')[0]
+    # the button, with its power-user title, between Save and Mediainfo
+    assert ('id="enterbtn" disabled onclick="enterCmd()" '
+            'title="Skip the NLU/LLM') in cmd_pane
+    assert cmd_pane.index('id="savebtn"') < cmd_pane.index('id="enterbtn"') < cmd_pane.index('id="mi-btn"')
+    assert "function enterCmd()" in html and "function enterPath(" in html
+    # no server call anywhere in the two functions — the LLM part is skipped
+    for fn in ("function enterPath(v, isOut)", "function enterCmd()"):
+        body = html.split(fn)[1].split("\n}")[0]
+        assert "fetch(" not in body
+    # prefix rules: a value that already starts with / (chained
+    # /input/step1.mp4) or a :// URL (rtmp://, rtsp://, srt://, udp://) is
+    # used as-is; a bare filename gets /input/ (inputs) or /output/ (output)
+    path_body = html.split("function enterPath(v, isOut)")[1].split("\n}")[0]
+    assert "s.startsWith('/') || s.includes('://')" in path_body
+    assert "(isOut ? '/output/' : '/input/') + s" in path_body
+    # the skeleton body: the Input field's multi `-i` split (mainInputs),
+    # the extra-input rows, the watermark as the last -i, and the output
+    cmd_body = html.split("function enterCmd() {")[1].split("\n}")[0]
+    assert "mainInputs($('inp').value)" in cmd_body
+    assert "document.querySelectorAll('.extra-inp')" in cmd_body
+    assert "const wm = $('wm').value.trim()" in cmd_body
+    assert "argv.push('-o', out)" in cmd_body
+    # it synthesizes a ready render — the skeleton argv IS the arguments, so
+    # an unedited Run now executes the bare remux, and an edited line goes
+    # through the same server-side revalidation as any generated command
+    assert "status: 'ready'" in cmd_body
+    assert "command: argv.join(' ')" in cmd_body
+    assert "arguments: argv" in cmd_body
+    assert "validation_level: 'manual'" in cmd_body
+    assert "$('cmd').focus()" in cmd_body
 
 
 def test_ui_run_now_restores_after_every_outcome():

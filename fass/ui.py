@@ -235,6 +235,7 @@ a { color: var(--accent); }
     <div class="row" style="align-items:center">
       <button type="submit" id="genbtn" disabled>Generate</button>
       <button type="button" id="savebtn" class="ghost" disabled onclick="savePreset()" title="Freeze this generation as a preset (find it back under Info / Log → presets)">Save</button>
+      <button type="button" id="enterbtn" disabled onclick="enterCmd()" title="Skip the NLU/LLM — prefill the command line as an editable skeleton from the Input and Output fields (ffmpeg -i … -o …), for people who write the ffmpeg command themselves">Enter</button>
       <button type="button" id="mi-btn" disabled onclick="runMediaInfo()">Mediainfo</button>
       <button type="button" id="clearbtn" class="ghost" disabled onclick="clearCmdPane()">Clear</button>
       <span id="save-status" class="note"></span>
@@ -579,14 +580,16 @@ function setCompareMode() {
 function cmdButtons() {
   // the FFmpeg pane's button row follows its fields, like the Info/Log row:
   // nothing entered → nothing can work, so on a fresh pane (and after Clear)
-  // the row is disabled. Generate needs both required fields; Mediainfo a
-  // file AND an empty Instruction (it is a peek that ignores the
+  // the row is disabled. Generate needs both required fields; Enter only a
+  // file (it skips the instruction entirely — that is its point); Mediainfo
+  // a file AND an empty Instruction (it is a peek that ignores the
   // instruction, so a real command is never silently replaced by a
   // report); Clear needs something to clear. Save stays gated on lastReady
   // (a ready render), which render() and clearCmdPane() manage.
   const instr = $('instr').value.trim();
   const inp = $('inp').value.trim();
   $('genbtn').disabled = !(instr && inp);
+  $('enterbtn').disabled = !inp;
   $('mi-btn').disabled = !inp || instr !== '';
   const any = instr || inp || $('out').value.trim() || $('wm').value.trim() ||
     Array.from(document.querySelectorAll('.extra-inp')).some(i => i.value.trim());
@@ -911,6 +914,54 @@ function clearCmdPane() {
   // the compare labels and the button row (every field empty → all disabled)
   setCompareMode();
   cmdButtons();
+}
+/* the Enter button (power users): skip the NLU/LLM entirely and prefill the
+   command line as an editable skeleton — `ffmpeg -i <in1> [-i <in2> …]
+   -o <out>` — from the form: the Input video field (its multi `-i` split,
+   so a "concatenate two files" field yields two `-i`), the extra-input
+   rows, and the watermark image when set; the output from the Output field.
+   Bare filenames are prefixed with the deployment's folders
+   (/input/<name> for inputs, /output/<name> for the output); a value that
+   already starts with / (chained /input/step1.mp4) or a :// URL (rtmp://,
+   rtsp://, srt://, udp://, …) is used as-is. The skeleton is rendered as a
+   synthetic ready response (NO server call — that is what skips the LLM
+   part), so the line lands in the editable textarea and Runs exactly like
+   any generated command: unedited, the skeleton argv executes as a bare
+   remux; edited, it goes through the same server-side revalidation. */
+function enterPath(v, isOut) {
+  const s = v.trim();
+  if (!s) return '';
+  if (s.startsWith('/') || s.includes('://')) return s;
+  return (isOut ? '/output/' : '/input/') + s;
+}
+function enterCmd() {
+  const mainParts = mainInputs($('inp').value);
+  const ins = (mainParts.length ? mainParts : [$('inp').value.trim()]).filter(Boolean);
+  document.querySelectorAll('.extra-inp').forEach(i => {
+    const v = i.value.trim();
+    if (v) ins.push(v);
+  });
+  const wm = $('wm').value.trim();
+  if (wm) ins.push(wm);
+  const argv = ['ffmpeg'];
+  for (const p of ins) argv.push('-i', enterPath(p, false));
+  const out = enterPath($('out').value, true);
+  if (out) argv.push('-o', out);
+  $('res').hidden = false;
+  render({
+    status: 'ready',
+    command: argv.join(' '),
+    arguments: argv,
+    summary: ['Manual command (Enter): the NLU/LLM part was skipped — this is a skeleton prefilled from the Input and Output fields. Edit the line, then ▶ Run now.'],
+    defaults: ['Paths: bare filenames became /input/<name> (inputs) and /output/<name> (output); values starting with / or a :// URL were kept as-is.' +
+      (wm ? ' The watermark image is included as the last -i.' : '')],
+    warnings: [],
+    validation_level: 'manual',
+    checks: [],
+    evidence: null,
+    raw_llm: null,
+  });
+  $('cmd').focus();
 }
 
 /* ------------------------------------------------------------ runs tab */
