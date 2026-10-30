@@ -407,8 +407,13 @@ def _extract_ffmpeg_command(text: str) -> str | None:
 def _llm_direct_command(instruction: str, assets: AssetMap,
                         output_filename: str | None,
                         evidence_block: str | None) -> tuple:
-    """The second approach for an 'unsupported' first pass: one DIRECT
-    call to the LLM for a raw ffmpeg command string.
+    """The second approach when the first pass fails: one DIRECT call to
+    the LLM for a raw ffmpeg command string.
+
+    Fires on all three 'the model failed on the schema path' outcomes —
+    an 'unsupported' first pass, a parser error (the reply is not a valid
+    plan), and a plan the planner rejected — which is exactly the class
+    the direct approach exists to resolve.
 
     Same query as _retry_instruction ('generate ffmpeg command for: …
     input1=…, input2=…, output=…'), but the prompt carries NO EditPlan
@@ -420,7 +425,7 @@ def _llm_direct_command(instruction: str, assets: AssetMap,
     and raw the verbatim reply; on failure argv is None and error a
     human-readable reason (no provider, transport error, no command in
     the reply, quote error, or the gate's verdict) — the first pass's
-    'unsupported' stands and the reason is surfaced to the user."""
+    verdict stands and the reason is surfaced to the user."""
     try:
         llm = get_adapter("llm")
     except AdapterError:
@@ -448,6 +453,42 @@ def _llm_direct_command(instruction: str, assets: AssetMap,
     if problems:
         return None, raw, "the command failed validation: " + "; ".join(problems)
     return argv, raw, None
+
+
+def _direct_ready_response(
+    resp: GenerationResponse,
+    argv: list[str],
+    second_raw: str | None,
+    assets: AssetMap,
+    first_note: str,
+) -> GenerationResponse:
+    """Fill resp with the direct second try's success (one shape, three
+    triggers). ``first_note`` is the defaults note's first clause — WHY the
+    first attempt failed ('found no supported plan', 'failed to produce a
+    valid plan', 'was rejected by the planner'); the second clause, about
+    the second approach, is identical for all of them."""
+    resp.status = "ready"
+    resp.adapter = "llm"
+    resp.arguments = argv
+    resp.command = render_posix(argv)
+    resp.raw_llm = second_raw
+    resp.validation_level = "static"
+    resp.summary.append(
+        "direct ffmpeg command from the LLM's second approach — "
+        "the raw command string, validated by the same gate as "
+        "expert hand-edits")
+    resp.defaults.append(
+        f"{first_note} — the second approach asked the LLM directly "
+        "for the ffmpeg command string, with the file paths made "
+        "explicit, and it passed the command validation gate")
+    for aid in assets:
+        p = assets[aid].path
+        if (stream_scheme(p) is None and not is_source_spec(p)
+                and not Path(resolve_input_name(p)).exists()):
+            resp.warnings.append(
+                f"input file '{aid}' was not found on this machine "
+                "— the command references it exactly as given")
+    return resp
 
 
 def generate(
@@ -524,6 +565,19 @@ def generate(
         # verbatim reply to the error — a broken plan is exactly when the
         # user wants to see what the model actually returned
         resp.raw_llm = getattr(e, "raw_output", None)
+        # The reply never became a plan — the model failed on the schema
+        # path, which is what the direct second try exists to resolve.
+        # Rules never raise here (deterministic), so LLM-adapter only.
+        if adapter.name == "llm":
+            argv, second_raw, second_err = _llm_direct_command(
+                instruction, assets, output_filename, evidence_block)
+            if argv is not None:
+                return _direct_ready_response(
+                    resp, argv, second_raw, assets,
+                    "the first attempt failed to produce a valid plan")
+            resp.errors.append(f"second LLM try failed: {second_err}")
+            if second_raw is not None:
+                resp.raw_llm = second_raw
         return resp
 
     # Second try (DIRECT): an 'unsupported' first pass is not final — the
@@ -533,36 +587,16 @@ def generate(
     # same 'generate ffmpeg command for: … input1=… output=…' query) and
     # runs the answer through the validate_argv gate the expert hand-edit
     # goes through. On success a ready response is returned with the
-    # validated command; on any failure the first pass's 'unsupported'
-    # stands and the second try's own error is surfaced.
+    # validated command; on any failure the first pass's verdict stands
+    # and the second try's own error is surfaced.
     raw_override: str | None = None
     if result.status is ParseStatus.UNSUPPORTED:
         argv, second_raw, second_err = _llm_direct_command(
             instruction, assets, output_filename, evidence_block)
         if argv is not None:
-            resp.status = "ready"
-            resp.adapter = "llm"
-            resp.arguments = argv
-            resp.command = render_posix(argv)
-            resp.raw_llm = second_raw
-            resp.validation_level = "static"
-            resp.summary.append(
-                "direct ffmpeg command from the LLM's second approach — "
-                "the raw command string, validated by the same gate as "
-                "expert hand-edits")
-            resp.defaults.append(
-                "the first attempt (structured plan) found no supported "
-                "plan — the second approach asked the LLM directly for "
-                "the ffmpeg command string, with the file paths made "
-                "explicit, and it passed the command validation gate")
-            for aid in assets:
-                p = assets[aid].path
-                if (stream_scheme(p) is None and not is_source_spec(p)
-                        and not Path(resolve_input_name(p)).exists()):
-                    resp.warnings.append(
-                        f"input file '{aid}' was not found on this machine "
-                        "— the command references it exactly as given")
-            return resp
+            return _direct_ready_response(
+                resp, argv, second_raw, assets,
+                "the first attempt (structured plan) found no supported plan")
         resp.errors.append(f"second LLM try failed: {second_err}")
         if second_raw is not None:
             # the second reply is what the user needs to see — it is what
@@ -612,6 +646,22 @@ def generate(
     except PlanError as e:
         resp.status = "error"
         resp.errors = list(e.errors)
+        # The model's plan said something the registry doesn't allow (an
+        # audio-replacement asset that is a video, …) — it failed on the
+        # schema path and the direct second try can still return the
+        # right command. A rules-built plan being rejected is a
+        # deterministic semantic conflict the model can't fix, so this
+        # retry is LLM-adapter only.
+        if adapter.name == "llm":
+            argv, second_raw, second_err = _llm_direct_command(
+                instruction, assets, output_filename, evidence_block)
+            if argv is not None:
+                return _direct_ready_response(
+                    resp, argv, second_raw, assets,
+                    "the first attempt's plan was rejected by the planner")
+            resp.errors.append(f"second LLM try failed: {second_err}")
+            if second_raw is not None:
+                resp.raw_llm = second_raw
         return resp
 
     if verbose:

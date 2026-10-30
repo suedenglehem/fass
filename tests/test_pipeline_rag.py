@@ -12,6 +12,7 @@ from fass.rag.client import RagSearchResult
 from fass.schema import (
     Asset,
     AssetKind,
+    AudioReplaceOp,
     EditPlan,
     FilterOp,
     OutputSpec,
@@ -376,6 +377,170 @@ def test_unsupported_no_llm_configured_first_pass_stands(monkeypatch):
     assert resp.command is None
     assert len(resp.errors) == 1
     assert "no LLM provider configured" in resp.errors[0]
+
+
+# ------------------------------------------------- second try on parser /
+# planner failure
+# The direct second try is not limited to 'unsupported': a first pass that
+# never becomes a plan (parser error) or a plan the PLANNER rejects (an
+# audio-replacement op over a video asset — the bug the user actually hit)
+# is the same 'the model failed on the schema path' class. The retry fires
+# for those too — but only when the first pass ran on the LLM adapter; a
+# rules-built plan being rejected is a deterministic conflict, not a model
+# miss.
+
+class FakeSchemaLLM:
+    """The LLM adapter as both paths see it: parse() for the first pass
+    (returns the given ParseResult, or raises the given Exception) and
+    _chat_openai() for the direct second try."""
+    name = "llm"
+    provider = "openai"
+    model = "fake"
+
+    def __init__(self, parse_result, direct_reply):
+        self.parse_result = parse_result
+        self.direct_reply = direct_reply
+        self.queries = []
+
+    def available(self):
+        return True
+
+    def parse(self, instruction, assets, previous_plan, media, evidence=None):
+        if isinstance(self.parse_result, Exception):
+            raise self.parse_result
+        return self.parse_result
+
+    def _chat_openai(self, system, user):
+        self.queries.append({"system": system, "user": user})
+        if isinstance(self.direct_reply, Exception):
+            raise self.direct_reply
+        return self.direct_reply
+
+
+def _bad_edit():
+    """The plan shape from the bug report: an audio-replacement op whose
+    asset is a VIDEO — exactly what the planner rejects with 'is not an
+    audio file'."""
+    return EditPlan(
+        output=OutputSpec(container="mp4", video_codec="h264"),
+        operations=[AudioReplaceOp(asset_id="in1")],
+    )
+
+
+def _video_assets():
+    return {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+            "in1": Asset(path="in1.mp4", kind=AssetKind.VIDEO)}
+
+
+def _patch_retry_ext(monkeypatch, first_adapter, llm_for_retry):
+    """First pass on first_adapter; get_adapter('llm') (the direct second
+    try) returns llm_for_retry or raises AdapterError. Returns the list of
+    adapter names the pipeline requested — 'llm' must be absent when no
+    retry is allowed."""
+    requested = []
+
+    def fake_get_adapter(name="auto"):
+        requested.append(name)
+        if name == "llm":
+            if llm_for_retry is None:
+                raise AdapterError("no LLM provider configured")
+            return llm_for_retry
+        return first_adapter
+
+    monkeypatch.setattr(pipe, "get_adapter", fake_get_adapter)
+    monkeypatch.setattr(pipe, "resolved_rag",
+                        lambda: RagConfig(enabled=False))
+    monkeypatch.setattr(pipe, "_input_dir", lambda: "/input")
+    monkeypatch.setattr(pipe, "_output_dir", lambda: "/output")
+    return requested
+
+
+def test_plan_rejected_direct_command_ready(monkeypatch):
+    first = FakeSchemaLLM(
+        ParseResult(status=ParseStatus.READY, plan=_bad_edit()),
+        RETRY_REPLY)
+    _patch_retry_ext(monkeypatch, first, first)
+    resp = generate("replace the audio with in1.mp4", _video_assets(),
+                    output_filename="out.mp4", adapter_name="auto")
+    assert resp.status == "ready"
+    assert resp.adapter == "llm"
+    assert resp.arguments == RETRY_ARGV
+    assert resp.command == pipe.render_posix(RETRY_ARGV)
+    assert resp.raw_llm == RETRY_REPLY
+    assert resp.validation_level == "static"
+    # the response logs that the first attempt's plan was rejected and
+    # the second approach was used
+    note = [d for d in resp.defaults
+            if "first attempt" in d and "second approach" in d
+            and "rejected by the planner" in d]
+    assert len(note) == 1
+    # one direct call, the same query as the 'unsupported' retry
+    assert len(first.queries) == 1
+    assert first.queries[0]["user"] == (
+        "generate ffmpeg command for: replace the audio with in1.mp4. "
+        "input1=/input/clip.mp4, input2=/input/in1.mp4, "
+        "output=/output/out.mp4")
+
+
+def test_plan_rejected_direct_fails_planner_error_stands(monkeypatch):
+    first = FakeSchemaLLM(
+        ParseResult(status=ParseStatus.READY, plan=_bad_edit()),
+        "I'm sorry, I can't help with that request.")
+    _patch_retry_ext(monkeypatch, first, first)
+    resp = generate("replace the audio with in1.mp4", _video_assets(),
+                    adapter_name="auto")
+    assert resp.status == "error"
+    assert resp.arguments is None
+    # the planner's own error leads, the second try's own error follows
+    assert len(resp.errors) == 2
+    assert "is not an audio file" in resp.errors[0]
+    assert "second LLM try failed" in resp.errors[1]
+    assert "no ffmpeg command" in resp.errors[1]
+    # the verbatim second reply is what the user sees
+    assert resp.raw_llm == "I'm sorry, I can't help with that request."
+
+
+def test_rules_plan_rejected_no_second_try(monkeypatch):
+    rules = FakeRulesAdapter(
+        ParseResult(status=ParseStatus.READY, plan=_bad_edit()))
+    requested = _patch_retry_ext(monkeypatch, rules, None)
+    resp = generate("replace the audio with in1.mp4", _video_assets(),
+                    adapter_name="auto")
+    assert resp.status == "error"
+    assert resp.adapter == "rules"
+    # the planner error stands alone — no LLM was ever asked
+    assert len(resp.errors) == 1
+    assert "is not an audio file" in resp.errors[0]
+    assert "llm" not in requested
+
+
+def test_parser_error_direct_command_ready(monkeypatch):
+    first = FakeSchemaLLM(ValueError("LLM reply is not a valid EditPlan"),
+                          RETRY_REPLY)
+    _patch_retry_ext(monkeypatch, first, first)
+    resp = generate("replace the audio with in1.mp4", _video_assets(),
+                    output_filename="out.mp4", adapter_name="auto")
+    assert resp.status == "ready"
+    assert resp.arguments == RETRY_ARGV
+    assert resp.validation_level == "static"
+    note = [d for d in resp.defaults
+            if "first attempt" in d and "second approach" in d
+            and "failed to produce a valid plan" in d]
+    assert len(note) == 1
+
+
+def test_parser_error_direct_fails_parser_error_stands(monkeypatch):
+    first = FakeSchemaLLM(ValueError("LLM reply is not a valid EditPlan"),
+                          "I can't do that.")
+    _patch_retry_ext(monkeypatch, first, first)
+    resp = generate("replace the audio with in1.mp4", _video_assets(),
+                    adapter_name="auto")
+    assert resp.status == "error"
+    assert len(resp.errors) == 2
+    assert resp.errors[0].startswith("parser error: ")
+    assert "not a valid EditPlan" in resp.errors[0]
+    assert "second LLM try failed" in resp.errors[1]
+    assert resp.raw_llm == "I can't do that."
 
 
 # ------------------------------------------------- command extraction
