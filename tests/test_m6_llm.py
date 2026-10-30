@@ -30,9 +30,11 @@ class _Resp:
         return False
 
 
-def _adapter(api_key: str | None = None, timeout: float = 90.0) -> LLMAdapter:
+def _adapter(api_key: str | None = None, timeout: float = 90.0,
+             thinking: bool | None = None) -> LLMAdapter:
     return LLMAdapter(api_key=api_key, model="qwen3.8-27b", timeout=timeout,
-                      provider="openai", host="127.0.0.1", port=8080)
+                      provider="openai", host="127.0.0.1", port=8080,
+                      thinking=thinking)
 
 
 def _ok_payload(content="ok"):
@@ -264,3 +266,92 @@ def test_parse_schema_failure_carries_the_verbatim_output(monkeypatch):
         _adapter().parse(
             "x", {"main": Asset(path="clip.mp4", kind=guess_kind("clip.mp4"))})
     assert ei.value.raw_output == garbage
+
+
+# -------------------------------------------------------- thinking mode
+
+
+def test_thinking_defaults_off(monkeypatch):
+    monkeypatch.delenv("FASS_LLM_THINKING", raising=False)
+    assert _adapter().thinking is False
+    # explicit opt-in via the constructor or the env fallback
+    assert _adapter(thinking=True).thinking is True
+    monkeypatch.setenv("FASS_LLM_THINKING", "1")
+    assert _adapter().thinking is True
+
+
+def test_openai_request_pins_thinking_off_by_default(monkeypatch):
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(json.loads(req.data))
+        return _Resp(_ok_payload())
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    assert _adapter()._chat_openai("s", "u") == "ok"
+    assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_openai_request_pins_thinking_on_when_enabled(monkeypatch):
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(json.loads(req.data))
+        return _Resp(_ok_payload())
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    _adapter(thinking=True)._chat_openai("s", "u")
+    assert calls[0]["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+def test_chat_template_kwargs_rejection_self_heals(monkeypatch):
+    # a strict OpenAI-compatible endpoint rejects the kwarg (HTTP 400):
+    # one retry without it, and the latch keeps it off for the adapter
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(json.loads(req.data))
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                req.full_url, 400, "bad request", {},
+                io.BytesIO(b"Unexpected value for 'chat_template_kwargs'"))
+        return _Resp(_ok_payload())
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    a = _adapter(thinking=True)
+    assert a._chat_openai("s", "u") == "ok"
+    assert "chat_template_kwargs" in calls[0]      # first request carries it
+    assert "chat_template_kwargs" not in calls[1]  # retry after the 400
+    assert a._chat_openai("s", "u") == "ok"
+    assert "chat_template_kwargs" not in calls[2]  # latched: skipped entirely
+    assert len(calls) == 3
+
+
+def test_unrelated_http_400_does_not_latch(monkeypatch):
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(json.loads(req.data))
+        raise urllib.error.HTTPError(
+            req.full_url, 400, "bad request", {},
+            io.BytesIO(b"model 'nope' not found"))
+
+    monkeypatch.setattr(llm_mod.urllib.request, "urlopen", fake)
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        _adapter()._chat_openai("s", "u")
+    assert len(calls) == 1  # the 400 is re-raised, not retried
+
+
+def test_adapter_from_config_thinking(tmp_path, monkeypatch):
+    _cfg_file(tmp_path, monkeypatch,
+              {"provider": "openai", "host": "172.17.0.1", "port": 8080,
+               "model": "qwen3.8-27b", "thinking": True})
+    assert _llm_from_config().thinking is True
+
+
+def test_adapter_from_config_thinking_default(tmp_path, monkeypatch):
+    # an older config.json without the key: thinking stays off
+    _cfg_file(tmp_path, monkeypatch,
+              {"provider": "openai", "host": "172.17.0.1", "port": 8080,
+               "model": "qwen3.8-27b"})
+    assert _llm_from_config().thinking is False

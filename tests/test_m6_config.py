@@ -127,6 +127,27 @@ def test_llm_timeout_roundtrip(tmp_path, monkeypatch):
     assert load_config().llm.timeout == 42
 
 
+# --------------------------------------------------------- llm thinking mode
+
+
+def test_llm_thinking_defaults_off():
+    # the reasoning trace is pure overhead for the structured JSON output
+    # (and can exhaust max_tokens) — off unless the user opts in
+    assert LLMConfig().thinking is False
+    assert FassConfig().llm.thinking is False
+
+
+def test_llm_thinking_roundtrip(tmp_path, monkeypatch):
+    p = tmp_path / "config.json"
+    monkeypatch.setenv("FASS_CONFIG", str(p))
+    cfg = FassConfig(llm=LLMConfig(provider="openai", host="172.17.0.1",
+                                   port=8080, model="m", thinking=True))
+    save_config(cfg)
+    assert json.loads(p.read_text())["llm"]["thinking"] is True
+    assert load_config() == cfg
+    assert load_config().llm.thinking is True
+
+
 def test_llm_timeout_absent_in_an_older_config(tmp_path, monkeypatch):
     # a config.json seeded before the timeout existed keeps loading, and the
     # field takes its default (90 s)

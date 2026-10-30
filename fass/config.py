@@ -54,6 +54,15 @@ class LLMConfig(BaseModel):
                     "90 matches LLMAdapter's own default — local models on a "
                     "full fass prompt (50 KB+) can need 10–30 s per request",
     )
+    thinking: bool = Field(
+        default=False,
+        description="openai provider: the model's thinking/reasoning mode "
+                    "(chat_template_kwargs enable_thinking — Qwen3 / strata / "
+                    "vLLM). OFF by default: for structured JSON output the "
+                    "reasoning trace is pure overhead and can exhaust "
+                    "max_tokens. Endpoints that reject the kwarg fall back "
+                    "automatically to a plain request.",
+    )
 
 
 class StreamPortMapping(BaseModel):

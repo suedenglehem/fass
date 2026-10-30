@@ -245,7 +245,8 @@ class LLMAdapter:
 
     def __init__(self, api_key: str | None = None, model: str | None = None,
                  timeout: float = 90.0, provider: str | None = None,
-                 host: str | None = None, port: int | None = None):
+                 host: str | None = None, port: int | None = None,
+                 thinking: bool | None = None):
         self.timeout = timeout
         self.provider = (provider or os.environ.get("FASS_LLM_PROVIDER", "anthropic")).lower()
         self.host = host or os.environ.get("FASS_LLM_HOST", "")
@@ -258,6 +259,16 @@ class LLMAdapter:
         else:
             self.model = model or os.environ.get("FASS_LLM_MODEL", DEFAULT_MODEL)
             self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        # Thinking mode (openai provider): OFF by default — for the structured
+        # JSON output the reasoning trace is pure overhead and can exhaust
+        # max_tokens. The env fallback mirrors the sibling FASS_LLM_* vars.
+        if thinking is None:
+            thinking = os.environ.get("FASS_LLM_THINKING", "0").lower() \
+                in ("1", "true", "on", "yes")
+        self.thinking = thinking
+        # Latched by _chat_openai when the endpoint rejects the
+        # chat_template_kwargs field (strict OpenAI-compatible servers).
+        self._no_template_kwargs = False
 
     def available(self) -> bool:
         if self.provider == "openai":
@@ -414,18 +425,32 @@ class LLMAdapter:
                     {"role": "user", "content": user},
                 ],
             }
-            req = urllib.request.Request(
-                url, data=json.dumps(body).encode("utf-8"),
-                headers=headers, method="POST",
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    payload = json.loads(resp.read().decode("utf-8"))
-            except urllib.error.HTTPError as e:
-                detail = e.read().decode("utf-8", "replace")[:400]
-                raise RuntimeError(f"LLM provider error (HTTP {e.code}): {detail}") from e
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise RuntimeError(f"LLM provider unreachable: {e}") from e
+            # Pin the chat template's thinking mode explicitly (Qwen3 /
+            # strata / vLLM) instead of trusting the server default.
+            if not self._no_template_kwargs:
+                body["chat_template_kwargs"] = {"enable_thinking": self.thinking}
+            payload = None
+            while True:
+                req = urllib.request.Request(
+                    url, data=json.dumps(body).encode("utf-8"),
+                    headers=headers, method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                        payload = json.loads(resp.read().decode("utf-8"))
+                    break
+                except urllib.error.HTTPError as e:
+                    detail = e.read().decode("utf-8", "replace")[:400]
+                    # Strict OpenAI-compatible endpoints reject the field:
+                    # drop it for this adapter's lifetime and retry once.
+                    if (e.code == 400 and "chat_template" in detail.lower()
+                            and not self._no_template_kwargs):
+                        self._no_template_kwargs = True
+                        body.pop("chat_template_kwargs", None)
+                        continue
+                    raise RuntimeError(f"LLM provider error (HTTP {e.code}): {detail}") from e
+                except (urllib.error.URLError, TimeoutError, OSError) as e:
+                    raise RuntimeError(f"LLM provider unreachable: {e}") from e
 
             choices = payload.get("choices") or [{}]
             choice = choices[0]

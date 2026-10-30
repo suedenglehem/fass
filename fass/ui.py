@@ -490,10 +490,15 @@ a { color: var(--accent); }
         <div><label>api key (anthropic / optional)</label><input id="l-key" type="password" placeholder="sk-… / blank"></div>
         <div><label>model</label><input id="l-model" placeholder="qwen3.8-27b"></div>
         <div><label>timeout (seconds)</label><input id="l-timeout" type="number" min="1" max="300" step="1" placeholder="90"></div>
+        <div><label class="check" style="margin:0"><input type="checkbox" id="l-thinking"> thinking mode
+          <span class="note">(openai provider — Qwen3 / strata / vLLM; off = no reasoning trace, faster JSON)</span></label></div>
       </div>
       <p class="note">timeout: seconds allowed for one LLM request (connect + read) — a hung
       endpoint returns an error instead of blocking the request. 1–300, default 90.
-      Local models on a full fass prompt can need 10–30 s per request.</p>
+      Local models on a full fass prompt can need 10–30 s per request.
+      thinking mode is off by default — for the structured JSON output the reasoning
+      trace is pure overhead (and can exhaust max_tokens); endpoints that reject the
+      chat-template kwarg fall back to a plain request automatically.</p>
       <button type="button" class="small ghost" style="margin-top:10px" onclick="llmTest(true)">test LLM (unsaved values)</button>
       <span id="llm-status"></span>
 
@@ -1625,6 +1630,7 @@ async function loadCfg() {
   $('l-key').value = cfg.llm.api_key;
   $('l-model').value = cfg.llm.model;
   $('l-timeout').value = cfg.llm.timeout || 90;
+  $('l-thinking').checked = !!cfg.llm.thinking;
   $('apply-btn').disabled = !data.docker.worker;
   const dockerNote = data.docker.manage
     ? `docker control: <span class="ok">available</span> (engine ${esc(data.docker.version || '?')}, container <span class="mono">${esc(data.docker.container || 'n/a')}</span>)`
@@ -1712,6 +1718,7 @@ function readCfg() {
       api_key: $('l-key').value,
       model: $('l-model').value.trim(),
       timeout: parseInt($('l-timeout').value, 10) || 10,
+      thinking: $('l-thinking').checked,
     },
   };
 }
