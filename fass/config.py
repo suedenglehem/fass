@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 CONFIG_ENV = "FASS_CONFIG"
 
@@ -113,12 +114,99 @@ class GPUConfig(BaseModel):
     )
 
 
+class RemoteVolumeConfig(BaseModel):
+    """Remote mapping for one of the three volumes (M12, Config -> Volumes).
+
+    ``type: "none"`` (the default) keeps the volume a plain local folder.
+    Otherwise the volume is associated with a remote store:
+    - input  mapped -> referenced files are downloaded from the remote
+      before they are probed/planned/run;
+    - output/log mapped -> created files are uploaded after the run.
+
+    The block is LIVE-read on every access (no Apply needed). Credentials
+    follow the LLMConfig.api_key precedent: plain fields, returned clear
+    by GET /v1/config, masked by the UI's password inputs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["none", "ftp", "sftp", "s3"] = Field(
+        default="none",
+        description="'none' = plain local folder; 'ftp'/'sftp'/'s3' = the "
+                    "volume is mapped to a remote store (see class docstring)",
+    )
+    host: str = Field(
+        default="", max_length=253,
+        description="server host (ftp/sftp); s3: the endpoint host of a "
+                    "MinIO/LocalStack/AWS-compatible service — BLANK = real "
+                    "AWS (uses region + keys), set it for MinIO/LocalStack",
+    )
+    port: int | None = Field(
+        default=None, ge=1, le=65535,
+        description="server port; null = protocol default (21 ftp, 22 sftp, "
+                    "443 s3)",
+    )
+    user: str = Field(
+        default="", max_length=256,
+        description="ftp/sftp user; s3: the access key id",
+    )
+    password: str = Field(
+        default="", max_length=1024,
+        description="ftp/sftp password; s3: the secret access key",
+    )
+    bucket: str = Field(
+        default="", max_length=256,
+        description="s3 only: the bucket the volume maps to",
+    )
+    path: str = Field(
+        default="", max_length=1024,
+        description="remote sub-directory (ftp/sftp) or object prefix (s3) "
+                    "inside the store; '' = the store's root",
+    )
+    region: str = Field(
+        default="", max_length=64,
+        description="s3 only: AWS region; '' = us-east-1 (MinIO/LocalStack "
+                    "accept any)",
+    )
+    secure: bool = Field(
+        default=False,
+        description="s3 only: https instead of http for the endpoint "
+                    "(MinIO/LocalStack on the docker host = http, real AWS "
+                    "ignores this)",
+    )
+    uuid_naming: bool = Field(
+        default=False,
+        description="s3 only: key objects by UUID and keep the real "
+                    "basename in the object's S3 metadata. input: the "
+                    "object whose metadata matches the requested name is "
+                    "downloaded (by its uuid) and saved under that name; "
+                    "output: the file is stored as a uuid (the name as-is "
+                    "when it already is one) with its basename in the "
+                    "metadata. Multi-file stream subtrees keep their names",
+    )
+
+
 class VolumesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: str = Field(default="", max_length=1024)
     output: str = Field(default="", max_length=1024)
     log: str = Field(default="", max_length=1024)
+    input_remote: RemoteVolumeConfig = Field(
+        default_factory=RemoteVolumeConfig,
+        description="remote mapping for the /input volume (download "
+                    "before use); type none = local folder only",
+    )
+    output_remote: RemoteVolumeConfig = Field(
+        default_factory=RemoteVolumeConfig,
+        description="remote mapping for the /output volume (upload after "
+                    "a successful run); type none = local folder only",
+    )
+    log_remote: RemoteVolumeConfig = Field(
+        default_factory=RemoteVolumeConfig,
+        description="remote mapping for the /log volume (upload run log + "
+                    "record after every run); type none = local folder only",
+    )
 
 
 class RagConfig(BaseModel):

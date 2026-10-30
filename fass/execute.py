@@ -47,6 +47,8 @@ from fass.registry import (
     stream_scheme,
 )
 
+from fass import remote
+
 ALLOW_EXECUTE_ENV = "FASS_ALLOW_EXECUTE"
 INPUT_DIR_ENV = "FASS_INPUT_DIR"
 OUTPUT_DIR_ENV = "FASS_OUTPUT_DIR"
@@ -418,16 +420,79 @@ def http_serve_dir(out_dir: str, dest: str, run_id: str) -> Path | None:
     return d
 
 
+# ------------------------------------------------- remote input volume (M12)
+
+_NEG_TTL = 30.0  # remember "not on the remote" this long (seconds)
+_ERR_TTL = 5.0   # remember "remote unreachable" this long (fast retry)
+_REMOTE_INPUT_CACHE: dict[str, float] = {}   # name -> expiry (monotonic)
+_REMOTE_INPUT_CACHE_LOCK = threading.Lock()
+_REMOTE_NAME_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _remote_name_lock(name: str) -> threading.Lock:
+    with _REMOTE_INPUT_CACHE_LOCK:
+        return _REMOTE_NAME_LOCKS.setdefault(name, threading.Lock())
+
+
+def ensure_input_local(name: str) -> Path | None:
+    """The local path of a bare input name, downloading it from the mapped
+    input remote first when it is missing locally (M12) — None when it is
+    nowhere.
+
+    Fail-open: a dead or broken remote never blocks resolution, it just
+    cannot make a missing file appear. The result is cached per process —
+    a cached 'absent' lasts _NEG_TTL, a cached 'remote error' only
+    _ERR_TTL — because this sits on the hot probe/plan path, and a
+    per-name lock prevents two threads downloading the same file."""
+    in_dir = _input_dir()
+    if not in_dir:
+        return None
+    p = Path(in_dir) / name
+    if p.is_file():
+        return p
+    now = time.monotonic()
+    with _REMOTE_INPUT_CACHE_LOCK:
+        exp = _REMOTE_INPUT_CACHE.get(name)
+        if exp is not None and exp > now:
+            return None
+    with _remote_name_lock(name):
+        if p.is_file():  # another thread already downloaded it
+            return p
+        try:
+            vol = remote.remote_for("input")
+            if vol is None:
+                return None
+            tmp = p.with_name(p.name + ".downloading")
+            try:
+                if vol.fetch(name, tmp):
+                    tmp.replace(p)
+                    return p if p.is_file() else None
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
+            with _REMOTE_INPUT_CACHE_LOCK:
+                _REMOTE_INPUT_CACHE[name] = time.monotonic() + _NEG_TTL
+            return None
+        except Exception:
+            # RemoteError (or anything else): the remote cannot be used
+            # right now — remember briefly, fail open
+            with _REMOTE_INPUT_CACHE_LOCK:
+                _REMOTE_INPUT_CACHE[name] = time.monotonic() + _ERR_TTL
+            return None
+
+
 def resolve_input_name(name: str) -> str:
     """Resolve a bare input filename against the deployment's input volume
     ($FASS_INPUT_DIR, or /input when it exists) — the same rule
     resolve_paths applies at run time, shared with the pipeline's
     inspection so a bare name that exists in the volume is probed and
-    not reported "not found". Stream URLs, source specs and non-bare
-    names pass through unchanged, as do bare names with no matching
-    file in the volume. A bare name that is not in the input volume but
-    exists in the output volume resolves there (a previous run's result —
-    the comparison convention: the distorted clip lives in /output)."""
+    not reported "not found". A mapped input remote counts: a bare name
+    that is on the remote is downloaded, then resolved (M12). Stream
+    URLs, source specs and non-bare names pass through unchanged, as do
+    bare names with no matching file in the volume or on the remote. A
+    bare name that is not in the input volume but exists in the output
+    volume resolves there (a previous run's result — the comparison
+    convention: the distorted clip lives in /output)."""
     in_dir = _input_dir()
     if (
         in_dir
@@ -435,9 +500,8 @@ def resolve_input_name(name: str) -> str:
         and not is_source_spec(name)
         and "/" not in name
     ):
-        joined = os.path.join(in_dir, name)
-        if os.path.exists(joined):
-            return joined
+        if ensure_input_local(name) is not None:
+            return os.path.join(in_dir, name)
     out_dir = _output_dir()
     if (
         out_dir
@@ -474,7 +538,7 @@ def resolve_paths(argv: list[str]) -> tuple[list[str], list[str]]:
                 and stream_scheme(path) is None
                 and not is_source_spec(path)
                 and "/" not in path
-                and os.path.exists(os.path.join(in_dir, path))
+                and ensure_input_local(path) is not None
             ):
                 out[i + 1] = os.path.join(in_dir, path)
                 bare_inputs[path] = os.path.join(in_dir, path)
@@ -992,6 +1056,121 @@ def _watch_sequence(run_id: str, steps: list[list[str]], cwd,
         with _LOCK:
             _ACTIVE.pop(run_id, None)
             _STOPPING.discard(run_id)
+        _sync_run_to_remote(run_id)
+
+
+# The container's /log mount: run records + logs land in /log/runs under
+# the docker layout (FASS_RUN_DIR unset -> run_dir() picks /log/runs).
+# The log-volume mirror uploads its paths relative to this root, so it
+# only fires on that layout.
+LOG_VOLUME_ROOT = "/log"
+
+
+def _sync_run_to_remote(run_id: str) -> None:
+    """M12: after a run finalizes, upload its artifacts to the mapped
+    remotes (called from the watcher's finally, in the watcher thread):
+
+    - output volume mapped: on SUCCESS only — the output file (or the
+      http/<id>/ subtree for an http-served run), plus the verbose log
+      when it lives in the output volume;
+    - log volume mapped: every finished status — runs/<id>.log and the
+      runs/<id>.json record, when run_dir() sits under /log (the docker
+      and dev-with-/log layouts).
+
+    Fail-open: any problem becomes a note on the run record, never an
+    exception — the run itself is already done."""
+    try:
+        rec = get_run(run_id)
+        if rec is None:
+            return
+        status = rec.get("status")
+        out_dir = _output_dir()
+        try:
+            out_vol = remote.remote_for("output")
+        except remote.RemoteError as e:
+            out_vol = None
+            _append_note(run_id, f"remote output mapping unusable: {e}")
+        if out_vol is not None and status == "success" and out_dir:
+            base = Path(out_dir)
+            if rec.get("http"):
+                httpd = base / "http" / run_id
+                if httpd.is_dir():
+                    try:
+                        out_vol.upload_tree(httpd, f"http/{run_id}")
+                    except remote.RemoteError as e:
+                        _append_note(run_id,
+                                     f"remote output upload failed: {e}")
+            else:
+                dest = rec.get("output")
+                if dest:
+                    # the run record stores the output as the RESOLVED path
+                    # (an absolute path under the output volume once
+                    # resolve_paths has run) — mirror it at its position
+                    # relative to the volume root, not the raw string
+                    f = Path(dest)
+                    if not f.is_absolute():
+                        f = base / dest
+                    if f.is_file():
+                        try:
+                            rel = f.resolve().relative_to(base.resolve()).as_posix()
+                        except ValueError:
+                            rel = None
+                        if rel and not rel.startswith("."):
+                            try:
+                                out_vol.upload(f, rel)
+                            except remote.RemoteError as e:
+                                _append_note(run_id,
+                                             f"remote output upload failed "
+                                             f"({rel}): {e}")
+            vlog = rec.get("log_path")
+            if vlog:
+                vp = Path(vlog)
+                try:
+                    vrel = vp.relative_to(base)
+                except ValueError:
+                    vrel = None
+                if vrel is not None and vp.is_file():
+                    try:
+                        out_vol.upload(vp, vrel.as_posix())
+                    except remote.RemoteError as e:
+                        _append_note(run_id,
+                                     f"remote output upload failed "
+                                     f"({vrel.as_posix()}): {e}")
+        try:
+            log_vol = remote.remote_for("log")
+        except remote.RemoteError as e:
+            log_vol = None
+            _append_note(run_id, f"remote log mapping unusable: {e}")
+        if log_vol is not None:
+            rd = run_dir()
+            try:
+                rel_base = rd.relative_to(LOG_VOLUME_ROOT)
+            except ValueError:
+                rel_base = None
+            if rel_base is not None:
+                # the run's log — wherever it lives (run_dir for a normal
+                # run, the output volume's log/ for a verbose one) — is
+                # mirrored to the log volume as runs/<id>.log, alongside the
+                # runs/<id>.json record, so the log volume is self-contained
+                log_src = Path(rec["log_path"]) if rec.get("log_path") else None
+                if log_src is None or not log_src.is_file():
+                    log_src = rd / f"{run_id}.log"
+                uploads: list[tuple[Path, str]] = []
+                if log_src.is_file():
+                    uploads.append(
+                        (log_src, (rel_base / f"{run_id}.log").as_posix()))
+                sidecar = _sidecar(run_id)
+                if sidecar.is_file():
+                    uploads.append((sidecar, (rel_base / sidecar.name).as_posix()))
+                for f, rel in uploads:
+                    try:
+                        log_vol.upload(f, rel)
+                    except remote.RemoteError as e:
+                        _append_note(run_id,
+                                     f"remote log upload failed ({rel}): {e}")
+    except Exception:
+        # defensive: the sync must never take the watcher thread down
+        pass
 
 
 def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
@@ -1026,6 +1205,7 @@ def _watch(run_id: str, proc: subprocess.Popen, logf, timeout: float | None,
         with _LOCK:
             _ACTIVE.pop(run_id, None)
             _STOPPING.discard(run_id)
+        _sync_run_to_remote(run_id)
 
 
 def _kill(proc: subprocess.Popen) -> None:
@@ -1220,14 +1400,21 @@ def list_logs() -> list[dict]:
 
 def volume_file(target: str, name: str) -> Path | None:
     """A file in the input volume (target 'input') or the output volume
-    (target 'output') by bare name — guarded like output_file."""
+    (target 'output') by bare name — guarded like output_file. An input
+    file that is missing locally but present on a mapped input remote is
+    downloaded first (M12), so the file-info endpoints work on
+    remote-only inputs too."""
     if not name or "/" in name or name.startswith(".."):
         return None
     vol = _input_dir() if target == "input" else _output_dir()
     if not vol:
         return None
     p = Path(vol) / name
-    return p if p.is_file() else None
+    if p.is_file():
+        return p
+    if target == "input":
+        return ensure_input_local(name)
+    return None
 
 
 def output_file(filename: str) -> Path | None:

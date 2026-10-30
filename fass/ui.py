@@ -151,6 +151,9 @@ a { color: var(--accent); }
 .portrow input { width: auto; flex: 1; }
 .portrow select { width: auto; }
 .portrow .name { flex: 2; }
+.remote-block { margin: 6px 0; }
+.remote-block summary { cursor: pointer; }
+.remote-block .row { margin-top: 8px; }
 .filecols { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; }
 .filecol { flex: 1 1 300px; min-width: 0; }
 .filehead { display: flex; gap: 8px; align-items: baseline; font-size: 13px;
@@ -363,6 +366,100 @@ a { color: var(--accent); }
         <div><label>/output — results land here</label><input id="v-out" placeholder="/data/fass/output"></div>
         <div><label>/log — run logs</label><input id="v-log" placeholder="/data/fass/log"></div>
       </div>
+      <details class="remote-block">
+        <summary>remote mapping: /input — FTP / SFTP / S3
+          <span class="note">(missing files are downloaded from the remote before use)</span></summary>
+        <div class="row">
+          <div><label>type</label>
+            <select id="ri-type">
+              <option value="none">none — local folder only</option>
+              <option value="ftp">ftp</option>
+              <option value="sftp">sftp</option>
+              <option value="s3">s3 bucket</option>
+            </select></div>
+          <div><label>host</label><input id="ri-host" placeholder="minio / 172.17.0.1 — s3: blank = AWS"></div>
+          <div><label>port</label><input id="ri-port" type="number" placeholder="blank = default (21 / 22 / 443)"></div>
+        </div>
+        <div class="row">
+          <div><label>user</label><input id="ri-user" placeholder="ftp/sftp user · s3 access key id"></div>
+          <div><label>password / secret</label><input id="ri-pass" type="password" placeholder="ftp/sftp password · s3 secret key"></div>
+          <div><label>path / prefix</label><input id="ri-path" placeholder="remote sub-dir · s3 object prefix"></div>
+        </div>
+        <div class="row">
+          <div><label>bucket (s3)</label><input id="ri-bucket" placeholder="fass"></div>
+          <div><label>region (s3)</label><input id="ri-region" placeholder="us-east-1"></div>
+          <div><label class="check" style="margin:0"><input type="checkbox" id="ri-secure"> s3 https (http for on-host MinIO/LocalStack)</label></div>
+          <div><label class="check" style="margin:0"><input type="checkbox" id="ri-uuid"> s3 uuid naming (objects keyed by UUID, real basename in S3 metadata)</label></div>
+        </div>
+        <div class="row">
+          <div><button type="button" class="small ghost" onclick="remoteTest('input','ri')">test (unsaved values)</button>
+            <span id="ri-status"></span></div>
+        </div>
+        <p class="note">Under docker, services on the host are reached via
+          <span class="mono">host.docker.internal</span> (e.g.
+          <span class="mono">host.docker.internal:9100</span> for an on-host MinIO).
+          sftp host keys are not pinned (dev-tool convention).</p>
+      </details>
+      <details class="remote-block">
+        <summary>remote mapping: /output — FTP / SFTP / S3
+          <span class="note">(the result + its log are uploaded after a successful run)</span></summary>
+        <div class="row">
+          <div><label>type</label>
+            <select id="ro-type">
+              <option value="none">none — local folder only</option>
+              <option value="ftp">ftp</option>
+              <option value="sftp">sftp</option>
+              <option value="s3">s3 bucket</option>
+            </select></div>
+          <div><label>host</label><input id="ro-host" placeholder="minio / 172.17.0.1 — s3: blank = AWS"></div>
+          <div><label>port</label><input id="ro-port" type="number" placeholder="blank = default (21 / 22 / 443)"></div>
+        </div>
+        <div class="row">
+          <div><label>user</label><input id="ro-user" placeholder="ftp/sftp user · s3 access key id"></div>
+          <div><label>password / secret</label><input id="ro-pass" type="password" placeholder="ftp/sftp password · s3 secret key"></div>
+          <div><label>path / prefix</label><input id="ro-path" placeholder="remote sub-dir · s3 object prefix"></div>
+        </div>
+        <div class="row">
+          <div><label>bucket (s3)</label><input id="ro-bucket" placeholder="fass"></div>
+          <div><label>region (s3)</label><input id="ro-region" placeholder="us-east-1"></div>
+          <div><label class="check" style="margin:0"><input type="checkbox" id="ro-secure"> s3 https (http for on-host MinIO/LocalStack)</label></div>
+          <div><label class="check" style="margin:0"><input type="checkbox" id="ro-uuid"> s3 uuid naming (objects keyed by UUID, real basename in S3 metadata)</label></div>
+        </div>
+        <div class="row">
+          <div><button type="button" class="small ghost" onclick="remoteTest('output','ro')">test (unsaved values)</button>
+            <span id="ro-status"></span></div>
+        </div>
+      </details>
+      <details class="remote-block">
+        <summary>remote mapping: /log — FTP / SFTP / S3
+          <span class="note">(run log + record are uploaded after every run)</span></summary>
+        <div class="row">
+          <div><label>type</label>
+            <select id="rl-type">
+              <option value="none">none — local folder only</option>
+              <option value="ftp">ftp</option>
+              <option value="sftp">sftp</option>
+              <option value="s3">s3 bucket</option>
+            </select></div>
+          <div><label>host</label><input id="rl-host" placeholder="minio / 172.17.0.1 — s3: blank = AWS"></div>
+          <div><label>port</label><input id="rl-port" type="number" placeholder="blank = default (21 / 22 / 443)"></div>
+        </div>
+        <div class="row">
+          <div><label>user</label><input id="rl-user" placeholder="ftp/sftp user · s3 access key id"></div>
+          <div><label>password / secret</label><input id="rl-pass" type="password" placeholder="ftp/sftp password · s3 secret key"></div>
+          <div><label>path / prefix</label><input id="rl-path" placeholder="remote sub-dir · s3 object prefix"></div>
+        </div>
+        <div class="row">
+          <div><label>bucket (s3)</label><input id="rl-bucket" placeholder="fass"></div>
+          <div><label>region (s3)</label><input id="rl-region" placeholder="us-east-1"></div>
+          <div><label class="check" style="margin:0"><input type="checkbox" id="rl-secure"> s3 https (http for on-host MinIO/LocalStack)</label></div>
+          <div><label class="check" style="margin:0"><input type="checkbox" id="rl-uuid"> s3 uuid naming (objects keyed by UUID, real basename in S3 metadata)</label></div>
+        </div>
+        <div class="row">
+          <div><button type="button" class="small ghost" onclick="remoteTest('log','rl')">test (unsaved values)</button>
+            <span id="rl-status"></span></div>
+        </div>
+      </details>
       <hr class="sep">
       <h3>Streaming — port mappings (host port ↔ container port)</h3>
       <label class="check" style="margin-top:4px"><input type="checkbox" id="s-en"> enable stream host rewrite
@@ -1513,6 +1610,9 @@ async function loadCfg() {
   $('v-in').value = cfg.volumes.input || '';
   $('v-out').value = cfg.volumes.output || '';
   $('v-log').value = cfg.volumes.log || '';
+  loadRemote('ri', cfg.volumes.input_remote);
+  loadRemote('ro', cfg.volumes.output_remote);
+  loadRemote('rl', cfg.volumes.log_remote);
   $('s-en').checked = cfg.streaming.enabled;
   $('s-host').value = cfg.streaming.host_address;
   $('ports').innerHTML = '';
@@ -1545,9 +1645,55 @@ function addPort(name, cport, hport, proto) {
     <button type="button" class="copy" onclick="this.parentNode.remove()">remove</button>`;
   $('ports').appendChild(row);
 }
+function readRemote(p) {
+  return {
+    type: $(p + '-type').value,
+    host: $(p + '-host').value.trim(),
+    port: parseInt($(p + '-port').value, 10) || null,
+    user: $(p + '-user').value.trim(),
+    password: $(p + '-pass').value,
+    bucket: $(p + '-bucket').value.trim(),
+    path: $(p + '-path').value.trim(),
+    region: $(p + '-region').value.trim(),
+    secure: $(p + '-secure').checked,
+    uuid_naming: $(p + '-uuid').checked,
+  };
+}
+function loadRemote(p, rc) {
+  rc = rc || { type: 'none' };
+  $(p + '-type').value = rc.type || 'none';
+  $(p + '-host').value = rc.host || '';
+  $(p + '-port').value = rc.port || '';
+  $(p + '-user').value = rc.user || '';
+  $(p + '-pass').value = rc.password || '';
+  $(p + '-bucket').value = rc.bucket || '';
+  $(p + '-path').value = rc.path || '';
+  $(p + '-region').value = rc.region || '';
+  $(p + '-secure').checked = !!rc.secure;
+  $(p + '-uuid').checked = !!rc.uuid_naming;
+}
+async function remoteTest(which, p) {
+  const el = $(p + '-status');
+  el.innerHTML = '<span class="note">testing…</span>';
+  try {
+    const r = await fetch('/v1/config/remote-test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ which: which, remote: readRemote(p) }),
+    });
+    const data = await r.json();
+    el.innerHTML = r.ok
+      ? `<span class="ok">${esc(data.message)}</span>`
+      : `<span class="err">${esc(typeof data.detail === 'string' ? data.detail : JSON.stringify(data))}</span>`;
+  } catch (e) {
+    el.innerHTML = `<span class="err">${esc(String(e))}</span>`;
+  }
+}
 function readCfg() {
   return {
-    volumes: { input: $('v-in').value.trim(), output: $('v-out').value.trim(), log: $('v-log').value.trim() },
+    volumes: {
+      input: $('v-in').value.trim(), output: $('v-out').value.trim(), log: $('v-log').value.trim(),
+      input_remote: readRemote('ri'), output_remote: readRemote('ro'), log_remote: readRemote('rl'),
+    },
     streaming: {
       enabled: $('s-en').checked,
       host_address: $('s-host').value.trim() || '172.17.0.1',

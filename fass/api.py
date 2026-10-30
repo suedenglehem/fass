@@ -45,10 +45,11 @@ from fastapi.responses import (FileResponse, HTMLResponse, PlainTextResponse,
                                Response)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from fass import __version__, dockerctl, execute
+from fass import __version__, dockerctl, execute, remote
 from fass.config import (
     FassConfig,
     LLMConfig,
+    RemoteVolumeConfig,
     config_path,
     load_config,
     resolved_rag,
@@ -350,6 +351,15 @@ class LLMTestRequest(BaseModel):
 
     use_unsaved: bool = False
     llm: LLMConfig | None = None
+
+
+class RemoteTestRequest(BaseModel):
+    """POST /v1/config/remote-test body: the volume and the (unsaved)
+    mapping block the Config tab just typed — the llm-test precedent."""
+    model_config = ConfigDict(extra="forbid")
+
+    which: Literal["input", "output", "log"] = "input"
+    remote: RemoteVolumeConfig = Field(default_factory=RemoteVolumeConfig)
 
 
 class RagQueryRequest(BaseModel):
@@ -795,6 +805,29 @@ def create_app() -> FastAPI:
         return {"ok": True, "model": adapter.model, "seconds": seconds,
                 "answer": answer}
 
+    @app.post("/v1/config/remote-test")
+    def remote_test(body: RemoteTestRequest | None = None):
+        """Test one volume's remote mapping (M12) — the llm-test precedent:
+        the submitted (unsaved) block is what is tested, so the Config tab
+        can verify credentials before saving. A 'none' block tests the
+        SAVED mapping of that volume instead (a cleared form block means
+        'not touching it'); when there is no mapping at all it reports so
+        without touching the network."""
+        body = body or RemoteTestRequest()
+        rc = body.remote
+        if rc.type == "none":
+            rc = getattr(load_config().volumes, f"{body.which}_remote")
+        if rc.type == "none":
+            return {"ok": True, "which": body.which, "type": "none",
+                    "message": "no remote mapping — plain local volume"}
+        try:
+            vol = remote.make_volume(rc)
+            msg = vol.test()
+        except remote.RemoteError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "which": body.which, "type": rc.type,
+                "message": msg}
+
     # -------------------------------------------------------- runs (M6)
 
     @app.post("/v1/runs")
@@ -1163,6 +1196,36 @@ def create_app() -> FastAPI:
                 400, "file must be a bare name in the input or output folder")
         return name
 
+    def _merge_remote_files(which: str, files: list[dict]) -> list[dict]:
+        """M12: when a volume is mapped to a remote, fold in the
+        top-level entries that exist ONLY there (marked remote: true), so
+        the Files tab shows both the local folder and the remote store.
+        On a name collision the local file wins (it shadows the remote
+        one — that is the effective source). Fail-open: a broken remote
+        never breaks the local listing."""
+        try:
+            vol = remote.remote_for(which)
+        except remote.RemoteError:
+            return files
+        if vol is None:
+            return files
+        local = {f["name"] for f in files}
+        try:
+            for entry in vol.list():
+                name = entry.get("name", "")
+                if not name or name in local or name.endswith("/"):
+                    continue
+                files.append({
+                    "name": name,
+                    "size": entry.get("size", 0) or 0,
+                    "mtime": entry.get("mtime") or 0.0,
+                    "remote": True,
+                })
+        except remote.RemoteError:
+            pass
+        files.sort(key=lambda f: f["mtime"], reverse=True)
+        return files
+
     @app.get("/v1/files")
     def files_list(dir: str = "input"):
         """Top-level regular files of one volume, newest first — the Files
@@ -1192,6 +1255,7 @@ def create_app() -> FastAPI:
         except OSError:  # unreadable volume: render it as empty
             return {"dir": dir, "exists": False, "files": []}
         files.sort(key=lambda f: f["mtime"], reverse=True)
+        files = _merge_remote_files(dir, files)
         return {"dir": dir, "exists": True, "files": files}
 
     @app.get("/v1/files/disk")
@@ -1236,6 +1300,18 @@ def create_app() -> FastAPI:
             shutil.copy2(src, dest)
         except OSError as e:
             raise HTTPException(500, f"copy failed: {e}")
+        # M12: a mapped input remote stays the source of truth for
+        # inputs — mirror the copied file there, best-effort (a dead
+        # remote never fails a local copy).
+        try:
+            vol = remote.remote_for("input")
+        except remote.RemoteError:
+            vol = None
+        if vol is not None:
+            try:
+                vol.upload(dest, name)
+            except remote.RemoteError:
+                pass
         return {"ok": True, "name": name}
 
     @app.get("/v1/streams")

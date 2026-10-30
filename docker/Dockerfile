@@ -104,7 +104,7 @@ COPY --from=tsduck /install/usr/local /usr/local
 COPY --from=bento /usr/local/bin/mp4dump /usr/local/bin/mp4dump
 RUN chmod +x /entrypoint.sh \
     && python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir ".[api]" \
+    && /opt/venv/bin/pip install --no-cache-dir ".[api,storage]" \
     # vviz_py (bitrate visualisation): its own runtime deps — plotly renders
     # the self-contained interactive HTML the iframe embeds.
     && /opt/venv/bin/pip install --no-cache-dir "plotly==5.24.1" pandas scipy pytz \

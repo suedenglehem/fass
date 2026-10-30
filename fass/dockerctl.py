@@ -231,6 +231,10 @@ def recreate(cfg) -> dict:
             "NetworkMode": host.get("NetworkMode"),
             "RestartPolicy": host.get("RestartPolicy"),
             "DeviceRequests": host.get("DeviceRequests"),
+            # host.docker.internal:host-gateway — remote volume mappings
+            # reach on-host stores (MinIO/FTP/SFTP) through this name;
+            # must survive the swap or they break after an Apply
+            "ExtraHosts": host.get("ExtraHosts"),
         },
         "Networks": list(((cur.get("NetworkSettings") or {})
                           .get("Networks") or {}).keys()),
@@ -252,6 +256,7 @@ def recreate(cfg) -> dict:
             "PortBindings": _host_port_bindings(cfg),
             "RestartPolicy": (old_spec["HostConfig"]["RestartPolicy"]
                               or {"Name": "unless-stopped"}),
+            "ExtraHosts": ["host.docker.internal:host-gateway"],
         },
     }
     # keep the container on its current network (compose projects use a
@@ -375,6 +380,8 @@ def compose_preview(cfg) -> str:
             ids = ", ".join(f'"{d}"' for d in cfg.gpu.device.split(","))
             lines.append(f"              device_ids: [{ids}]")
     lines += [
+        "    extra_hosts:",
+        "      - host.docker.internal:host-gateway",
         "    restart: unless-stopped",
         "    environment:",
         '      - FASS_ALLOW_EXECUTE=1',
