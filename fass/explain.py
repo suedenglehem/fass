@@ -213,6 +213,10 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         )
     elif out.audio_mode.value == "remove":
         lines.append("Audio: removed")
+    elif out.audio_mode.value == "copy":
+        lines.append(
+            "Audio: copied as-is (-c:a copy) — the input's codec and "
+            "bitrate pass through untouched")
     elif ep.mode == "copy":
         lines.append("Audio: kept (copied)")
     elif REGISTRY["matrix"][out.container]["audio_codec"] is None:

@@ -1742,14 +1742,28 @@ _AUDIO_KEEP = re.compile(
     r"\bkeep(?:s|ing)?\s+(?:the\s+)?audio\b|\bwith\s+(?:the\s+)?audio\b|\bretain(?:s|ing)?\s+(?:the\s+)?audio\b",
     re.I,
 )
+_AUDIO_COPY = re.compile(
+    r"\bcop(?:y|ied|ying)\s+(?:the\s+)?audio\b"
+    r"|\b(?:as[\s-]?is|untouched|unmodified|unchanged|bit[\s-]?for[\s-]?bit)\s+audio\b"
+    r"|\baudio\s+(?:that\s+is\s+|to\s+be\s+)?(?:as[\s-]?is|untouched|unmodified|unchanged|as\s+it\s+is|bit[\s-]?for[\s-]?bit)\b"
+    r"|\bno(?:thing)?\s+(?:to\s+)?re-?encod\w*\s+(?:the\s+)?audio\b"
+    r"|\bwithout\s+re-?encod\w*\s+(?:the\s+)?audio\b"
+    r"|\bdo(?:n'?t| not)\s+re-?encod\w*\s+(?:the\s+)?audio\b",
+    re.I,
+)
 
 
 def _detect_audio(t: str) -> str | None:
-    if _AUDIO_REMOVE.search(t) and _AUDIO_KEEP.search(t):
+    remove = _AUDIO_REMOVE.search(t) is not None
+    keep = _AUDIO_KEEP.search(t) is not None
+    copy = _AUDIO_COPY.search(t) is not None
+    if remove and (keep or copy):
         return "conflict"
-    if _AUDIO_REMOVE.search(t):
+    if copy:
+        return "copy"  # stricter than 'keep' — "keep the audio as-is"
+    if remove:
         return "remove"
-    if _AUDIO_KEEP.search(t):
+    if keep:
         return "keep"
     return None
 
@@ -2699,8 +2713,8 @@ class RulesAdapter:
         sub_dump = _detect_subtitle_dump(t_det)
         subtitle, sub_clar, sub_note = (
             (None, None, None) if sub_dump else _detect_subtitles(t_det, assets))
-        if audio_replace is not None and audio in ("remove", "conflict"):
-            audio = None  # a replacement wins over remove / keep+remove
+        if audio_replace is not None and audio in ("remove", "conflict", "copy"):
+            audio = None  # a replacement wins over remove / copy (it encodes)
         grayscale = GRAYSCALE_RE.search(t_det) is not None
         codec = _detect_codec(t_det)
         container, unsupported_container = _detect_container(t_det)
@@ -2856,7 +2870,7 @@ class RulesAdapter:
                           "or a removed audio track — did you mean a video "
                           "export with those audio settings, or a plain audio "
                           "extraction?"))
-        elif mode == "subtitles" and (audio in ("remove", "keep")
+        elif mode == "subtitles" and (audio in ("remove", "keep", "copy")
                                       or resize is not None or crop is not None
                                       or rotate is not None or watermarks
                                       or grayscale or speed is not None
@@ -2947,7 +2961,7 @@ class RulesAdapter:
                                    or tonemap is not None or watermarks
                                    or subtitle is not None or audio_replace is not None
                                    or filtergraph is not None or video_filters
-                                   or audio == "remove"
+                                   or audio in ("remove", "copy")
                                    or video_codec_opts or video_preset is not None):
             ladder_conflict = Clarification(
                 question=("an ABR ladder re-encodes every level on its own — "
@@ -2971,7 +2985,8 @@ class RulesAdapter:
             return ParseResult(
                 status=ParseStatus.NEEDS_CLARIFICATION,
                 clarifications=[Clarification(
-                    question="you asked to both keep and remove the audio — which takes priority?")],
+                    question=("you asked to both remove the audio and keep "
+                              "or copy it — which takes priority?"))],
             )
 
         # 5. build / merge the plan
@@ -3060,6 +3075,8 @@ class RulesAdapter:
             plan.operations = ops
             if mode == "video" and audio == "remove":
                 plan.output.audio_mode = AudioMode.REMOVE
+            elif mode == "video" and audio == "copy":
+                plan.output.audio_mode = AudioMode.COPY
             if dest is not None:
                 plan.output_destination = dest
 
@@ -3116,7 +3133,7 @@ class RulesAdapter:
                     and tonemap is None and ladder is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
-                    and audio != "remove" and audio_replace is None and subtitle is None \
+                    and audio not in ("remove", "copy") and audio_replace is None and subtitle is None \
                     and audio_codec is None and sub_dump is None and not audio_wanted \
                     and video_bitrate is None and audio_bitrate is None \
                     and dest is None \
@@ -3556,6 +3573,9 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks,
         elif audio == "remove" and plan.output.audio_mode != AudioMode.REMOVE:
             plan.output.audio_mode = AudioMode.REMOVE
             changed.append("audio -> remove")
+        elif audio == "copy" and plan.output.audio_mode != AudioMode.COPY:
+            plan.output.audio_mode = AudioMode.COPY
+            changed.append("audio -> copy (as-is)")
 
     if audio_replace is not None and plan.output.mode != "subtitles":
         # a replacement replaces any prior replacement and implies encoded audio

@@ -92,9 +92,15 @@ user names a bitrate, "audio_bitrate_kbps" (e.g. "mp2 128k" -> 128; lossless
 codecs — flac, alac, pcm_* — take no bitrate); "video_codec" stays null), or
 "subtitles" (dump the input's subtitle track to a file: container
 srt_file|vtt_file|ass_file, no codec flags at all).
-Audio: "audio_mode" "encode" (default, keep) or "remove" (video-only — "no
-audio", "remove the audio"); audio and subtitles modes have no audio_mode.
-An audio_replace operation implies "encode".
+Audio: "audio_mode" "encode" (default, keep — "with the audio"), "copy"
+("copy the audio as-is", "keep the audio untouched", "without re-encoding
+the audio" — the input's codec and bitrate pass through untouched, so the
+output container must carry the input's audio codec, and nothing may touch
+the audio: no audio_replace, audio_resample, speed, audio filters,
+filtergraph, audio_bitrate_kbps, audio_codec_options or ABR ladder — never
+"copy" together with an audio_replace operation), or "remove" (video-only —
+"no audio", "remove the audio"); audio and subtitles modes have no
+audio_mode. An audio_replace operation implies "encode".
 Format options: only when the user names one ("with faststart", "6 second
 HLS segments"), set "format_options" on the output to {{"<key>": "<value>"}}
 using ONLY these keys: {format_opts}. Flagset keys take '+'-joined flags

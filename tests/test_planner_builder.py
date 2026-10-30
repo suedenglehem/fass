@@ -401,6 +401,121 @@ def test_cbr_trim_argv_full_shape():
     assert argv[-1].endswith(".ts")
 
 
+# -------------------------------------------------------- audio stream copy
+
+def test_audio_copy_emits_c_a_copy():
+    # The user's exact request: h264 baseline 600k video, audio as-is.
+    argv = argv_for(
+        output=OutputSpec(container="mp4", video_codec="h264",
+                          video_profile="baseline", video_bitrate_kbps=600,
+                          audio_mode="copy"),
+        media=make_media(),
+    )
+    assert argv[argv.index("-c:v") + 1] == "libx264"
+    assert argv[argv.index("-b:v") + 1] == "600k"
+    assert argv[argv.index("-c:a") + 1] == "copy"
+    assert "-b:a" not in argv  # a copied track takes no bitrate
+
+
+def test_audio_copy_same_codec_remuxes():
+    # h264->h264 mp4->mp4 with copy audio: nothing to encode — full remux.
+    argv = argv_for(
+        output=OutputSpec(container="mp4", video_codec="h264",
+                          audio_mode="copy"),
+        media=make_media(),
+    )
+    assert "-c:a" not in argv and "-c:v" not in argv
+    assert argv[argv.index("-c") + 1] == "copy"
+
+
+def test_audio_copy_named_codec_match_ok():
+    # the requested codec IS the input's codec — the copy satisfies it
+    # (the video bitrate forces the re-encode pass; without it this shape
+    # is a plain remux — see test_audio_copy_same_codec_remuxes)
+    argv = argv_for(
+        output=OutputSpec(container="mp4", video_codec="h264",
+                          video_bitrate_kbps=600,
+                          audio_codec="aac", audio_mode="copy"),
+        media=make_media(),
+    )
+    assert argv[argv.index("-c:a") + 1] == "copy"
+
+
+def test_audio_copy_container_cannot_carry_input_codec():
+    # vorbis audio cannot be copied into an mp4 that carries no vorbis
+    with pytest.raises(PlanError, match="cannot carry a copied vorbis"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="h264",
+                                 audio_mode="copy"),
+               media=make_media(audio_codec="vorbis"))
+
+
+def test_audio_copy_cannot_recode_named_codec():
+    with pytest.raises(PlanError, match="cannot turn it into opus"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="h264",
+                                 audio_codec="opus", audio_mode="copy"),
+               media=make_media())
+
+
+def test_audio_copy_speed_conflicts():
+    with pytest.raises(PlanError, match="drift out of sync"):
+        ep_for(operations=[SpeedOp(factor=2.0)],
+               output=OutputSpec(container="mp4", video_codec="h264",
+                                 audio_mode="copy"),
+               media=make_media())
+
+
+def test_audio_copy_resample_conflicts():
+    with pytest.raises(PlanError, match="decodes"):
+        ep_for(operations=[AudioResampleOp(sample_rate=48000)],
+               output=OutputSpec(container="mp4", video_codec="h264",
+                                 audio_mode="copy"),
+               media=make_media())
+
+
+def test_audio_copy_bitrate_conflicts():
+    with pytest.raises(PlanError, match="steers the encoder"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="h264",
+                                 audio_mode="copy", audio_bitrate_kbps=128),
+               media=make_media())
+
+
+def test_audio_copy_codec_options_rejected_by_schema():
+    # no audio codec in the registry has private options — the schema
+    # rejects them for any audio_mode, copy included
+    with pytest.raises(ValidationError):
+        OutputSpec(container="mp4", video_codec="h264", audio_mode="copy",
+                   audio_codec_options={"bitres": "2"})
+
+
+def test_audio_copy_ladder_conflicts():
+    with pytest.raises(PlanError, match="ABR ladder"):
+        ep_for(output=OutputSpec(container="hls", video_codec="h264",
+                                 audio_mode="copy",
+                                 variants=[{"height": 360,
+                                            "video_bitrate_kbps": 1000}]),
+               media=make_media())
+
+
+def test_audio_copy_with_replace_warns_and_encodes():
+    # a replacement encodes its own track — copy is ignored, with a warning
+    ep = ep_for(operations=[AudioReplaceOp(asset_id="aud")],
+                output=OutputSpec(container="mp4", video_codec="h264",
+                                  audio_mode="copy"),
+                media=make_media(), audio_path="song.mp3")
+    assert any("replacement audio is encoded" in w for w in ep.warnings)
+    argv = build_argv(ep)
+    assert argv[argv.index("-c:a") + 1] == "aac"
+
+
+def test_audio_copy_gif_drops_track():
+    # a gif carries no audio — the copied track is dropped, not an error
+    argv = argv_for(output=OutputSpec(container="gif", video_codec="gif",
+                                      audio_mode="copy"),
+                    media=make_media())
+    assert "-an" in argv
+    assert "-c:a" not in argv
+
+
 # ------------------------------------------------------------ audio replace
 
 def test_audio_replace_maps_replacement_stream():

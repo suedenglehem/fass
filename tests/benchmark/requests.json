@@ -528,5 +528,15 @@
     "instruction": "Add the subtitles from subs.srt, and make the subtitles soft",
     "assets": {"input": "clip.mp4", "subs": "subs.srt"},
     "expected": {"status": "ready", "ops": ["subtitles"]}
+  },
+  {
+    "id": "bench-092",
+    "instruction": "convert to h264 at 600 kbps and copy the audio as-is",
+    "expected": {"status": "ready", "ops": [], "video_codec": "h264", "video_bitrate_kbps": 600, "audio_mode": "copy"}
+  },
+  {
+    "id": "bench-093",
+    "instruction": "Remove the audio and copy the audio as-is",
+    "expected": {"status": "needs_clarification"}
   }
 ]

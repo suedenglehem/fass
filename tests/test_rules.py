@@ -406,6 +406,38 @@ def test_remove_audio(gen):
     assert r.plan["output"]["audio_mode"] == "remove"
 
 
+def test_copy_audio_as_is(gen):
+    for instr in ("copy the audio as-is",
+                  "convert to h264 and copy audio as is",
+                  "without re-encoding the audio",
+                  "keep the audio untouched",
+                  "keep the audio as-is"):
+        r = gen(instr, "clip.mp4")
+        assert r.status == "ready", (instr, r.status, r.clarifications)
+        assert r.plan["output"]["audio_mode"] == "copy", instr
+
+
+def test_copy_audio_conflicts_with_remove(gen):
+    r = gen("remove the audio and copy the audio as-is", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert any("audio" in c["question"].lower() for c in r.clarifications)
+
+
+def test_audio_replace_wins_over_copy(gen):
+    r = gen("copy the audio and replace it with song.mp3", "clip.mp4",
+            audio="song.mp3")
+    assert r.status == "ready"
+    assert r.plan["output"]["audio_mode"] == "encode"
+    assert len(ops_by_type(r.plan)["audio_replace"]) == 1
+
+
+def test_revision_copy_audio_as_is(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    r = gen("copy the audio as-is", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["output"]["audio_mode"] == "copy"
+
+
 def test_first_n_seconds_trim(gen):
     r = gen("trim the first 20 seconds", "clip.mp4")
     assert r.status == "ready"

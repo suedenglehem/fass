@@ -44,9 +44,12 @@ SCHEMA_VERSION = "1.0"
 # ---------------------------------------------------------------- audio
 
 class AudioMode(str, Enum):
-    """Keep audio by encoding it (default) or remove it entirely."""
+    """What to do with the audio track: re-encode it (default), copy it
+    as-is (``-c:a copy`` — the input's codec and bitrate pass through
+    untouched, so the container must be able to carry it), or remove it."""
 
     ENCODE = "encode"
+    COPY = "copy"
     REMOVE = "remove"
 
 # ---------------------------------------------------------------- trim
@@ -375,7 +378,8 @@ class OutputSpec(BaseModel):
             if out.audio_mode is not AudioMode.ENCODE:
                 raise ValueError(
                     "an audio-only output must keep (encode) its audio; "
-                    "'remove' would produce an empty file"
+                    "'copy' leaves no audio work for the pipeline to do "
+                    "and 'remove' would produce an empty file"
                 )
             for name, val in video_only_fields:
                 if val not in (None, False):

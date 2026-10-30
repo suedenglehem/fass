@@ -156,7 +156,7 @@ def test_aggregate_shapes_and_citation_precision():
 def test_load_datasets_skips_missing_and_tags_source():
     entries = abl.load_datasets(
         ["tests/benchmark/requests.json", "tests/benchmark/nope.json"], None)
-    assert len(entries) == 91
+    assert len(entries) == 93
     assert all(e["_dataset"] == "requests.json" for e in entries)
     assert abl.load_datasets(["tests/benchmark/nope.json"], None) == []
     limited = abl.load_datasets(["tests/benchmark/requests.json"], 5)

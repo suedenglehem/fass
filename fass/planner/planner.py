@@ -1368,6 +1368,81 @@ def plan_execution(
                     "replacement audio / subtitles"
                 )
 
+    # -- audio stream copy (-c:a copy) --------------------------------------
+    # A copied track passes through bit-for-bit: the input's codec and
+    # bitrate ride straight into the output container. Anything that decodes
+    # the audio (resample, speed, audio filters, multi-input combine, an
+    # opaque filtergraph) or steers an audio encoder (bitrate, codec
+    # options) contradicts it, and the container must carry the input codec.
+    # A replacement audio encodes its own track — copy is ignored for it
+    # (warned below). Diagnostic plans write no file, nothing to copy into.
+    if not diagnostic and out.audio_mode is AudioMode.COPY:
+        if out.mode == "subtitles":
+            errors.append(
+                "a subtitle dump output carries no audio — copying the "
+                "audio track does not apply to it")
+        elif out.mode == "video" and not ar_ops:
+            if resample:
+                errors.append(
+                    "resampling the audio (sample rate / channels) decodes "
+                    "it — the track cannot also be copied as-is")
+            if edit.ops_of("speed"):
+                errors.append(
+                    "a speed change re-times the audio (atempo) — a copied "
+                    "track would drift out of sync with the sped-up video; "
+                    "re-encode the audio")
+            if any(o.domain == "audio" for o in filter_ops):
+                errors.append(
+                    "an audio filter decodes the audio — the track cannot "
+                    "also be copied as-is")
+            if combine is not None:
+                errors.append(
+                    "a multi-input combine feeds its audio through the "
+                    "filter graph — a copied track can only come from a "
+                    "single input")
+            if edit.filtergraph:
+                errors.append(
+                    "a custom filtergraph may touch the audio — the plan "
+                    "cannot verify a copied track would pass through "
+                    "untouched; re-encode the audio")
+            if out.audio_bitrate_kbps is not None:
+                errors.append(
+                    "an audio bitrate steers the encoder — it cannot apply "
+                    "to a copied track; drop the audio bitrate or re-encode "
+                    "the audio")
+            if out.audio_codec_options:
+                errors.append(
+                    "audio codec options steer the encoder — they cannot "
+                    "apply to a copied track; drop them or re-encode the "
+                    "audio")
+            if out.variants is not None:
+                errors.append(
+                    "an ABR ladder carries one audio track per level — it "
+                    "cannot copy the audio")
+            if out.audio_codec is not None:
+                if metadata is not None and metadata.has_audio \
+                        and metadata.audio_codec != out.audio_codec:
+                    errors.append(
+                        f"the input's audio is {metadata.audio_codec} — "
+                        f"copying it as-is cannot turn it into "
+                        f"{out.audio_codec}; drop the audio codec request "
+                        "(copy as-is) or re-encode the audio")
+                elif metadata is None:
+                    errors.append(
+                        f"copying the audio cannot guarantee a "
+                        f"{out.audio_codec} track without probing the input "
+                        "— re-encode the audio, or probe the input and copy "
+                        "it as-is")
+            if metadata is not None and metadata.has_audio:
+                carriers = REGISTRY["matrix"].get(
+                    out.container, {}).get("audio")
+                if carriers and metadata.audio_codec not in carriers:
+                    errors.append(
+                        f"the input's audio is {metadata.audio_codec} and a "
+                        f"{out.container} file cannot carry a copied "
+                        f"{metadata.audio_codec} track — re-encode the audio "
+                        "or choose a container that carries it")
+
     if errors:
         raise PlanError(errors)
 
@@ -1382,6 +1457,11 @@ def plan_execution(
 
     defaults: list[str] = []
     warnings: list[str] = []
+
+    if out.mode == "video" and out.audio_mode is AudioMode.COPY and ar_ops:
+        warnings.append(
+            "audio copy is ignored — the replacement audio is encoded "
+            "instead (a copied track cannot be swapped out)")
 
     # -- filter disclosures (M10.1): presence, version, GPU, semantic traps --
     # The registry validated the names and options; this is what the plan
@@ -1531,6 +1611,15 @@ def plan_execution(
         if edit.output.audio_mode == AudioMode.REMOVE and not edit.ops_of("audio_replace"):
             raise PlanError([
                 f"output device '{dest}' needs audio, but the plan removes the audio"
+            ])
+        if edit.output.audio_mode is AudioMode.COPY \
+                and not edit.ops_of("audio_replace"):
+            # The device plays decoded audio — a copied bitstream (e.g. AAC)
+            # is not what the DAC expects, so the track must be re-encoded.
+            raise PlanError([
+                f"output device '{dest}' plays decoded audio — the copied "
+                "track cannot be played as-is; re-encode the audio for the "
+                "device"
             ])
         warnings.append(
             f"output goes to the local audio device {dest} — nothing is saved to a file"
@@ -1818,6 +1907,11 @@ def plan_execution(
                 raise PlanError([
                     "an ABR ladder carries one audio track per level — it "
                     "cannot remove the audio"
+                ])
+            if out.audio_mode is AudioMode.COPY:
+                raise PlanError([
+                    "an ABR ladder carries one audio track per level — it "
+                    "cannot copy the audio as-is"
                 ])
             if out.video_preset is not None \
                     or out.video_codec_options or out.audio_codec_options:
@@ -2950,6 +3044,21 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
         # A concat without audio maps no audio stream either — -an keeps
         # the output explicitly audio-free.
         opts.append("-an")
+    elif edit.output.audio_mode is AudioMode.COPY:
+        # Stream copy: the input's codec and bitrate pass through
+        # bit-for-bit (plan_execution validated that the container carries
+        # the input codec and that nothing decodes the track). A container
+        # that carries no audio at all (e.g. an animated GIF) drops it.
+        if not carries_audio:
+            opts.append("-an")
+            defaults.append(
+                f"a {edit.output.container} file carries no audio — the "
+                "copied audio track is dropped")
+        else:
+            opts += ["-c:a", "copy"]
+            defaults.append(
+                "audio copied as-is (-c:a copy) — the input's codec and "
+                "bitrate pass through untouched")
     else:
         # A named audio_codec overrides the container's default (validated
         # against the matrix in plan_execution); the bitrate override works
