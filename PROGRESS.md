@@ -7,8 +7,10 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 
 - **Last state (2026-10-30, audio stream copy COMMITTED 91f1bf1 + version
   bump 3a15f7c, PUSHED + i7 DEPLOYED + live-verified; versioning rule
-  commits now also pushed + on i7; "Enter" button REQUESTED + NOT STARTED;
-  suite 1566 passed / 2 skipped):**
+  commits now also pushed + on i7; "Enter" button IMPLEMENTED + VERIFIED
+  + COMMITTED 1cdefcd + version bump 25d7418 (local — NOT pushed, NOT on
+  i7; deploy on the user's green light); video stream copy DELEGATED to
+  a dispatcher worker (running); suite 1567 passed / 2 skipped):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -64,24 +66,68 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   audio-copy notes ("audio copied as-is; the input audio codec must be
   supported by MP4" / "…(-c:a copy) — the input's codec and bitrate pass
   through untouched"); fass-worker / fass-rag unharmed. (3) **"Enter"
-  button — REQUESTED, NOT STARTED (user said "stop" mid-investigation):**
-  on the FFmpeg pane, between Save and Mediainfo — for power users who
-  write ffmpeg commands themselves: skips the LLM/NLU, prefills the
-  command line with the skeleton `ffmpeg -i /input/<inputfile>
-  [-i /input/<inputfile2> …] -o /output/<outputfile>` — input values from
-  the "Input video" field (multiple `-i` pairs → multiple `-i /input/…`),
-  output from the "Output" field. Investigation reached: button-row markup
-  ui.py:235-241; `cmdButtons()` gating ui.py:579-594; `render()` command
-  textarea `#cmd` + `#cmdorig`/`#cmdargs` + `runCmd()` ui.py:809-886 (Run =
-  POST /v1/runs; an expert edit of `#cmd` is sent as `command`, revalidated
-  server-side; `loadPreset()` shows the restore-by-synthesis pattern:
-  `render({status:'ready', command, arguments, …})` without any
-  server call). OPEN design questions when resuming: where the skeleton
-  renders (likely a local synthetic render() call, preset-style), the
-  `/input/`-prefix rules (plain filename → `/input/<name>`; URL `://` →
-  as-is; output plain name → `/output/<name>`, leading `/` or `://` →
-  as-is — covers the `/input/step1.mp4` chaining form), and whether the
-  extra-input rows join the `-i` list.
+  button — IMPLEMENTED + VERIFIED + COMMITTED `1cdefcd` (2 files,
+  +101/−3) + version bump `25d7418` (v1.137036.1cdefcd; local, NOT
+  pushed):** on the FFmpeg pane, between Save and Mediainfo —
+  for power users who write ffmpeg commands themselves: skips the
+  LLM/NLU ENTIRELY, prefills the command line with the skeleton `ffmpeg -i
+  /input/<in1> [-i /input/<in2> …] -o /output/<out>`. **UI (fass/ui.py, 3
+  edits):** `#enterbtn` in the button row (after Save, before Mediainfo);
+  `cmdButtons()` gains `$('enterbtn').disabled = !inp` (the instruction is
+  IGNORED by design — that is the point; no new input listener, so the
+  count pin of exactly four `addEventListener('input', cmdButtons)` is
+  unchanged); `enterPath(v, isOut)` (bare filename → `/input/<name>` for
+  inputs / `/output/<name>` for the output; a value already starting with
+  `/` or carrying a `://` URL is used as-is — covers chained
+  `/input/step1.mp4` and stream URLs); `enterCmd()` (mainInputs() split of
+  `#inp` → the multi-`-i` list, + the `.extra-inp` rows, + the `#wm`
+  watermark LAST; empty `#out` → no `-o`; then a SYNTHETIC ready render —
+  `render({status:'ready', command, arguments: argv, summary, defaults,
+  warnings:[], validation_level:'manual', checks:[], evidence:null,
+  raw_llm:null})` — NO server call, which is what skips the LLM part;
+  `arguments` IS the real skeleton argv so an UNEDITED Run executes a bare
+  remux while an EDITED line goes through the same server-side
+  revalidation as any generated command; render() sets lastReady so Save
+  auto-enables). **Tests (tests/test_webinfo.py, 2 edits + 1 new):**
+  button-row test order pinned Save < Enter < Mediainfo; fresh-pane needle
+  now includes `id="enterbtn" disabled onclick="enterCmd()"` + the gating
+  expression `$('enterbtn').disabled = !inp` pinned; new
+  test_ui_enter_button_manual_skeleton pins the markup/title/order, both
+  functions, NO `fetch(` in either function body, the prefix rules
+  (`s.startsWith('/') || s.includes('://')` + the `/input`/`/output`
+  ternary), the mainInputs/extra-inp/wm/`-o` assembly, the synthetic-ready
+  fields, and `$('cmd').focus()`. **Verified:** test_webinfo + test_presets
+  56 passed; Node DOM-shim harness on the REAL extracted JS 11/11 (bare
+  in/out, multi `-i` no out, rtmp URLs as-is, chained /input/ out,
+  extras+watermark-last, leading `-i` not double-counted, absolute paths
+  as-is); full suite **1567 passed / 2 skipped (145.59 s)**; `node
+  --check` on the whole served script block OK; headless-Chrome click test
+  vs a live server on 8099 9/9 (page loads, script initialized, fresh-pane
+  disabled, enabled after fill, skeleton `ffmpeg -i /input/a.ts -i
+  /input/b.ts -o /output/out.mp4` EXACTLY in the textarea, result pane
+  shown, Save enabled, Enter ignores the instruction field, Clear
+  re-disables). (4) **Video stream copy — DELEGATED to a dispatcher
+  worker (job j_5566e75d4d, backend i7 LLM; worker process + git worktree
+  run on tr4 where the daemon lives, i7 = inference endpoint only, so
+  i7 looks idle while the job runs), RUNNING:** the mirror of 91f1bf1 for
+  video — the user's failing instruction "transcode audio to aac 180kbps
+  and copy video as is" → schema error "a video output needs a
+  video_codec" (plan.py:374). Brief: add "copy" to the video_codec
+  Literal + guard the codec-specific branches (ABR ladder,
+  video_profiles_for, pixel_format_error, video_codec_options,
+  preset/rc/cq/qp); mirror the audio-copy upfront planner block (no copy
+  for diagnostics/subtitles/container-can't-carry/ladder) + builder branch
+  `video_codec == "copy"` → `-c:v copy`, skip all encoder flags (leave
+  full-remux `-c copy` untouched); rules `_VIDEO_COPY` (copy the video
+  as-is / keep the video untouched / without re-encoding the video;
+  copy beats default encode; explicit codec + copy → clarification; fix
+  no-op check); llm.py prompt documents video_codec "copy" (REQUIRED —
+  the failing instruction goes through the LLM path); explain.py line;
+  12 + 5 test mirrors + bench-094 (user's exact) / bench-095 + ablation
+  pin 93→95; MANDATORY version bump (contracts_text). DONE = full suite
+  green (baseline 1566 + new) AND two commits (feature + bump). NOT yet
+  pushed/deployed — review the diff, integrate onto main, re-run the
+  suite, then push + i7 deploy only on the user's explicit green light.
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
