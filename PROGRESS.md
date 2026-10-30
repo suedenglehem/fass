@@ -34,7 +34,11 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   COMMITTED aa5c5f9 + bump e6e282a (v1.137036.aa5c5f9), PUSHED
   (c916513..cec7bd2) + i7 DEPLOYED + live-verified — the user's
   bug-shape instruction came back ready via the direct second try
-  (first pass: parser error); suite 1640 passed / 2 skipped)):**
+  (first pass: parser error); suite 1640 passed / 2 skipped; remote
+  volume mapping (FTP/SFTP/S3) + S3 uuid naming COMMITTED 5eca3ab +
+  bump 0771014 (v1.137036.5eca3ab) — LOCAL, i7 DOWN (user away),
+  live-verified on tr4 host:8099 — s3/s3-uuid/ftp/sftp/none all green,
+  suite 1710 passed / 2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -376,8 +380,113 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   directly …', first pass's error preserved in errors; the
   multi-audio instruction came back ready via the LLM first pass
   (audio_add plan). i7 now runs v1.137036.aa5c5f9 — the
-  parser/planner-rejection wall is closed. Next: the user's browser
-  test.**
+  parser/planner-rejection wall is closed. The user's browser test
+  confirmed "all is fine for now" (2026-10-30) — the round is CLOSED.
+  Next (parked, the user's call): the OPEN 48kbps NLU issue (CLI
+  concat "…48kbps aac audio" emitted -b:a 160k), multi-input +
+  blackdetect RAG E2E, the optional docs/DEVELOPMENT.md codec list;
+  the docs commit 6da28da (this round's PROGRESS/HANDOFF close-out)
+  is LOCAL, unpushed — rides with the next user-authorized push.**
+  (8) **Remote volume mapping (FTP/SFTP/S3) + S3 uuid naming —
+  IMPLEMENTED + COMMITTED `5eca3ab` (10 files, +2352/−14) + version
+  bump `0771014` (v1.137036.5eca3ab). i7 was DOWN all round (user away
+  ~2 h) → NO i7 deploy; live-verified on the tr4 HOST dev server,
+  port 8099, against the tr4 test stores (MinIO 127.0.0.1:9100
+  path-style minioadmin, pure-ftpd 127.0.0.1:21 ftpuser, host sshd
+  127.0.0.1:22 andrei, LocalStack 127.0.0.1:4566).** Each of the three
+  volumes (/input, /output, /log) can now be mapped to a remote store:
+  **config** — `RemoteVolumeConfig` (fass/config.py: type
+  none|ftp|sftp|s3, host, port (None = default 21/22/443), user,
+  password, bucket (s3), path, region (s3), secure (s3 http/https)),
+  `extra="forbid"`, defaults make legacy config.json load unchanged;
+  `VolumesConfig` gains sibling `input_remote` / `output_remote` /
+  `log_remote` (siblings, not nesting — `dockerctl._binds` keeps
+  reading the host-path strings untouched). **Client (new
+  fass/remote.py)** — `RemoteVolume` ABC (fetch/upload/upload_tree/
+  list/delete/test, streamed, top-level list), `FtpVolume` (stdlib
+  ftplib, explicit passive, RFC 959 quoting via module `_q()` —
+  Python-3 ftplib has no quotefn; root-absolute `"/" + base`),
+  `SftpVolume` (paramiko lazy-imported, AutoAddPolicy, connect with
+  allow_agent/look_for_keys off + timeouts; relative/empty `path`
+  resolves against the REMOTE HOME via `sftp.normalize(".")`, the
+  sftp-client initial-cwd semantics — absolute paths used as-is,
+  `_base_abs` flag captured before `_norm_prefix` strips the slash),
+  `S3Volume` (boto3 lazy; host set → `endpoint_url` +
+  `addressing_style="path"` — MinIO 404s on virtual-host — scheme from
+  `secure`; host empty → real AWS with region + keys),
+  `make_volume()` dispatch + `remote_for(which)` live-reads
+  `load_config()` per call (config changes need no restart; the
+  running process never cached volumes before). **/input semantics**
+  (download-first) — `execute.ensure_input_local(name)`: local-exists
+  short-circuit, 30 s negative cache, 5 s error cache (dead-remote
+  guard), per-name lock, FAIL-OPEN (a RemoteError never propagates —
+  just a note), cached so the hot `resolve_input_name` path doesn't
+  re-fetch; wired into `resolve_input_name` (covers every probe/plan/
+  not-found consumer transparently), `resolve_paths` (run start), and
+  `volume_file` (mediainfo/tsanalyze/vviz/frame//media endpoints).
+  **/output + /log semantics** (upload-after) —
+  `execute._sync_run_to_remote(run_id)` in the `finally` of
+  `_watch` + `_watch_sequence` after the final `_update`: output
+  volume — on status "success" only — the recorded output file, the
+  verbose log `log/<id>.log`, and the `http/<id>/` subtree via
+  upload_tree (HLS/DASH + master.m3u8); log volume — any status —
+  `runs/<id>.log` + `runs/<id>.json`, only when `run_dir()` is under
+  /log (docker/dev layout); upload failure → run-record note, never
+  raises (runs in the finished watcher thread). **S3 uuid naming**
+  (user option, s3-only, per-volume) — input: objects keyed by UUID,
+  real basename in S3 metadata `fass_name` (S3_NAME_META); list()
+  shows the metadata name, fetch downloads the UUID key and renames
+  to the basename; output: stored under a generated UUID key with the
+  real basename in metadata; bare top-level names only. **API
+  (api.py)** — `GET /v1/files?dir=…` merges remote-only top-level
+  entries with `"remote": true` (local wins on name collision,
+  fail-open); `POST /v1/config/remote-test` tests the SUBMITTED
+  unsaved values (llm-test precedent) → {ok, which, type, message},
+  RemoteError → 400; `copy-to-input` uploads the copied file to the
+  input remote (best-effort) so the remote stays the input source of
+  truth. **UI (ui.py, non-f-string — escape-verified clean)** — three
+  `<details class="remote-block">` under the Volumes row (input/
+  output/log), each: type select, host, port, user, password
+  (type="password"), path, bucket, region, secure + a **Test
+  (unsaved values)** button; label notes ("port blank = default
+  21/22/443"; "S3: host blank = AWS"; "under docker, on-host
+  services = host.docker.internal"); JS `readRemote(p)` /
+  `loadRemote(p, rc)` / `remoteTest(which, p)`; **`readCfg()`
+  extended to send all three `*_remote` objects** — without it the
+  full-replacement PUT /v1/config would clobber the mappings.
+  **Docker** — compose `extra_hosts: ["host.docker.internal:host-
+  gateway"]` on the fass service (host 127.0.0.1 unreachable from
+  the container); dockerctl `recreate()` body HostConfig + `old_spec`
+  capture + `compose_preview` all carry `ExtraHosts` or Apply would
+  silently drop it. **Packaging** — pyproject `[storage] =
+  [boto3, paramiko]` (ftp = stdlib); Dockerfile `.[api,storage]`.
+  **Tests — tests/test_remote.py, 70 hermetic tests (no real
+  network)**: config model (defaults / full round-trip / extra=forbid
+  / legacy load), make_volume dispatch + missing-extra error,
+  remote_for live-read, fake volume + monkeypatched remote_for →
+  ensure_input_local download-then-cache / negative cache / error
+  fail-open / no-remote no-op, resolve_input_name / resolve_paths /
+  volume_file over a remote-only file, _sync_run_to_remote success-
+  only output / always log+sidecar / upload_tree subtree / run_dir
+  guard / failure→note, API files merge + remote-test ok/error +
+  copy-to-input upload, FTP against a fake ftplib (incl. the real
+  API pin: mkd/rmd, no quotefn), SFTP via a FAKE paramiko module
+  injected in sys.modules (relative base → remote home; absolute base
+  as-is). **Full suite: 1710 passed / 2 skipped / 0 failed
+  (143.61 s).** **Live matrix on tr4:8099 (i7 down, host dev server
+  reaches 127.0.0.1 directly) — ALL GREEN, per store: s3 17/17,
+  s3-uuid 18/18, ftp 17/17, sftp 17/17, none (regression) 6/6:**
+  remote-only input listed `remote: true`, remote-test ok ×3, a
+  successful run (input downloaded locally, output + verbose log +
+  runs/<id>.log + runs/<id>.json mirrored on the remote, verified by
+  fetching them back), uuid mode raw-key check (UUID key +
+  fass_name=out1.mp4 metadata), a forced-failing run (output NOT
+  uploaded, log + record uploaded). **Next: push (same user-authorized
+  sequence) — i7 deploy DEFERRED until i7 is back (the host was down
+  all round); `_detect_distorted` scans local /output only (a
+  distorted clip existing only on a remote output is out of scope);
+  stream-purge deletions are not mirrored to remotes (noted, out of
+  scope).**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
