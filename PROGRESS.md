@@ -19,7 +19,10 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   probe, so it missed it), FIXED in cac7cda + bump da6eeed
   (v1.137036.cac7cda) + regression test, suite 1594 passed / 2 skipped,
   i7 REDEPLOYED + live-verified: the user's exact instruction returns
-  ready/preflight with -c:v copy -c:a aac -b:a 180k)):**
+  ready/preflight with -c:v copy -c:a aac -b:a 180k; second audio
+  track (audio_add) + one second LLM try on unsupported COMMITTED
+  d1c41d0 + bump 0f32519 (v1.137036.d1c41d0), LOCAL — not yet
+  pushed/deployed, suite 1627 passed / 2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -176,7 +179,54 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   -hide_banner -loglevel error -i /input/titan_double.mp4 -map
   0:v:0 -map '0:a?' -c:v copy -c:a aac -b:a 180k -movflags
   +faststart titan_double.mp4`, LLM 8080 → 200, containers
-  unharmed (fass-http pre-existing Exited(127) ignored).
+  unharmed (fass-http pre-existing Exited(127) ignored). (5)
+  **Second audio track (audio_add) + one second LLM try on
+  unsupported — IMPLEMENTED + COMMITTED `d1c41d0` (14 files,
+  +722/−19) + version bump `0f32519` (v1.137036.d1c41d0; LOCAL,
+  NOT yet pushed/deployed):** the user's remux — "copy audio and
+  video tracks from the first video, add the audio track of the
+  second video as a second audio track" → `ffmpeg -i A -i B -map
+  0:v:0 -map '0:a?' -map 1:a:0 -c:v copy -c:a copy` (NO -shortest —
+  the shorter added track must not cut the video). (a) audio_add:
+  `AudioAddOp(asset_id)` (schema/plan.py; at most one per plan);
+  rules NLU (rules.py) — "…add the audio track of <file> as a second
+  audio track" phrasings, binding by named file, fallback to the sole
+  other media asset (default note "only other media file"), no other
+  asset → needs_clarification, audio_add beats audio_replace on the
+  same asset; planner (planner.py) — audio_add is NOT in forced_ops
+  (an audio_add-only plan stays copy mode), the second-audio input is
+  the LAST input, copy plan = single `-c copy` + 0:v:0 / 0:a? / N:a:0
+  maps, the user's `-c:v copy` request rides the re-encode builder
+  (`-c:v copy -c:a copy`), validation rejects a remote stream /
+  silent container / audio-only output / removed or replaced audio /
+  GPU + QSV / a speed change / a resample target / an audio-domain
+  filter / a main input without audio (exact PlanError string per
+  conflict). 17 planner/builder tests (4 argv pins: the copy plan,
+  the user's copy/copy case, hevc→h264 re-encode, watermark + aa
+  input order; 13 exact-string PlanError tests) + 6 rules tests + 1
+  media E2E (the generated argv really runs on lavfi clips; output
+  probed — 1 video stream, 2 audio streams, h264 intact, full 15 s
+  against a 3 s second input, proving no -shortest) +
+  bench-096/097/098 (98 entries; test_m11_ablation's count test now
+  counts the file instead of pinning 95). (b) Second LLM try: when
+  the first pass (rules) answers unsupported, generate() runs ONE
+  retry on the LLM adapter with a user-confirmed explicit-path query
+  — `generate ffmpeg command for <instruction verbatim, `.` appended
+  if not sentence-terminated> input1=<full /input path>, input2=…,
+  output=<full /output path>`; ALL inputs in given order, full
+  deployment paths via the volume dirs (bare names when unmounted);
+  a READY retry plan replaces the result (adapter="llm" + defaults
+  note "…this plan came from a second LLM pass over the instruction
+  with the file paths made explicit"); a non-READY retry or no LLM
+  configured leaves the first pass's unsupported unchanged. 3
+  hermetic tests (the exact query string pinned). conftest.py:
+  session-autouse fixture pops ANTHROPIC_API_KEY / FASS_LLM_API_KEY /
+  FASS_LLM_HOST / FASS_LLM_PORT / FASS_LLM_MODEL / FASS_LLM_PROVIDER
+  + points FASS_CONFIG at an empty `{}` (the tr4 shell carries a real
+  ANTHROPIC_API_KEY — without the fixture the retry would reach the
+  real provider). **Full suite: 1627 passed / 2 skipped / 0 failed
+  (143.76 s).** Next: push + i7 deploy + live-verify with the
+  user's exact instruction — on explicit green light only.
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
