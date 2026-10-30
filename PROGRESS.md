@@ -31,9 +31,10 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (v1.137036.7f1a7ad) PUSHED + i7 DEPLOYED + live-verified — both of
   the user's exact instructions came back ready on i7; the second try
   EXTENDED to parser-error + planner-rejected-plan first passes —
-  COMMITTED aa5c5f9 + bump e6e282a (v1.137036.aa5c5f9), LOCAL —
-  awaiting the user's push/deploy green light; suite 1640 passed /
-  2 skipped)):**
+  COMMITTED aa5c5f9 + bump e6e282a (v1.137036.aa5c5f9), PUSHED
+  (c916513..cec7bd2) + i7 DEPLOYED + live-verified — the user's
+  bug-shape instruction came back ready via the direct second try
+  (first pass: parser error); suite 1640 passed / 2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -331,8 +332,9 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (7) **The second LLM try EXTENDED to parser error +
   planner-rejected plans — IMPLEMENTED + COMMITTED `aa5c5f9`
   (2 files, +243/−28) + version bump `e6e282a`
-  (v1.137036.aa5c5f9); LOCAL — NOT pushed, NOT deployed, awaiting the
-  user's explicit green light:** on i7 the first pass IS the LLM
+  (v1.137036.aa5c5f9); PUSHED (c916513..cec7bd2) + i7 DEPLOYED +
+  live-verified (2026-10-30, user-authorized):** on i7 the first pass
+  IS the LLM
   schema pass (get_adapter("auto") → LLM when a provider is
   configured); a reply that does not parse into an EditPlan (parser
   error) and a plan the planner rejects (an audio-replacement asset
@@ -361,9 +363,21 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   alone; parser error + valid command → ready + 'failed to produce a
   valid plan' note; parser error + direct fails → error, 'parser
   error: …' + 'second LLM try failed: …'). **Full suite: 1640 passed
-  / 2 skipped / 0 failed (143.92 s). Next: the user's green light for
-  push + i7 deploy (i7 runs v1.137036.7f1a7ad — the
-  parser/planner-rejection wall remains until this is deployed).**
+  / 2 skipped / 0 failed (143.92 s). Done (green light 2026-10-30):
+  PUSHED (c916513..cec7bd2), i7 ff-merged + rebuilt + force-recreated,
+  live-verified — healthz ok, /v1/env reports v1.137036.aa5c5f9, and
+  the user's exact bug-shape instruction (720p/h264/mp2/mpegts
+  combine, titan_double.mp4 + titan.ts, auto adapter) came back READY
+  via the DIRECT SECOND TRY: the first pass died with 'parser error:
+  Unterminated string starting at: line 6 column 7 (char 87)' (a hard
+  error on the 7f1a7ad deploy), the second approach got the raw
+  command, the gate passed, defaults logged 'the first attempt failed
+  to produce a valid plan — the second approach asked the LLM
+  directly …', first pass's error preserved in errors; the
+  multi-audio instruction came back ready via the LLM first pass
+  (audio_add plan). i7 now runs v1.137036.aa5c5f9 — the
+  parser/planner-rejection wall is closed. Next: the user's browser
+  test.**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
