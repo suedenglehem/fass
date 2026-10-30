@@ -26,7 +26,10 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (rules pass: unsupported) reached the SECOND LLM TRY and came back
   ready/preflight: -i titan.ts -i titan.mp4 -map 0:v:0 -map '0:a?'
   -map 1:a:0 -c:v copy -c:a copy, no -shortest; suite 1627 passed /
-  2 skipped)):**
+  2 skipped; the second LLM try REWORKED as a DIRECT raw-command call
+  (no EditPlan schema) — COMMITTED 7f1a7ad + bump 918393e
+  (v1.137036.7f1a7ad), LOCAL, awaiting the user's push/deploy green
+  light; suite 1635 passed / 2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -247,7 +250,72 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   **Next: the user is browser-testing. Carry-forward (user's call,
   not started): multi-input + blackdetect RAG E2E; optional
   docs/DEVELOPMENT.md codec list; OPEN NLU issue — CLI concat "…48kbps
-  aac audio" emitted -b:a 160k not 48k.**
+  aac audio" emitted -b:a 160k not 48k.** (6) **The second LLM try
+  REWORKED as a DIRECT raw-command call (no EditPlan schema) —
+  IMPLEMENTED + COMMITTED `7f1a7ad` (4 files, +290/−89) + version bump
+  `918393e` (v1.137036.7f1a7ad); LOCAL — NOT pushed, NOT deployed,
+  awaiting the user's explicit green light:** the user's bug report —
+  the shipped second try (d1c41d0) re-routed through `get_adapter("llm")`,
+  whose system prompt is built from the EditPlan JSON schema, so the
+  model answered with an EditPlan and the planner then rejected it
+  ("audio-replacement asset 'in1' is not an audio file") while the raw
+  output showed the plan JSON — but feeding the agreed prompt BY HAND
+  ("generate ffmpeg command for: …") returns the correct raw command.
+  Fix (`fass/pipeline.py`): `_llm_direct_command(instruction, assets,
+  output_filename, evidence_block)` does ONE direct provider call —
+  `llm._chat_openai(system, query)` / `llm._chat_anthropic(system, query)`
+  — with a minimal system prompt ("You generate FFmpeg commands. Answer
+  with the ffmpeg command only — no explanations, no markdown"; NO
+  schema) and the query `generate ffmpeg command for: <instruction
+  verbatim, `.` appended if not sentence-terminated> input1=<full
+  /input path>, input2=…, output=<full /output path>` (user-specified
+  colon after "for"; ALL inputs, main first, full deployment paths;
+  RAG evidence block appended when present). The free-form reply is
+  parsed by `_extract_ffmpeg_command` (fence marker lines dropped;
+  first line starting with "ffmpeg" taken, bullet/bold markers allowed;
+  backslash continuations joined with a single space; stops at prose
+  after the command; None when no command), `shlex.split`-ed, and run
+  through `validate_argv` — the SAME gate an expert hand-edit goes
+  through (flags from the builder vocabulary; only the final token may
+  be a bare path). On pass → SYNTHETIC ready response: status "ready",
+  adapter "llm", arguments = the validated argv, command =
+  render_posix(argv), plan None, validation_level "static", a summary
+  note, a defaults note "the first attempt (structured plan) found no
+  supported plan — the second approach asked the LLM directly for the
+  ffmpeg command string, with the file paths made explicit, and it
+  passed the command validation gate", and a warning per input not
+  found on this machine. On ANY failure → the first pass's unsupported
+  stands and `resp.errors.append("second LLM try failed: " + <the
+  second try's own message>)` — "no LLM provider configured" /
+  "LLM call failed: {e}" / "the reply contains no ffmpeg command — see
+  the raw LLM output" / "the command has unbalanced quotes: {e}" /
+  "the command failed validation: {gate problems}" — and the verbatim
+  second reply becomes `resp.raw_llm` (raw_override). User's logging
+  spec, both halves: the SUCCESS is logged (defaults note above) and
+  the FAILURE shows the second try's own error message. UI
+  (`fass/ui.py`): the unsupported render branch now shows
+  `<h2>Second try (direct LLM)</h2>` + the errors list above the
+  evidence. `fass/batch.py`: `_snippet` now LEADS with the first
+  pass's unsupported fragment — resp.errors is meta about the retry,
+  not the file's reason (the old errors-first order showed "second LLM
+  try failed: no LLM provider configured" instead of "sepia: …" in the
+  batch table; caught by
+  test_run_batch_reports_a_rejected_file_and_keeps_going).
+  `tests/test_pipeline_rag.py`: the 3 old schema-path retry tests
+  replaced by 5 direct-try tests (query pinned VERBATIM incl. the
+  colon; system prompt asserted schema-free; validated argv returned
+  + render_posix command + raw reply + plan None + static level + the
+  first-attempt/second-approach defaults note; no-command reply →
+  first pass stands + "no ffmpeg command" error + raw reply surfaced;
+  gate rejection (-definitely_not_a_flag) → "failed validation" /
+  "unknown flag"; transport error → "LLM call failed" / "connection
+  refused"; no LLM configured → "no LLM provider configured") + 6
+  `_extract_ffmpeg_command` unit tests (bare, fenced with prose,
+  backslash continuations, bullet start, stops at prose, absent).
+  **Full suite: 1635 passed / 2 skipped / 0 failed (143.87 s).**
+  **Next: the user's green light for push + i7 deploy (i7 still runs
+  v1.137036.d1c41d0 — the user's browser test of the combine
+  instruction will hit the schema-path bug again until redeployed).**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
