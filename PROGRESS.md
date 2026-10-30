@@ -5,7 +5,84 @@ M10 work can be continued **on the i7 machine** with no other context source
 needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
 (dumped into §6), and live probes of both machines this session.
 
-- **Last state (2026-10-29, programmatic-fill row re-gate + Run now restore —
+- **Last state (2026-10-30, audio stream copy COMMITTED 91f1bf1 + version
+  bump 3a15f7c, PUSHED + i7 DEPLOYED + live-verified; versioning rule
+  commits now also pushed + on i7; "Enter" button REQUESTED + NOT STARTED;
+  suite 1566 passed / 2 skipped):**
+  (1) **Versioning rule (user, for life of project):** on EVERY code commit —
+  recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
+  `fass/version.py`, commit again (the bump references the code commit it
+  follows; no recursive bump; docs-only commits do not trigger a bump;
+  VERSION_ID 1.137036 changes only when the user says so). Committed:
+  `0828bd6` (ui no longer prepends v) + `dd7159f` (version.py
+  v1.137036.0828bd6 + test_cli regex pin `fass v\d+\.\d+\.[0-9a-f]{7}`);
+  first application on the audio copy: code `91f1bf1` + bump `3a15f7c`
+  (v1.137036.91f1bf1). ALL four PUSHED + on i7 (the bump ride-alonged
+  with the audio-copy deploy). `fass --version` →
+  `fass v1.137036.91f1bf1`. **PENDING:** docs commit recording the rule
+  (this bullet), rule memorization (mycelium + file memory), report to
+  user. (2) **Audio stream copy (user bug: "convert file to
+  video h264 baseline profile 600kbps video and copy audio as is" → LLM
+  error "audio stream copy is not supported"):** DONE, COMMITTED
+  `91f1bf1` (9 files, +315/−15) + version bump `3a15f7c`, PUSHED +
+  i7 DEPLOYED + live-verified (see the deploy note at the end of the
+  bullet).
+  `AudioMode.COPY` (schema/plan.py; audio-only mode still rejects it,
+  message updated); planner (planner.py): re-encode builder else-branch
+  emits `-c:a copy` + defaults note (gif/no-audio container → `-an` + drop
+  note); upfront validation block (before the `errors` raise): copy vs
+  audio_resample / speed / audio-domain filter / combine / filtergraph /
+  audio_bitrate_kbps / audio_codec_options / variants(ABR) / subtitles-mode
+  / named-codec mismatch (known codec ≠ named → error; no metadata + named
+  codec → error) / container can't carry the input codec (matrix audio
+  list; empty list = drop, not error); device-output guard (plays decoded
+  audio); ladder guard extended for COPY; copy+audio_replace → replace
+  wins with a warning (warned after the raise); same-codec shape still
+  full-remuxes (mode="copy" path unchanged). Rules NLU (rules.py):
+  `_AUDIO_COPY` regex (copy the audio / as-is / untouched / unmodified /
+  unchanged / as it is / bit-for-bit, before AND after the noun; no/without/
+  don't re-encode the audio) → "copy" state in `_detect_audio` (copy beats
+  keep; remove+copy → "conflict"); audio_replace nuls copy; ladder_conflict
+  + subtitles mode_conflict include "copy"; conflict question generalized;
+  new-plan + `_merge_revision` set `AudioMode.COPY`; "copy" now counts as
+  an edit in the no-op check (`audio not in ("remove", "copy")`). llm.py
+  prompt documents "copy" + its constraints (the LLM path that produced the
+  original error). explain.py: "Audio: copied as-is (-c:a copy)". 18 new
+  tests (user's exact case → `-c:a copy` + `-b:v 600k`; remux; named-codec
+  match/mismatch; every conflict; gif drop; replace-warns) + benchmark
+  bench-092/093 (test_m11_ablation count 91 → 93). User's exact
+  instruction now yields: `ffmpeg -i clip.mp4 -map 0:v:0 -map 0:a? -c:v
+  libx264 -b:v 600k -maxrate 600k -bufsize 1200k -profile:v baseline
+  -pix_fmt yuv420p -c:a copy -movflags +faststart clip_out.mp4`.
+  **i7 deploy (user-authorized "propagate audio-copy to i7"):** i7
+  ff-merged 138a563→3a15f7c (the local `docker/compose.yaml` opt-in +
+  `fass/probe/ffprobe.py` patch verified intact through the merge),
+  `docker compose -f docker/compose.yaml build fass` +
+  `up -d --force-recreate fass`. Live-verified: healthz ok; in-container
+  + `/v1/env` version `v1.137036.91f1bf1`; the user's EXACT instruction
+  on titan_double.mp4 → status ready with `-c:a copy` in the argv + both
+  audio-copy notes ("audio copied as-is; the input audio codec must be
+  supported by MP4" / "…(-c:a copy) — the input's codec and bitrate pass
+  through untouched"); fass-worker / fass-rag unharmed. (3) **"Enter"
+  button — REQUESTED, NOT STARTED (user said "stop" mid-investigation):**
+  on the FFmpeg pane, between Save and Mediainfo — for power users who
+  write ffmpeg commands themselves: skips the LLM/NLU, prefills the
+  command line with the skeleton `ffmpeg -i /input/<inputfile>
+  [-i /input/<inputfile2> …] -o /output/<outputfile>` — input values from
+  the "Input video" field (multiple `-i` pairs → multiple `-i /input/…`),
+  output from the "Output" field. Investigation reached: button-row markup
+  ui.py:235-241; `cmdButtons()` gating ui.py:579-594; `render()` command
+  textarea `#cmd` + `#cmdorig`/`#cmdargs` + `runCmd()` ui.py:809-886 (Run =
+  POST /v1/runs; an expert edit of `#cmd` is sent as `command`, revalidated
+  server-side; `loadPreset()` shows the restore-by-synthesis pattern:
+  `render({status:'ready', command, arguments, …})` without any
+  server call). OPEN design questions when resuming: where the skeleton
+  renders (likely a local synthetic render() call, preset-style), the
+  `/input/`-prefix rules (plain filename → `/input/<name>`; URL `://` →
+  as-is; output plain name → `/output/<name>`, leading `/` or `://` →
+  as-is — covers the `/input/step1.mp4` chaining form), and whether the
+  extra-input rows join the `-i` list.
+- **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
   live-testing the deployed row-state build (dae2e31). (1) "buttons are
