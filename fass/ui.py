@@ -2069,6 +2069,16 @@ async function fileAction(tool) {
   }
 }
 
+// Deep-link: #<tab> opens that tab (cmd / files / runs / player / info /
+// rag / cfg) — e.g. <server>/#cfg lands on the Config tab, and changing the
+// hash while on the page switches tabs too.
+function _hashGo() {
+  const t = location.hash.slice(1);
+  if (document.getElementById('tab-' + t)) showTab(t);
+}
+_hashGo();
+addEventListener('hashchange', _hashGo);
+
 loadCfg().catch(e => $('cfg-status').textContent = 'config load failed: ' + e);
 </script>
 </body>
