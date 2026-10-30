@@ -40,7 +40,25 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   DEPLOYED + live-verified v1.137036.5eca3ab (i7 was DOWN all round;
   after the host reboot strata LLM needed /usr/local/bin/strata3 start
   — functional /v1/commands ready), live-verified on tr4 host:8099 —
-  s3/s3-uuid/ftp/sftp/none all green, suite 1710 passed / 2 skipped)):**
+  s3/s3-uuid/ftp/sftp/none all green, suite 1710 passed / 2 skipped;
+  then `fass mcp` stdio server + `--case FILE` COMMITTED 15e448c + bump
+  d8be193 (v1.137036.15e448c) + LLM thinking mode OFF by default
+  COMMITTED 7f2505c + bump 17048a0 (v1.137036.7f2505c) + in-page #tab
+  deep-link fix COMMITTED 9acfb93 + bump ca7ca65
+  (v1.137036.9acfb93), suite 1728 passed / 2 skipped, ALL PUSHED
+  (origin/main was 85e8bc7, now at the docs commit); the 100-test MCP
+  run COMPLETE (3 lanes, generation-only first pass; recap
+  ready=41 / unsupported=38 / error=20 / needs_clarification=1 —
+  full per-test table + clusters in tests/prompts/RECAP.md +
+  RECAP.json, copied from /tmp/fass-100/ and kept UNCOMMITTED with
+  the harness in tests/prompts/harness/ per the user's "don't commit
+  the test folder" — durable on disk past the reboot); NEXT (user:
+  "try to find fixes to make max of the failed cases to work"); 7
+  UI-tab full-page screenshots captured headless into screenshots/
+  (rsynced to i7 on request; committed with the docs) — found + fixed
+  a real in-page #deep-link bug along the way (the 9acfb93 hashchange
+  handler); README expanded with every visible UI feature (docs
+  commit)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -507,6 +525,109 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   `_detect_distorted` scans local /output only (a distorted clip
   existing only on a remote output is out of scope); stream-purge
   deletions are not mirrored to remotes.**
+  (9) **2026-10-30 (evening) — `fass mcp` server + `--case FILE` + LLM
+  thinking mode OFF by default + the 100-test MCP run (IN FLIGHT) —
+  COMMITTED 15e448c + bump d8be193 (v1.137036.15e448c) and 7f2505c +
+  bump 17048a0 (v1.137036.7f2505c), both LOCAL/unpushed (origin/main
+  85e8bc7), suite 1728 passed / 2 skipped:** user built 100 test cases
+  under `tests/prompts/assets/<N>/` (prompt.txt + media, untracked,
+  stays uncommitted) and asked for a full first pass — GENERATION only
+  (generated commands NOT executed), report.txt per case next to the
+  assets, recap at the end, failed cases worked on later. (a) `fass
+  mcp` stdio server (FastMCP; pyproject `[mcp]` extra pinned
+  `mcp>=1.2,<2` — mcp 2.x renamed FastMCP): tools generate, run_case,
+  probe, env_info; case JSON {instruction, assets {id:
+  "kind:file"|file}, assets_dir, output, adapter, execute?}; run_case
+  shares the CLI's _build_case_assets/_execute_steps; base_dir =
+  assets_dir or the case file's dirname; CLI also gained `--case FILE`.
+  (b) Thinking mode OFF by default (user-approved: "make it default
+  config in fass"): LLMConfig.thinking (default False) + env fallback
+  FASS_LLM_THINKING (1/true/on/yes); the openai request path pins
+  `chat_template_kwargs: {"enable_thinking": thinking}` on every
+  request; self-heal — HTTP 400 whose body mentions "chat_template"
+  → one plain retry + `self._no_template_kwargs` latch for the
+  adapter's lifetime (unrelated 400s re-raise, no latch); UI checkbox
+  in the LLM row; 9 new tests. (c) 100-test harness
+  `/tmp/fass-100/run.py <start> <end> <lane>`: per test — prompt.txt
+  verbatim; media = folder minus sidecars; order = first mention in
+  the prompt (fallback manifest.json "files"); ids main /
+  watermark,img2… / in1,in2…; output from the "output file X" regex
+  (fallback out<N>.mp4, flagged); fresh lane input dir as
+  FASS_INPUT_DIR; one fresh `python -m fass mcp` stdio server per
+  test, run_case called with the case path; report.txt next to the
+  assets (mapping, status, command/arguments/steps, full response
+  JSON). FASS100_CONFIG env override added (config-i7.json = host
+  192.168.0.33 model "qwen3.8-27b" — user-confirmed alias of the same
+  swift-1.5-iq3_xxs strata; offload target for re-runs). (d) Lanes:
+  mine = background bash bjp5746ik (tests 1-34, lane a); dispatcher
+  jobs j_ba22473d2b (35-67, lane b, i7 backend) and j_adb780eabe
+  (68-100, lane c, tr4-secondary backend), started 21:59Z. Smoke
+  tests 1-2: 21s + 8s (was ~150s with thinking on), adapter llm,
+  test 1's concat graph/labels verified correct. **COMPLETE
+  (2026-10-31, early):** all 100 report.txt collected; recap.py
+  aggregates the embedded `--- full response JSON ---` block of each
+  report → /tmp/fass-100/recap.json + recap.md (per-test table).
+  Distribution: **ready=41, unsupported=38, error=20,
+  needs_clarification=1** (test 60, crossfaded.mp3 — check the
+  question was fair). Lane split a/b/c: ready 15/8/18, unsupported
+  13/15/10, error 6/9/5. Unsupported clusters: asetpts/
+  timestamp-rebase (4,12,15,41,42,45,48,59 — biggest gap) ·
+  -stream_loop/-loop (25,35,45,64,65,79) · -metadata:s language tags
+  (37,51,85,100) · pan filter (29,42,46,49) · -r fps (5,71,95) · -map
+  positional specifiers (80,96,100) · one-off filters blend /
+  select+xstack / alphamerge / geq / afftdn / sidechaincomp /
+  asetrate-expr (16,25,38,56,68,75,76) · TS PID targeting (11,36) ·
+  raw formats (16,17) · stray -y (18,20,46,64,65). Error clusters:
+  pcm_s24le-in-MOV not in the codec table (22,28,31) · audio-graph
+  ops outside the schema (pan / join channel_map / dcshift: 26,39,
+  44,50,54,57) · stream-copy into incompatible containers (mpeg2→
+  mxf 30, hevc→mkv 83,93) · copy-vs-retime conflicts (10,43,58,72) ·
+  schema value-type issues (watermark scale_percent float, yadif.
+  mode, pixel_format, filtergraph+watermark clash: 63,66,69,73).
+  Takeaway: ~25 of the 38 unsupported = four fixable vocabulary gaps
+  (asetpts, loop, stream metadata, pan); most errors are fass
+  validating correctly (though the codec table may be too narrow —
+  pcm_s24le in MOV is legitimate); the second LLM try rarely rescues
+  raw-flag slips (-y, -r, -map 0:0). NEXT (user, 2026-10-31: "try to
+  find fixes to make max of the failed cases to work"): the fix pass —
+  start with the four vocabulary clusters, re-run the affected cases
+  through the harness (tests/prompts/harness/, uncommitted) and
+  update tests/prompts/RECAP.md as cases flip to ready.
+  (9.5) **2026-10-31 (early) — UI-tab screenshots + in-page #deep-link
+  fix + detailed README (ALL UNCOMMITTED):** user asked for
+  full-page headless-Chrome screenshots of all 7 UI tabs into
+  `screenshots/` (Puppeteer approved): FFmpeg.png, Files.png,
+  Runs.png, Player.png, Info-Log.png (slash → hyphen), RAG.png,
+  Config.png — 1920-wide fullPage, one FRESH page per tab. First
+  capture showed all 7 on the FFmpeg tab: a hash-only `page.goto` is a
+  SAME-DOCUMENT navigation (no reload) → the deep-link ran once at
+  initial load and never again. Two fixes: fresh page per tab in
+  shot.js, and a real product fix in ui.py — `_hashGo()` +
+  `hashchange` listener (in-page `#<tab>` changes now switch tabs).
+  Staged representative state on a throwaway server (tr4 port 8099,
+  FASS_RUN_DIR=/tmp/fass-shot/runs to isolate from the stale
+  /log/runs that run_dir() picks up on this host): 3 runs (HLS
+  transcode 240p → success with master.m3u8 + hls_240p_0.m3u8 listed
+  in the Player tab, watermark → success, expert garbage command →
+  error), a saved preset, prompts. Suite after the ui.py change:
+  1728 passed / 2 skipped (baseline held). README.md expanded with
+  every visible UI feature (docs-only). rsynced screenshots/ →
+  andrei@i7:/dd2/andrei/fass/screenshots/ on request (2026-10-31).
+  Resolved (user, 2026-10-31: "commit and push" + "don't commit the
+  test folder"): ui.py committed as code 9acfb93 + bump ca7ca65
+  (v1.137036.9acfb93); README + screenshots/ + this close-out in the
+  docs commit; ALL pushed (origin/main was 85e8bc7); tests/prompts/
+  (RECAP.md/RECAP.json + harness/) stays UNCOMMITTED per the user —
+  the copies live on disk there, durable past the reboot.
+  **Carried park from item 8 unchanged (48kbps NLU, multi-input +
+  blackdetect RAG E2E, docs/DEVELOPMENT.md codec list).** **Next
+  unfinished task: when the lanes finish — collect all 100
+  report.txt → whole-testing recap (status distribution + one-liner
+  per failure) → the failed-case analysis pass (user: "you will work
+  later on failed cases"); re-runs can split across LLMs via
+  FASS100_CONFIG=/tmp/fass-100/config-i7.json.** ALSO IN FLIGHT this
+  round: user asked for a more detailed README.md covering all the
+  features visible in the interface (docs-only, no version bump).
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
