@@ -7,4 +7,4 @@ back at the code commit it follows — no recursive bump; docs-only commits
 do not trigger a bump).
 """
 
-__version__ = "v1.137036.91f1bf1"
+__version__ = "v1.137036.98fc460"
