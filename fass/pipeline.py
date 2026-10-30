@@ -519,17 +519,21 @@ def generate(
             if mux is not None:
                 muxers.append(mux)
             if edit.output.mode == "video":
-                if edit.output.gpu:
-                    # GPU plan (M6): the nvenc coder (the planner already
-                    # rejected codecs without a GPU form)
-                    enc = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
-                elif edit.output.qsv:
-                    # QSV plan (M8): the Quick Sync coder (the capability
-                    # gate already rejected codecs without a QSV form)
-                    enc = REGISTRY["qsv"]["coders"][edit.output.video_codec]["encoder"]
-                else:
-                    enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
-                encoders.append(enc)
+                if edit.output.video_codec != "copy":
+                    # "copy" has no encoder to check — the stream passes
+                    # through untouched (the planner already validated the
+                    # container carries the input codec).
+                    if edit.output.gpu:
+                        # GPU plan (M6): the nvenc coder (the planner already
+                        # rejected codecs without a GPU form)
+                        enc = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
+                    elif edit.output.qsv:
+                        # QSV plan (M8): the Quick Sync coder (the capability
+                        # gate already rejected codecs without a QSV form)
+                        enc = REGISTRY["qsv"]["coders"][edit.output.video_codec]["encoder"]
+                    else:
+                        enc = REGISTRY["video_codecs"][edit.output.video_codec]["encoder"]
+                    encoders.append(enc)
                 if edit.output.audio_mode.value == "encode" \
                         and audio_for(edit.output.container) is not None:
                     # A no-audio container (e.g. GIF) has no audio encoder —

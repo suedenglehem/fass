@@ -539,3 +539,21 @@ def test_bare_input_resolved_against_input_volume(gen, media, tmp_path, monkeypa
     assert r.status == "ready"
     assert not any("not found on this machine" in w for w in r.warnings)
     assert r.validation_level == "preflight"  # proves the file was probed
+
+
+def test_video_copy_preflight_with_real_probe(gen, media, tmp_path):
+    # Regression: the user's video-copy instruction reached the live API
+    # with a REAL probed input. generate() auto-probes local files, which
+    # takes the preflight branch — and that branch looked up the video
+    # encoder as REGISTRY["video_codecs"]["copy"] (KeyError → HTTP 500).
+    # "copy" has no encoder to check: the video-encoder check is skipped
+    # and the plan keeps its true validation level.
+    r = gen("transcode audio to aac 180kbps and copy video as is",
+            input_path=str(media.base),
+            output_filename=str(tmp_path / "out.mp4"))
+    assert r.status == "ready", r.errors
+    args = r.arguments
+    assert args[args.index("-c:v") + 1] == "copy"
+    assert args[args.index("-c:a") + 1] == "aac"
+    assert args[args.index("-b:a") + 1] == "180k"
+    assert r.validation_level == "preflight"  # the block actually ran
