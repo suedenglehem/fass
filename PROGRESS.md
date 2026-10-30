@@ -13,8 +13,13 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   stream copy INTEGRATED onto main — job j_5566e75d4d succeeded, feature
   98fc460 + bump 35370a2 (v1.137036.98fc460) merged as 2813db3 after a
   full diff review, version.py conflict resolved to the job's bump value,
-  dispatch_integrate recorded, suite 1593 passed / 2 skipped (local —
-  NOT pushed, NOT on i7; push + i7 deploy on the user's green light)):**
+  dispatch_integrate recorded — then PUSHED + i7 DEPLOYED; the i7
+  live-verify caught a real bug (preflight KeyError "copy" → HTTP 500 on
+  the user's exact instruction; the test suite's fake inputs never
+  probe, so it missed it), FIXED in cac7cda + bump da6eeed
+  (v1.137036.cac7cda) + regression test, suite 1594 passed / 2 skipped,
+  i7 REDEPLOYED + live-verified: the user's exact instruction returns
+  ready/preflight with -c:v copy -c:a aac -b:a 180k)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -114,7 +119,9 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   worker (job j_5566e75d4d, backend i7 LLM; worker process + git worktree
   run on tr4 where the daemon lives, i7 = inference endpoint only, so
   i7 looks idle while the job runs), SUCCEEDED + REVIEWED + INTEGRATED
-  onto main as merge 2813db3 (local):** the mirror of 91f1bf1 for
+  onto main as merge 2813db3, PUSHED + i7 DEPLOYED + live-verified
+  (incl. one live-only bug found by the i7 verify and fixed in
+  cac7cda):** the mirror of 91f1bf1 for
   video — the user's failing instruction "transcode audio to aac 180kbps
   and copy video as is" → schema error "a video output needs a
   video_codec" (plan.py:374). Brief: add "copy" to the video_codec
@@ -144,9 +151,32 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (v1.137036.1cdefcd vs v1.137036.98fc460) resolved to the job's bump
   value (98fc460 is now the newest code commit on main); full suite on
   the merged tree 1593 passed / 2 skipped / 0 failed (143.34s);
-  dispatch_integrate(j_5566e75d4d, 2813db3) recorded (accepted). NOT
-  yet pushed/deployed — push + i7 deploy only on the user's explicit
-  green light.
+  dispatch_integrate(j_5566e75d4d, 2813db3) recorded (accepted).
+  PUSHED (df67b8f..da6eeed) + i7 DEPLOYED (ff-merge + rebuild +
+  force-recreate, compose opt-ins + ffprobe patch verified intact
+  after the merge). i7 live-verify of v1.137036.98fc460 caught a
+  live-only bug: the user's exact instruction POSTed to /v1/commands
+  → HTTP 500, KeyError "copy" at pipeline.py:531 — generate()
+  auto-probes a REAL local input (media is not None) which takes the
+  preflight branch, and that branch indexed
+  REGISTRY["video_codecs"][video_codec]["encoder"] without a "copy"
+  guard (explain.py/planner were guarded; the preflight was the last
+  unguarded lookup — the test suite missed it because the
+  benchmark's fake clip.mp4 never probes, so media stayed None and
+  the block was skipped). Fix cac7cda: skip the video-encoder check
+  for "copy" (the muxer check stays; container-carries-codec is the
+  planner's matrix contract) + regression test
+  test_video_copy_preflight_with_real_probe (real probed input,
+  asserts ready + -c:v copy -c:a aac -b:a 180k + validation_level
+  preflight; confirmed to fail with KeyError "copy" on the unfixed
+  code). Bump da6eeed (v1.137036.cac7cda). Suite 1594 passed / 2
+  skipped (142.86s). i7 REDEPLOYED + live-verified: healthz ok,
+  /v1/env v1.137036.cac7cda, Enter-button markers intact, the
+  user's exact instruction → ready/preflight, command `ffmpeg
+  -hide_banner -loglevel error -i /input/titan_double.mp4 -map
+  0:v:0 -map '0:a?' -c:v copy -c:a aac -b:a 180k -movflags
+  +faststart titan_double.mp4`, LLM 8080 → 200, containers
+  unharmed (fass-http pre-existing Exited(127) ignored).
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
