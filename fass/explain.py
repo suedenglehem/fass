@@ -85,6 +85,11 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
             )
     elif ep.mode == "copy":
         lines.append("Remux (stream copy): no re-encoding — the input streams already match the target")
+    elif out.video_codec == "copy":
+        lines.append(
+            "Video: copied as-is (-c:v copy) — the input's codec and "
+            "bitrate pass through untouched (the input's video codec must "
+            f"be carried by {out.container.upper()})")
     else:
         vc = REGISTRY["video_codecs"][out.video_codec]
         if out.video_bitrate_kbps is not None:

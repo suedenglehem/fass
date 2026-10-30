@@ -1443,6 +1443,106 @@ def plan_execution(
                         f"{metadata.audio_codec} track — re-encode the audio "
                         "or choose a container that carries it")
 
+    # -- video stream copy (-c:v copy) --------------------------------------
+    # Mirror of the audio copy above: a copied video track passes through
+    # bit-for-bit — the input's codec and bitrate ride straight into the
+    # output container. Anything that decodes the video (a re-encoding
+    # trim, resize/crop/rotate/grayscale/speed/stabilize/tonemap, a
+    # watermark, burned-in subtitles, video filters, a multi-input
+    # combine, an opaque filtergraph) or steers a video encoder (bitrate,
+    # profile, preset, pixel format, GPU/QSV, codec options) contradicts
+    # it, and the container must carry the input's video codec. A
+    # stream-copy trim (-ss/-t on the compressed stream) is compatible.
+    # Diagnostic plans write no file, nothing to copy into.
+    if not diagnostic and out.video_codec == "copy":
+        if out.mode != "video":
+            errors.append(
+                f"a {out.mode} output carries no video stream — copying the "
+                "video track does not apply to it")
+        else:
+            if edit.trim is not None and not edit.trim.stream_copy:
+                errors.append(
+                    "a trim re-encodes for frame-accurate cuts — the video "
+                    "cannot also be copied as-is; use a stream-copy trim or "
+                    "re-encode the video")
+            for _op_type, _label in (
+                    ("resize", "a resize"), ("crop", "a crop"),
+                    ("rotate", "a rotation"), ("grayscale", "grayscale"),
+                    ("speed", "a speed change"),
+                    ("stabilize", "stabilization"),
+                    ("tonemap", "tone-mapping"),
+                    ("watermark", "a watermark")):
+                if edit.ops_of(_op_type):
+                    errors.append(
+                        f"{_label} decodes the video — the track cannot "
+                        "also be copied as-is")
+            if any(o.mode == "burn" for o in sub_ops):
+                errors.append(
+                    "burned-in subtitles are drawn into the frames — the "
+                    "video cannot also be copied as-is")
+            if any(o.domain == "video" for o in filter_ops):
+                errors.append(
+                    "a video filter decodes the video — the track cannot "
+                    "also be copied as-is")
+            if combine is not None:
+                errors.append(
+                    "a multi-input combine feeds its video through the "
+                    "filter graph — a copied track can only come from a "
+                    "single input")
+            if edit.filtergraph:
+                errors.append(
+                    "a custom filtergraph may touch the video — the plan "
+                    "cannot verify a copied track would pass through "
+                    "untouched; re-encode the video")
+            if out.video_bitrate_kbps is not None:
+                errors.append(
+                    "a video bitrate steers the encoder — it cannot apply "
+                    "to a copied track; drop the video bitrate or re-encode "
+                    "the video")
+            if out.video_profile is not None:
+                errors.append(
+                    "an encoder profile steers the encoder — it cannot "
+                    "apply to a copied video; drop the profile or re-encode "
+                    "the video")
+            if out.video_preset is not None:
+                errors.append(
+                    "an encoder preset steers the encoder — it cannot apply "
+                    "to a copied video; drop the preset or re-encode the "
+                    "video")
+            if out.pixel_format is not None:
+                errors.append(
+                    "a pixel format conversion decodes the video — it "
+                    "cannot apply to a copied track; drop the pixel format "
+                    "or re-encode the video")
+            if out.gpu:
+                errors.append(
+                    "GPU encoding encodes the video — it cannot apply to a "
+                    "copied track; drop the GPU request or re-encode the "
+                    "video")
+            if out.qsv:
+                errors.append(
+                    "QSV encoding encodes the video — it cannot apply to a "
+                    "copied track; drop the QSV request or re-encode the "
+                    "video")
+            if out.video_codec_options:
+                errors.append(
+                    "video codec options steer the encoder — they cannot "
+                    "apply to a copied track; drop them or re-encode the "
+                    "video")
+            if out.variants is not None:
+                errors.append(
+                    "an ABR ladder re-encodes every level on its own — it "
+                    "cannot copy the video as-is")
+            if metadata is not None and metadata.video_codec:
+                carriers = REGISTRY["matrix"].get(
+                    out.container, {}).get("video")
+                if carriers and metadata.video_codec not in carriers:
+                    errors.append(
+                        f"the input's video is {metadata.video_codec} and a "
+                        f"{out.container} file cannot carry a copied "
+                        f"{metadata.video_codec} video — re-encode the video "
+                        "or choose a container that carries it")
+
     if errors:
         raise PlanError(errors)
 
@@ -1913,6 +2013,11 @@ def plan_execution(
                     "an ABR ladder carries one audio track per level — it "
                     "cannot copy the audio as-is"
                 ])
+            if out.video_codec == "copy":
+                raise PlanError([
+                    "an ABR ladder re-encodes every level on its own — it "
+                    "cannot copy the video as-is"
+                ])
             if out.video_preset is not None \
                     or out.video_codec_options or out.audio_codec_options:
                 raise PlanError([
@@ -1956,15 +2061,34 @@ def plan_execution(
                 "rejected by the muxer)"
             )
         if not needs_reencode:
-            if metadata and metadata.video_codec == edit.output.video_codec and \
+            if metadata and edit.output.video_codec != "copy" and \
+                    metadata.video_codec == edit.output.video_codec and \
                     _audio_compatible(metadata, edit.output.container, edit.output.audio_mode) and \
                     (edit.output.audio_codec is None
                      or metadata.audio_codec == edit.output.audio_codec):
                 mode = "copy"
             else:
+                # A 'copy' request is not a codec match: the video rides
+                # along as-is through the re-encode builder (-c:v copy)
+                # while the audio is encoded to the container's codec —
+                # the full-remux (-c copy) path stays the codec-match path.
                 mode = "reencode"
                 if metadata:
-                    if metadata.video_codec == edit.output.video_codec:
+                    if edit.output.video_codec == "copy":
+                        defaults.append(
+                            f"input video is {metadata.video_codec} — copied "
+                            "as-is (-c:v copy); the input's codec and bitrate "
+                            "pass through untouched"
+                        )
+                        want = edit.output.audio_codec \
+                            or audio_for(edit.output.container)
+                        if metadata.has_audio and want is not None \
+                                and metadata.audio_codec != want:
+                            warnings.append(
+                                f"input audio is {metadata.audio_codec}; encoding to "
+                                f"{want} to match the requested output"
+                            )
+                    elif metadata.video_codec == edit.output.video_codec:
                         want = edit.output.audio_codec \
                             or audio_for(edit.output.container)
                         if want is None:
@@ -1987,11 +2111,19 @@ def plan_execution(
                     defaults.append(
                         "input is a remote stream — it can't be probed locally, so the output is "
                         "re-encoded to guarantee the requested codec/container"
+                        if edit.output.video_codec != "copy" else
+                        "input is a remote stream — it can't be probed locally; the video is "
+                        "copied as-is (-c:v copy) and the audio is re-encoded to guarantee "
+                        "the requested codec/container"
                     )
                 else:
                     defaults.append(
                         "no media metadata provided — re-encoding to guarantee the requested "
                         "codec/container (supply probe metadata to allow a lossless remux when compatible)"
+                        if edit.output.video_codec != "copy" else
+                        "no media metadata provided — the video is copied as-is (-c:v copy) "
+                        "and the audio is re-encoded to guarantee the requested codec/container "
+                        "(supply probe metadata to confirm the input codec is carried)"
                     )
         else:
             mode = "reencode"
@@ -2028,7 +2160,8 @@ def plan_execution(
             "but this plan re-encodes the video — drop the re-encoding edit "
             "(or the filter)"
         ])
-    if copy_trim and out.mode in ("video", "audio") and mode == "reencode":
+    if copy_trim and out.mode in ("video", "audio") and mode == "reencode" \
+            and edit.output.video_codec != "copy":
         raise PlanError([
             "a stream-copy trim requires the input codec to survive the "
             "remux, but this plan re-encodes — drop the re-encoding edit "
@@ -2905,120 +3038,130 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
             )
         opts += ["-t", fmt_num(dur)]
 
-    vc = REGISTRY["video_codecs"][edit.output.video_codec]
-    vco = edit.output.video_codec_options
-    if edit.output.gpu:
-        # GPU encoding (M6): the nvenc coder for the requested codec
-        # (validated above — VP9 and the x264-only options are rejected).
-        v_encoder = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
+    if edit.output.video_codec == "copy":
+        # Stream copy: the input's codec and bitrate pass through
+        # bit-for-bit (plan_execution validated that the container
+        # carries the input codec and that nothing decodes the track) —
+        # no encoder flags ride alongside it.
+        opts += ["-c:v", "copy"]
         defaults.append(
-            f"GPU encoding: {edit.output.video_codec} via {v_encoder} (NVIDIA)"
-        )
-    elif edit.output.qsv:
-        # QSV encoding (M8): the Quick Sync coder (validated above).
-        v_encoder = REGISTRY["qsv"]["coders"][edit.output.video_codec]["encoder"]
-        defaults.append(
-            f"QSV encoding: {edit.output.video_codec} via {v_encoder} (Intel Quick Sync)"
-        )
+            "video copied as-is (-c:v copy) — the input's codec and "
+            "bitrate pass through untouched")
     else:
-        v_encoder = vc["encoder"]
-    opts += ["-c:v", v_encoder]
-    # Per-encoder private codec options (M8): -<key> <value> right after -c:v
-    # (registry codec_options table; validated in the plan schema).
-    if vco:
-        opts += _codec_option_tokens(vco)
-        defaults.append(
-            f"video codec options for {v_encoder}: "
-            + ", ".join(f"-{k} {v}" for k, v in sorted(vco.items()))
-        )
-    kbps = edit.output.video_bitrate_kbps
-    if kbps is not None:
-        # CBR-style target overrides the quality preset (registry bitrate_policy):
-        # -b:v and -maxrate at the target; -bufsize 2x where the encoder takes it.
-        opts += ["-b:v", f"{kbps}k", "-maxrate", f"{kbps}k"]
-        if edit.output.video_codec in ("h264", "h265"):
-            opts += ["-bufsize", f"{2 * kbps}k"]
-        details = f"-b:v/-maxrate {kbps}k"
-        if edit.output.video_codec in ("h264", "h265"):
-            details += f", -bufsize {2 * kbps}k"
-        defaults.append(f"target video bitrate {kbps} kbps (CBR-style: {details})")
-    elif edit.output.gpu:
-        # nvenc quality control: -rc vbr -cq N is the GPU form of CRF N.
-        # User rate-control codec options (cq/rc) win: the registry default
-        # is suppressed and noted.
-        crf = vc.get("preset", {}).get("crf")
-        user_rc = any(k in vco for k in ("cq", "rc"))
-        if crf is not None and not user_rc:
-            opts += ["-rc", "vbr", "-cq", str(crf)]
+        vc = REGISTRY["video_codecs"][edit.output.video_codec]
+        vco = edit.output.video_codec_options
+        if edit.output.gpu:
+            # GPU encoding (M6): the nvenc coder for the requested codec
+            # (validated above — VP9 and the x264-only options are rejected).
+            v_encoder = REGISTRY["gpu"]["coders"][edit.output.video_codec]["encoder"]
             defaults.append(
-                f"GPU constant-quality mode: -rc vbr -cq {crf} (the nvenc form of CRF {crf})"
+                f"GPU encoding: {edit.output.video_codec} via {v_encoder} (NVIDIA)"
             )
-        elif user_rc:
+        elif edit.output.qsv:
+            # QSV encoding (M8): the Quick Sync coder (validated above).
+            v_encoder = REGISTRY["qsv"]["coders"][edit.output.video_codec]["encoder"]
             defaults.append(
-                "GPU rate control from the codec options (cq/rc) — the "
-                f"registry default -rc vbr -cq {crf} is not emitted"
+                f"QSV encoding: {edit.output.video_codec} via {v_encoder} (Intel Quick Sync)"
             )
-    elif edit.output.qsv:
-        # QSV has no CRF/CQ-style quality option in its private table;
-        # without a target bitrate the encoder falls back to a built-in
-        # default far below fass's quality targets, so a 5 Mbps CBR-style
-        # target is applied and noted.
-        opts += ["-b:v", "5000k", "-maxrate", "5000k"]
-        defaults.append(
-            "QSV default target bitrate 5000k (CBR-style: -b:v/-maxrate) — "
-            "no target bitrate was given and QSV has no CRF-style knob"
-        )
-    else:
-        preset = vc.get("preset", {})
-        if "crf" in preset:
-            if "crf" in vco:
+        else:
+            v_encoder = vc["encoder"]
+        opts += ["-c:v", v_encoder]
+        # Per-encoder private codec options (M8): -<key> <value> right after -c:v
+        # (registry codec_options table; validated in the plan schema).
+        if vco:
+            opts += _codec_option_tokens(vco)
+            defaults.append(
+                f"video codec options for {v_encoder}: "
+                + ", ".join(f"-{k} {v}" for k, v in sorted(vco.items()))
+            )
+        kbps = edit.output.video_bitrate_kbps
+        if kbps is not None:
+            # CBR-style target overrides the quality preset (registry bitrate_policy):
+            # -b:v and -maxrate at the target; -bufsize 2x where the encoder takes it.
+            opts += ["-b:v", f"{kbps}k", "-maxrate", f"{kbps}k"]
+            if edit.output.video_codec in ("h264", "h265"):
+                opts += ["-bufsize", f"{2 * kbps}k"]
+            details = f"-b:v/-maxrate {kbps}k"
+            if edit.output.video_codec in ("h264", "h265"):
+                details += f", -bufsize {2 * kbps}k"
+            defaults.append(f"target video bitrate {kbps} kbps (CBR-style: {details})")
+        elif edit.output.gpu:
+            # nvenc quality control: -rc vbr -cq N is the GPU form of CRF N.
+            # User rate-control codec options (cq/rc) win: the registry default
+            # is suppressed and noted.
+            crf = vc.get("preset", {}).get("crf")
+            user_rc = any(k in vco for k in ("cq", "rc"))
+            if crf is not None and not user_rc:
+                opts += ["-rc", "vbr", "-cq", str(crf)]
                 defaults.append(
-                    "constant quality from the crf codec option — the "
-                    f"registry default CRF {preset['crf']} is not emitted"
+                    f"GPU constant-quality mode: -rc vbr -cq {crf} (the nvenc form of CRF {crf})"
                 )
-            else:
-                opts += ["-crf", str(preset["crf"])]
-        if "bitrate" in preset:
-            opts += ["-b:v", preset["bitrate"]]
-    if edit.output.video_profile is not None:
-        opts += ["-profile:v", edit.output.video_profile]
-        defaults.append(f"encoder profile {edit.output.video_profile} (maximum-compatibility setting)")
-    if edit.output.video_preset is not None:
-        opts += ["-preset", edit.output.video_preset]
-        defaults.append(f"encoder preset {edit.output.video_preset}")
-    # MXF (master wrapper): ffmpeg 9.x's mxf muxer index table requires
-    # frame offsets within ±127, so the container caps the GOP below that —
-    # x264's default of 250 fails at the trailer on newer builds (6.1.1
-    # tolerated it). Only CPU h264 is capped: mpeg2's default GOP is already
-    # small, prores takes no GOP option, and nvenc/QSV default GOPs are
-    # already under 127.
-    gop_cap = REGISTRY["containers"].get(edit.output.container, {}).get("gop")
-    if gop_cap is not None and not edit.output.gpu and not edit.output.qsv \
-            and edit.output.video_codec == "h264":
-        opts += ["-g", str(gop_cap)]
-        defaults.append(
-            f"GOP capped at {gop_cap} frames — the mxf muxer's index table "
-            "requires frame offsets within ±127"
-        )
-    # Pixel-format conversion (scaler component): the codec default unless
-    # the plan names one (validated against the registry matrix in plan_execution).
-    # M12.HDR: HEVC main10 is the 10-bit profile — the 8-bit codec default
-    # cannot carry it, so a bare main10 profile selects the 10-bit format.
-    main10_fmt = (edit.output.pixel_format is None
-                  and edit.output.video_codec == "h265"
-                  and vco.get("profile") == "main10")
-    pix_fmt = edit.output.pixel_format or ("yuv420p10le" if main10_fmt else vc["pix_fmt"])
-    opts += ["-pix_fmt", pix_fmt]
-    if main10_fmt:
-        defaults.append(
-            f"main10 profile encodes 10-bit — pixel format yuv420p10le "
-            f"(the {edit.output.video_codec} default {vc['pix_fmt']} is 8-bit)"
-        )
-    elif pix_fmt != vc["pix_fmt"]:
-        defaults.append(
-            f"pixel format {pix_fmt} instead of the {edit.output.video_codec} "
-            f"default {vc['pix_fmt']}"
-        )
+            elif user_rc:
+                defaults.append(
+                    "GPU rate control from the codec options (cq/rc) — the "
+                    f"registry default -rc vbr -cq {crf} is not emitted"
+                )
+        elif edit.output.qsv:
+            # QSV has no CRF/CQ-style quality option in its private table;
+            # without a target bitrate the encoder falls back to a built-in
+            # default far below fass's quality targets, so a 5 Mbps CBR-style
+            # target is applied and noted.
+            opts += ["-b:v", "5000k", "-maxrate", "5000k"]
+            defaults.append(
+                "QSV default target bitrate 5000k (CBR-style: -b:v/-maxrate) — "
+                "no target bitrate was given and QSV has no CRF-style knob"
+            )
+        else:
+            preset = vc.get("preset", {})
+            if "crf" in preset:
+                if "crf" in vco:
+                    defaults.append(
+                        "constant quality from the crf codec option — the "
+                        f"registry default CRF {preset['crf']} is not emitted"
+                    )
+                else:
+                    opts += ["-crf", str(preset["crf"])]
+            if "bitrate" in preset:
+                opts += ["-b:v", preset["bitrate"]]
+        if edit.output.video_profile is not None:
+            opts += ["-profile:v", edit.output.video_profile]
+            defaults.append(f"encoder profile {edit.output.video_profile} (maximum-compatibility setting)")
+        if edit.output.video_preset is not None:
+            opts += ["-preset", edit.output.video_preset]
+            defaults.append(f"encoder preset {edit.output.video_preset}")
+        # MXF (master wrapper): ffmpeg 9.x's mxf muxer index table requires
+        # frame offsets within ±127, so the container caps the GOP below that —
+        # x264's default of 250 fails at the trailer on newer builds (6.1.1
+        # tolerated it). Only CPU h264 is capped: mpeg2's default GOP is already
+        # small, prores takes no GOP option, and nvenc/QSV default GOPs are
+        # already under 127.
+        gop_cap = REGISTRY["containers"].get(edit.output.container, {}).get("gop")
+        if gop_cap is not None and not edit.output.gpu and not edit.output.qsv \
+                and edit.output.video_codec == "h264":
+            opts += ["-g", str(gop_cap)]
+            defaults.append(
+                f"GOP capped at {gop_cap} frames — the mxf muxer's index table "
+                "requires frame offsets within ±127"
+            )
+        # Pixel-format conversion (scaler component): the codec default unless
+        # the plan names one (validated against the registry matrix in plan_execution).
+        # M12.HDR: HEVC main10 is the 10-bit profile — the 8-bit codec default
+        # cannot carry it, so a bare main10 profile selects the 10-bit format.
+        main10_fmt = (edit.output.pixel_format is None
+                      and edit.output.video_codec == "h265"
+                      and vco.get("profile") == "main10")
+        pix_fmt = edit.output.pixel_format or ("yuv420p10le" if main10_fmt else vc["pix_fmt"])
+        opts += ["-pix_fmt", pix_fmt]
+        if main10_fmt:
+            defaults.append(
+                f"main10 profile encodes 10-bit — pixel format yuv420p10le "
+                f"(the {edit.output.video_codec} default {vc['pix_fmt']} is 8-bit)"
+            )
+        elif pix_fmt != vc["pix_fmt"]:
+            defaults.append(
+                f"pixel format {pix_fmt} instead of the {edit.output.video_codec} "
+                f"default {vc['pix_fmt']}"
+            )
 
     if ar_op:
         # Replacement audio is encoded to the container's audio codec (no

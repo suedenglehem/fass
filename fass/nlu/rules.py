@@ -1768,6 +1768,17 @@ def _detect_audio(t: str) -> str | None:
     return None
 
 
+_VIDEO_COPY = re.compile(
+    r"\bcop(?:y|ied|ying)\s+(?:the\s+)?video\b"
+    r"|\b(?:as[\s-]?is|untouched|unmodified|unchanged|bit[\s-]?for[\s-]?bit)\s+video\b"
+    r"|\bvideo\s+(?:that\s+is\s+|to\s+be\s+)?(?:as[\s-]?is|untouched|unmodified|unchanged|as\s+it\s+is|bit[\s-]?for[\s-]?bit)\b"
+    r"|\bno(?:thing)?\s+(?:to\s+)?re-?encod\w*\s+(?:the\s+)?video\b"
+    r"|\bwithout\s+re-?encod\w*\s+(?:the\s+)?video\b"
+    r"|\bdo(?:n'?t| not)\s+re-?encod\w*\s+(?:the\s+)?video\b",
+    re.I,
+)
+
+
 _AUDIO_REPLACE = re.compile(
     r"\b(?:replace|swap|change|set|switch|put)\s+(?:the\s+)?(?:audio|music|soundtrack|sound)\s+(?:with|to|from)"
     r"|\b(?:use|put|take|set)\s+.{0,40}?\b(?:as|for)\s+(?:the\s+)?(?:audio|music|soundtrack)\b"
@@ -2717,6 +2728,7 @@ class RulesAdapter:
             audio = None  # a replacement wins over remove / copy (it encodes)
         grayscale = GRAYSCALE_RE.search(t_det) is not None
         codec = _detect_codec(t_det)
+        video_copy = _VIDEO_COPY.search(t_det) is not None
         container, unsupported_container = _detect_container(t_det)
         audio_codec = _detect_audio_codec(t_det)
         audio_container = _detect_audio_container(t_det)
@@ -2734,9 +2746,12 @@ class RulesAdapter:
         # container/codec word alone implies audio mode, but only when it
         # is not the audio of a named video ('h264 with aac audio').
         audio_wanted = _AUDIO_ONLY.search(t_det) is not None
+        # a video-copy request is a video output — 'transcode audio to aac
+        # 180kbps and copy video as is' names only audio settings, the copy
+        # word is what makes it a video plan
         mode = ("subtitles" if sub_dump else
-                "audio" if (audio_wanted or (
-                    audio_container is not None and container is None and codec is None))
+                "audio" if (not video_copy and (audio_wanted or (
+                    audio_container is not None and container is None and codec is None)))
                 else "video")
         bitrate_is_audio = _bitrate_is_audio(t_det, mode)
         audio_bitrate = _detect_bitrate(t_det, True) if bitrate_is_audio else None
@@ -2877,6 +2892,7 @@ class RulesAdapter:
                                       or stabilize is not None or tonemap is not None
                                       or audio_resample is not None
                                       or audio_replace is not None
+                                      or video_copy
                                       or filters or filtergraph):
             mode_conflict = Clarification(
                 question=("a subtitle dump extracts the subtitle stream only — "
@@ -2962,6 +2978,7 @@ class RulesAdapter:
                                    or subtitle is not None or audio_replace is not None
                                    or filtergraph is not None or video_filters
                                    or audio in ("remove", "copy")
+                                   or video_copy
                                    or video_codec_opts or video_preset is not None):
             ladder_conflict = Clarification(
                 question=("an ABR ladder re-encodes every level on its own — "
@@ -2988,6 +3005,13 @@ class RulesAdapter:
                     question=("you asked to both remove the audio and keep "
                               "or copy it — which takes priority?"))],
             )
+        if video_copy and codec is not None:
+            return ParseResult(
+                status=ParseStatus.NEEDS_CLARIFICATION,
+                clarifications=[Clarification(
+                    question=(f"you asked to encode the video as {codec} and "
+                              "to copy it as-is — which takes priority?"))],
+            )
 
         # 5. build / merge the plan
         if previous_plan is not None:
@@ -3004,6 +3028,7 @@ class RulesAdapter:
                 compare=compare,
                 input_ext=input_ext,
                 realtime=realtime,
+                video_copy=video_copy,
                 video_codec_options=video_codec_opts,
                 audio_codec_options=audio_codec_opts,
             )
@@ -3133,6 +3158,7 @@ class RulesAdapter:
                     and tonemap is None and ladder is None \
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
+                    and not video_copy \
                     and audio not in ("remove", "copy") and audio_replace is None and subtitle is None \
                     and audio_codec is None and sub_dump is None and not audio_wanted \
                     and video_bitrate is None and audio_bitrate is None \
@@ -3244,14 +3270,27 @@ class RulesAdapter:
                     else:
                         container = "mp4"
                         notes.append("container defaulted to mp4")
-                if codec is None:
-                    codec = default_codec(container)
-                    notes.append(f"video codec defaulted to {codec} (the {container.upper()} preset default)")
                 plan.output.container = container
-                plan.output.video_codec = codec
+                if video_copy:
+                    # 'copy' IS the video knob — no codec default, no
+                    # encoder flags; the planner validates the copy.
+                    plan.output.video_codec = "copy"
+                    notes.append(
+                        "video copied as-is (-c:v copy) — the input's codec "
+                        "and bitrate pass through untouched")
+                else:
+                    if codec is None:
+                        codec = default_codec(container)
+                        notes.append(f"video codec defaulted to {codec} (the {container.upper()} preset default)")
+                    plan.output.video_codec = codec
                 if audio_codec is not None:
                     plan.output.audio_codec = audio_codec
                     notes.append(f"audio codec set to {audio_codec}")
+                if audio_bitrate is not None:
+                    # 'transcode audio to aac 180kbps and copy video as is'
+                    # — an audio bitrate rides on the video plan's audio
+                    plan.output.audio_bitrate_kbps = audio_bitrate
+                    notes.append(f"targeting a {audio_bitrate} kbps audio bitrate")
                 if pixel_format is not None:
                     plan.output.pixel_format = pixel_format
                     notes.append(f"output pixel format set to {pixel_format}")
@@ -3370,6 +3409,7 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks,
                     sub_dump=None, filters=None, filtergraph=None, combine=None,
                     compare=None,
                     input_ext=None,
+                    video_copy=None,
                     video_codec_options=None, audio_codec_options=None):
     """Apply a follow-up instruction to a previous plan, preserving
     everything the instruction does not mention (FR-6)."""
@@ -3470,6 +3510,9 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks,
         if codec is not None and plan.output.video_codec != codec:
             plan.output.video_codec = codec
             changed.append(f"video codec -> {codec}")
+        if video_copy and plan.output.video_codec != "copy":
+            plan.output.video_codec = "copy"
+            changed.append("video -> copy (as-is)")
         if plan.output.video_codec is None:
             # restored after an away-mode that dropped it
             plan.output.video_codec = default_codec(plan.output.container)
