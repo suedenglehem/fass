@@ -235,6 +235,16 @@ def summarize(edit: EditPlan, ep: ExecutionPlan, media: MediaInfo | None = None)
         bit = f" {br}k" if br is not None else " (lossless — no bitrate flag)"
         lines.append(f"Audio: kept, encoded as {ac['encoder'].upper()}{bit}")
 
+    for i, o in enumerate((o for o in edit.operations if o.type == "audio_add"),
+                          start=2):
+        how = ("stream copy" if out.audio_mode.value == "copy"
+               else "encoded with the output's audio settings")
+        lines.append(
+            f"Audio track {i}: added from the first audio stream of input "
+            f"'{o.asset_id}' ({how}) — the main audio stays track 1; "
+            "select the track in any player that offers audio-track choice"
+        )
+
     if media is not None:
         lines.append(f"Input: {media.width}x{media.height}, {media.duration:g}s, {media.video_codec}"
                      + ("" if media.has_audio else ", no audio stream"))

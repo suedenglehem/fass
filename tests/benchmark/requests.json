@@ -548,5 +548,23 @@
     "id": "bench-095",
     "instruction": "copy the video as-is",
     "expected": {"status": "ready", "ops": [], "video_codec": "copy"}
+  },
+  {
+    "id": "bench-096",
+    "instruction": "copy audio and video tracks from the first video, add the audio track of the second video as a second audio track",
+    "assets": {"input": "clip.mp4", "second": "titan.ts"},
+    "expected": {"status": "ready", "ops": ["audio_add"], "video_codec": "copy", "audio_mode": "copy"}
+  },
+  {
+    "id": "bench-097",
+    "instruction": "add the audio track of clip2.mp4 as a second audio track",
+    "assets": {"input": "clip.mp4", "second": "clip2.mp4"},
+    "expected": {"status": "ready", "ops": ["audio_add"]}
+  },
+  {
+    "id": "bench-098",
+    "instruction": "replace the audio with song.mp3 and add the audio track of clip2.mp4 as a second audio track",
+    "assets": {"input": "clip.mp4", "second": "clip2.mp4", "song": "song.mp3"},
+    "expected": {"status": "unsupported"}
   }
 ]

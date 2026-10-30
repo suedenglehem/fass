@@ -2,11 +2,44 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from fass.pipeline import generate
 from fass.probe.ffprobe import MediaInfo
 from fass.schema import Asset, EditPlan, OutputSpec, guess_kind
+
+# LLM provider credentials the suite must never reach: the 'auto' adapter
+# resolution and the 'unsupported -> second LLM try' retry would otherwise
+# hit a real provider from a developer's environment. LLM-specific tests
+# inject their own fakes (monkeypatched urlopen / fake adapters).
+_LLM_ENV_VARS = (
+    "ANTHROPIC_API_KEY",
+    "FASS_LLM_API_KEY",
+    "FASS_LLM_HOST",
+    "FASS_LLM_PORT",
+    "FASS_LLM_MODEL",
+    "FASS_LLM_PROVIDER",
+)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_llm_provider(tmp_path_factory):
+    """Hermetic test run: no LLM provider from env or config file."""
+    saved = {k: os.environ.pop(k, None) for k in _LLM_ENV_VARS}
+    saved_cfg = os.environ.get("FASS_CONFIG")
+    empty = tmp_path_factory.mktemp("fass-no-llm") / "config.json"
+    empty.write_text("{}", encoding="utf-8")
+    os.environ["FASS_CONFIG"] = str(empty)
+    yield
+    for k, v in saved.items():
+        if v is not None:
+            os.environ[k] = v
+    if saved_cfg is not None:
+        os.environ["FASS_CONFIG"] = saved_cfg
+    else:
+        os.environ.pop("FASS_CONFIG", None)
 
 
 def make_media(**kw) -> MediaInfo:

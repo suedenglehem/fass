@@ -14,6 +14,8 @@ from fass.probe.ffprobe import FfmpegInfo, preflight
 from fass.schema import (
     Asset,
     AssetKind,
+    AudioAddOp,
+    AudioMode,
     AudioReplaceOp,
     AudioResampleOp,
     CropOp,
@@ -734,6 +736,155 @@ def test_audio_replace_output_collision_rejected():
     with pytest.raises(PlanError, match="replacement-audio"):
         ep_for(operations=[AudioReplaceOp(asset_id="aud")],
                audio_path="song.mp3", out="song.mp3")
+
+
+# ------------------------------------------------- second audio (audio_add)
+
+def _aa(operations=None, output=None, media=None, out=None,
+        second_path="second.ts", second_kind=AssetKind.VIDEO,
+        assets_extra=None):
+    """An audio_add plan: the main clip plus a second input whose first
+    audio stream is the added track."""
+    operations = list(operations or []) + [AudioAddOp(asset_id="second")]
+    output = output or OutputSpec(container="mp4", video_codec="h264")
+    edit = EditPlan(output=output, operations=operations)
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+              "second": Asset(path=second_path, kind=second_kind)}
+    if assets_extra:
+        assets.update(assets_extra)
+    return plan_execution(edit, assets, media, out)
+
+
+def test_second_audio_copy_plan_maps_added_track():
+    media = make_media(video_codec="h264", audio_codec="aac")
+    ep = _aa(media=media)
+    assert ep.mode == "copy"  # audio_add alone does not force a re-encode
+    argv = build_argv(ep)
+    assert argv.count("-i") == 2
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert maps == ["0:v:0", "0:a?", "1:a:0"]
+    assert argv.count("-c") == 1  # the single -c copy covers every stream
+    assert argv[argv.index("-c") + 1] == "copy"
+    assert "-shortest" not in argv  # a shorter second track must not cut the video
+
+
+def test_second_audio_user_case_copies_both_streams():
+    # "copy the audio and video tracks, add the audio of the second file as
+    # a second audio track": -c:v copy is not a codec match, so the video
+    # rides through the re-encode builder while the audio is copied too.
+    media = make_media(video_codec="h264", audio_codec="aac")
+    output = OutputSpec(container="mp4", video_codec="copy",
+                        audio_mode=AudioMode.COPY)
+    ep = _aa(output=output, media=media)
+    assert ep.mode == "reencode"
+    argv = build_argv(ep)
+    assert argv.count("-i") == 2
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert maps == ["0:v:0", "0:a?", "1:a:0"]
+    assert argv[argv.index("-c:v") + 1] == "copy"
+    assert argv[argv.index("-c:a") + 1] == "copy"
+    assert "-shortest" not in argv
+
+
+def test_second_audio_reencode_keeps_added_track():
+    media = make_media(video_codec="hevc", audio_codec="aac")
+    ep = _aa(media=media)  # h264 output for an hevc input: re-encode
+    assert ep.mode == "reencode"
+    argv = build_argv(ep)
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert maps == ["0:v:0", "0:a?", "1:a:0"]
+    assert argv[argv.index("-c:v") + 1] == "libx264"
+    assert "-shortest" not in argv
+
+
+def test_second_audio_with_watermark_is_last_input():
+    media = make_media(video_codec="h264", audio_codec="aac")
+    ep = _aa(operations=[WatermarkOp(asset_id="wm", position="top_right")],
+             media=media,
+             assets_extra={"wm": Asset(path="logo.png", kind=AssetKind.IMAGE)})
+    assert ep.mode == "reencode"
+    argv = build_argv(ep)
+    assert argv.count("-i") == 3  # main, watermark, second audio
+    maps = [argv[i + 1] for i, v in enumerate(argv) if v == "-map"]
+    assert "0:a?" in maps  # the main audio stays track 1
+    assert maps[-1] == "2:a:0"  # the added track is the last input
+
+
+def test_second_audio_with_audio_remove_rejected():
+    with pytest.raises(PlanError, match="the audio is removed"):
+        _aa(output=OutputSpec(container="mp4", video_codec="h264",
+                              audio_mode=AudioMode.REMOVE))
+
+
+def test_second_audio_conflicts_with_audio_replace():
+    with pytest.raises(PlanError, match="both replaced and have a second track"):
+        _aa(operations=[AudioReplaceOp(asset_id="aud")],
+            assets_extra={"aud": Asset(path="song.mp3",
+                                       kind=AssetKind.AUDIO)})
+
+
+def test_second_audio_gpu_rejected():
+    with pytest.raises(PlanError, match="GPU/QSV"):
+        _aa(output=OutputSpec(container="mp4", video_codec="h264",
+                              gpu=True))
+
+
+def test_second_audio_with_speed_rejected():
+    with pytest.raises(PlanError, match="speed change"):
+        _aa(operations=[SpeedOp(factor=2.0)])
+
+
+def test_second_audio_with_resample_rejected():
+    with pytest.raises(PlanError, match="resample target"):
+        _aa(operations=[AudioResampleOp(sample_rate=44100)])
+
+
+def test_second_audio_with_audio_filter_rejected():
+    with pytest.raises(PlanError, match="audio filter applies"):
+        _aa(operations=[FilterOp(domain="audio", expr="loudnorm")])
+
+
+def test_second_audio_audio_only_output_rejected():
+    with pytest.raises(PlanError, match="needs a video output"):
+        _aa(output=OutputSpec(mode="audio", container="mp3",
+                              audio_codec="mp3"))
+
+
+def test_second_audio_unknown_asset_rejected():
+    edit = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[AudioAddOp(asset_id="ghost")])
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO)}
+    with pytest.raises(PlanError, match="second-audio asset id"):
+        plan_execution(edit, assets, None, None)
+
+
+def test_second_audio_image_rejected():
+    with pytest.raises(PlanError, match="must be a video, source or audio"):
+        _aa(second_path="logo.png", second_kind=AssetKind.IMAGE)
+
+
+def test_second_audio_remote_stream_rejected():
+    # stream inputs bind as VIDEO kind (SOURCE is for lavfi-style source
+    # specs); the planner still refuses a remote second-audio input
+    with pytest.raises(PlanError, match="remote stream"):
+        _aa(second_path="rtsp://example.com/live",
+            second_kind=AssetKind.VIDEO)
+
+
+def test_second_audio_silent_container_rejected():
+    with pytest.raises(PlanError, match="carries no audio"):
+        _aa(output=OutputSpec(container="gif", video_codec="gif"))
+
+
+def test_second_audio_main_without_audio_rejected():
+    media = make_media(has_audio=False)
+    with pytest.raises(PlanError, match="no first audio track"):
+        _aa(media=media)
+
+
+def test_second_audio_output_collision_rejected():
+    with pytest.raises(PlanError, match="second-audio"):
+        _aa(out="second.ts")
 
 
 # ------------------------------------------------------------- stream I/O (M3b)

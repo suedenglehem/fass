@@ -6,6 +6,7 @@ the vLLM endpoint and the fass-rag service)."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -156,7 +157,9 @@ def test_aggregate_shapes_and_citation_precision():
 def test_load_datasets_skips_missing_and_tags_source():
     entries = abl.load_datasets(
         ["tests/benchmark/requests.json", "tests/benchmark/nope.json"], None)
-    assert len(entries) == 95
+    n = len(json.loads((Path(__file__).parent / "benchmark"
+                        / "requests.json").read_text(encoding="utf-8")))
+    assert len(entries) == n  # every dataset entry loaded, none invented
     assert all(e["_dataset"] == "requests.json" for e in entries)
     assert abl.load_datasets(["tests/benchmark/nope.json"], None) == []
     limited = abl.load_datasets(["tests/benchmark/requests.json"], 5)

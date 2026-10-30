@@ -8,13 +8,14 @@ instruction -> NLU adapter -> schema validation -> semantic validation
 from __future__ import annotations
 
 import dataclasses
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from fass.builder import build_argv, build_argv_all, render_posix
 from fass.config import load_config, resolved_rag
-from fass.execute import resolve_input_name
+from fass.execute import _input_dir, _output_dir, resolve_input_name
 from fass.explain import summarize
 from fass.nlu import get_adapter
 from fass.nlu.base import AdapterError
@@ -340,6 +341,64 @@ def _apply_stream_hosts(assets, output_filename, edit, resp) -> str | None:
     return output_filename
 
 
+def _full_volume_path(name: str, vol: str) -> str:
+    """The deployment path of a bare filename: the input/output volume
+    prefix that resolve_paths would apply at run time, so the model sees
+    the path exactly as ffmpeg will. Stream URLs, source specs and names
+    that already carry a path pass through; with no volume configured
+    (plain local checkout) the bare name stays bare."""
+    if (vol and "/" not in name and stream_scheme(name) is None
+            and not is_source_spec(name)):
+        return os.path.join(vol, name)
+    return name
+
+
+def _retry_instruction(instruction: str, assets: AssetMap,
+                       output_filename: str | None) -> str:
+    """The second-pass query: 'generate ffmpeg command for ' + the original
+    instruction verbatim, ended with a full stop, then a space and ALL
+    inputs enumerated as 'input1=', 'input2=', ... — the main input first,
+    the additional inputs in the given order — each with its full
+    deployment path, and 'output=<full output path>' last."""
+    text = instruction.strip()
+    if text and text[-1] not in ".?!":
+        text += "."
+    parts = [f"generate ffmpeg command for {text}"]
+    ids = list(assets)
+    if ids:
+        main_id = "main" if "main" in ids else ids[0]
+        order = [main_id, *[a for a in ids if a != main_id]]
+        bits = [f"input{i}={_full_volume_path(assets[aid].path, _input_dir())}"
+                for i, aid in enumerate(order, start=1)]
+        if output_filename:
+            bits.append(
+                f"output={_full_volume_path(output_filename, _output_dir())}")
+        parts.append(", ".join(bits))
+    return " ".join(parts)
+
+
+def _llm_paths_retry(instruction, assets, output_filename, previous_plan,
+                     media, evidence_block):
+    """One LLM pass over an instruction the first pass marked
+    'unsupported' — the rules (or the model's first read) can be too
+    shallow for a phrasing the LLM can still plan, so it gets the
+    instruction again with the prompt prefix and the concrete file paths.
+    Best-effort: None when no LLM provider is configured or the retry
+    itself fails — then the first pass's 'unsupported' stands."""
+    try:
+        llm = get_adapter("llm")
+    except AdapterError:
+        return None
+    instr = _retry_instruction(instruction, assets, output_filename)
+    try:
+        if evidence_block:
+            return llm.parse(instr, assets, previous_plan, media,
+                             evidence=evidence_block)
+        return llm.parse(instr, assets, previous_plan, media)
+    except Exception:  # noqa: BLE001 — a failed retry keeps the first pass
+        return None
+
+
 def generate(
     instruction: str,
     assets: AssetMap,
@@ -416,10 +475,31 @@ def generate(
         resp.raw_llm = getattr(e, "raw_output", None)
         return resp
 
+    # Second try: an 'unsupported' first pass is not final — the rules (or
+    # the model's first read) can be too shallow for a phrasing the LLM can
+    # still plan. One LLM pass with the prompt prefix and the full file
+    # paths; a READY retry plan flows through the same validation below.
+    # Any other outcome keeps the first pass as-is.
+    retry_used = False
+    if result.status is ParseStatus.UNSUPPORTED:
+        retry = _llm_paths_retry(
+            instruction, assets, output_filename, previous_plan, media,
+            evidence_block)
+        if (retry is not None and retry.status is ParseStatus.READY
+                and retry.plan is not None):
+            result = retry
+            resp.adapter = "llm"
+            retry_used = True
+
     resp.raw_llm = result.raw
     resp.clarifications = [c.model_dump() for c in result.clarifications]
     resp.unsupported = [u.model_dump() for u in result.unsupported]
     resp.defaults.extend(result.defaults)
+    if retry_used:
+        resp.defaults.append(
+            "the first pass found no supported plan — this plan came from a "
+            "second LLM pass over the instruction with the file paths "
+            "made explicit")
 
     if result.status is not ParseStatus.READY or result.plan is None:
         resp.status = result.status.value

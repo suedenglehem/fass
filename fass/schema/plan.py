@@ -578,6 +578,20 @@ class AudioReplaceOp(BaseModel):
     asset_id: str = Field(min_length=1, max_length=64)
 
 
+class AudioAddOp(BaseModel):
+    """Keep the output's own audio track and add the first audio stream of
+    another input (a video or audio file bound in the asset map) as an
+    additional, selectable audio track (e.g. a second language from a
+    second file). The track is muxed in: stream-copied in a remux plan,
+    encoded with the output's audio settings in a re-encode plan. The
+    output ends when the main input ends."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["audio_add"] = "audio_add"
+    asset_id: str = Field(min_length=1, max_length=64)
+
+
 class SubtitleOp(BaseModel):
     """Add subtitles from a bound subtitle file (srt / ass / ssa / vtt).
 
@@ -748,9 +762,9 @@ class ToneMapOp(BaseModel):
 
 Operation = Annotated[
     Union[
-        ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, SubtitleOp,
-        CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp, CombinerOp,
-        CompareOp, StabilizeOp, ToneMapOp,
+        ResizeOp, GrayscaleOp, WatermarkOp, AudioReplaceOp, AudioAddOp,
+        SubtitleOp, CropOp, SpeedOp, RotateOp, AudioResampleOp, FilterOp,
+        CombinerOp, CompareOp, StabilizeOp, ToneMapOp,
     ],
     Field(discriminator="type"),
 ]
@@ -826,7 +840,7 @@ class EditPlan(BaseModel):
         # watermarks are exempt (M12.WM): several image overlays may chain
         # in the plan's operation order — the planner binds them to inputs
         # 1..N in that order.
-        for op_type in ("audio_replace", "subtitles", "crop",
+        for op_type in ("audio_replace", "audio_add", "subtitles", "crop",
                         "speed", "rotate", "audio_resample", "combine",
                         "compare", "stabilize", "tonemap"):
             if sum(1 for o in self.operations if o.type == op_type) > 1:

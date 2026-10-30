@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import fass.pipeline as pipe
 from fass.config import RagConfig
+from fass.nlu.base import AdapterError
 from fass.pipeline import generate
 from fass.rag.client import RagSearchResult
 from fass.schema import (
@@ -208,3 +209,82 @@ def test_unsupported_rag_off_no_note(monkeypatch):
     assert resp.status == "unsupported"
     assert calls == []
     assert resp.evidence is None
+
+
+# ------------------------------------------------- second try (LLM paths)
+
+def _patch_retry(monkeypatch, rules_result, llm_result, llm_parse=None):
+    """First pass on the rules adapter, the second try on the LLM adapter —
+    get_adapter routed by name. Volume dirs are pinned so the expected
+    query string is host-independent. Returns the LLM fake (records calls)."""
+    rules = FakeRulesAdapter(rules_result)
+    llm = FakeLLMAdapter(llm_result)
+    if llm_parse is not None:
+        llm.parse = llm_parse
+    monkeypatch.setattr(
+        pipe, "get_adapter",
+        lambda name="auto": rules if name == "rules" else llm)
+    monkeypatch.setattr(pipe, "resolved_rag",
+                        lambda: RagConfig(enabled=False))
+    monkeypatch.setattr(pipe, "_input_dir", lambda: "/input")
+    monkeypatch.setattr(pipe, "_output_dir", lambda: "/output")
+    return llm
+
+
+def test_unsupported_retries_llm_with_paths_and_uses_ready_plan(monkeypatch):
+    llm = _patch_retry(monkeypatch,
+                       ParseResult(status=ParseStatus.UNSUPPORTED),
+                       _ready())
+    resp = generate(
+        "copy the audio and video tracks, and add the audio track of "
+        "clip2.mp4 as a second audio track",
+        {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+         "clip2": Asset(path="clip2.mp4", kind=AssetKind.VIDEO)},
+        output_filename="out.mp4",
+        adapter_name="rules")
+    assert resp.status == "ready"
+    assert resp.adapter == "llm"
+    # one retry, with the exact second-pass query: prefix + verbatim
+    # instruction + full stop, then ALL inputs enumerated input1=/input2=
+    # with full deployment paths, output= last
+    assert len(llm.calls) == 1
+    assert llm.calls[0]["instruction"] == (
+        "generate ffmpeg command for copy the audio and video tracks, and "
+        "add the audio track of clip2.mp4 as a second audio track. "
+        "input1=/input/clip.mp4, input2=/input/clip2.mp4, "
+        "output=/output/out.mp4")
+    # the retry plan passed the normal planning step
+    assert resp.command is not None
+    # the response notes that the plan came from the second pass
+    assert any("second LLM pass" in d for d in resp.defaults)
+
+
+def test_unsupported_retry_also_unsupported_keeps_first_pass(monkeypatch):
+    llm = _patch_retry(monkeypatch,
+                       ParseResult(status=ParseStatus.UNSUPPORTED),
+                       ParseResult(status=ParseStatus.UNSUPPORTED))
+    resp = generate("do selective color grading on clip.mp4", _assets(),
+                    adapter_name="rules")
+    assert resp.status == "unsupported"
+    assert resp.adapter == "rules"
+    assert resp.command is None
+    # exactly one retry attempt, then the first pass stands
+    assert len(llm.calls) == 1
+    assert llm.calls[0]["instruction"].startswith(
+        "generate ffmpeg command for do selective color grading")
+
+
+def test_unsupported_no_llm_configured_first_pass_stands(monkeypatch):
+    def no_llm(name="auto"):
+        if name == "llm":
+            raise AdapterError("no LLM provider configured")
+        return FakeRulesAdapter(ParseResult(status=ParseStatus.UNSUPPORTED))
+
+    monkeypatch.setattr(pipe, "get_adapter", no_llm)
+    monkeypatch.setattr(pipe, "resolved_rag",
+                        lambda: RagConfig(enabled=False))
+    resp = generate("do selective color grading on clip.mp4", _assets(),
+                    adapter_name="rules")
+    assert resp.status == "unsupported"
+    assert resp.adapter == "rules"
+    assert resp.command is None

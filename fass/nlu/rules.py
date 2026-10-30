@@ -49,6 +49,7 @@ from fass.schema import (
     Asset,
     AssetKind,
     AudioMode,
+    AudioAddOp,
     AudioReplaceOp,
     AudioResampleOp,
     BitstreamFilterSpec,
@@ -90,7 +91,9 @@ SUPPORTED_SUMMARY = (
     "filter', 'apply eq=contrast=1.2', or a full filtergraph: 'use the "
     "graph [0:v]split=2[a][b]'); audio keep/remove, resampling ('resample "
     "audio to 44.1k mono'), replacing with another file ('replace the audio "
-    "with music.mp3'), volume ('set the volume to 200%', 'louder', "
+    "with music.mp3'), adding a second audio track ('add the audio track of "
+    "the second video as a second audio track'), volume ('set the volume to "
+    "200%', 'louder', "
     "'quieter'), loudness normalization, echo, audio fades — and "
     "audio-only output ('extract the audio to mp3', 'make it a wav'); "
     "dumping the input's subtitles to a file ('dump the subtitles to vtt'); "
@@ -1744,6 +1747,7 @@ _AUDIO_KEEP = re.compile(
 )
 _AUDIO_COPY = re.compile(
     r"\bcop(?:y|ied|ying)\s+(?:the\s+)?audio\b"
+    r"|\bcop(?:y|ied|ying)\s+(?:the\s+)?(?:all|both)?\s*(?:audio\s+and\s+(?:the\s+)?video|video\s+and\s+(?:the\s+)?(?:audio|sound|music))\b"
     r"|\b(?:as[\s-]?is|untouched|unmodified|unchanged|bit[\s-]?for[\s-]?bit)\s+audio\b"
     r"|\baudio\s+(?:that\s+is\s+|to\s+be\s+)?(?:as[\s-]?is|untouched|unmodified|unchanged|as\s+it\s+is|bit[\s-]?for[\s-]?bit)\b"
     r"|\bno(?:thing)?\s+(?:to\s+)?re-?encod\w*\s+(?:the\s+)?audio\b"
@@ -1770,6 +1774,7 @@ def _detect_audio(t: str) -> str | None:
 
 _VIDEO_COPY = re.compile(
     r"\bcop(?:y|ied|ying)\s+(?:the\s+)?video\b"
+    r"|\bcop(?:y|ied|ying)\s+(?:the\s+)?(?:all|both)?\s*(?:audio\s+and\s+(?:the\s+)?video|video\s+and\s+(?:the\s+)?(?:audio|sound|music))\b"
     r"|\b(?:as[\s-]?is|untouched|unmodified|unchanged|bit[\s-]?for[\s-]?bit)\s+video\b"
     r"|\bvideo\s+(?:that\s+is\s+|to\s+be\s+)?(?:as[\s-]?is|untouched|unmodified|unchanged|as\s+it\s+is|bit[\s-]?for[\s-]?bit)\b"
     r"|\bno(?:thing)?\s+(?:to\s+)?re-?encod\w*\s+(?:the\s+)?video\b"
@@ -1799,6 +1804,36 @@ def _detect_audio_replace(t: str, assets: dict):
             hint="bind an audio file (e.g. --asset music=song.mp3, or add it in the web UI) and refer to it in the request",
         ), None
     return AudioReplaceOp(asset_id=aid), None, note
+
+
+_AUDIO_ADD = re.compile(
+    r"\badd\s+(?:the\s+)?(?:audio|music|soundtrack|sound)\s+track\b"
+    r"|\b(?:a\s+)?(?:second|extra|additional|other|third)\s+(?:audio|music|soundtrack)\s+track\b"
+    r"|\badd\s+.{0,60}?\bas\s+(?:a\s+)?(?:second|extra|additional)\s+audio\b",
+    re.I,
+)
+
+
+def _detect_audio_add(t: str, assets: dict):
+    """Return (AudioAddOp|None, clarification|None, note|None).
+
+    'add the audio track of the second video as a second audio track' —
+    keep the output's own audio, mux in another file's first audio stream
+    as an additional selectable track. The second file is a video or an
+    audio file, so the binder takes both kinds (falling back to the sole
+    other media file when the instruction names no filenames).
+    """
+    if not _AUDIO_ADD.search(t):
+        return None, None, None
+    aid, note = _bind_combiner_input(t, assets, "main", _VIDEO_AUDIO_KINDS)
+    if aid is None:
+        return None, Clarification(
+            question="which file should provide the second audio track?",
+            hint=("bind a video or audio file (e.g. --asset second=second.ts, "
+                  "or add it as an input in the web UI) and refer to it "
+                  "in the request"),
+        ), None
+    return AudioAddOp(asset_id=aid), None, note
 
 
 _POSITIONS = [
@@ -2719,11 +2754,23 @@ class RulesAdapter:
         audio = _detect_audio(t_det)
         watermarks, wm_clar, wm_note = _detect_watermarks(t_det, assets)
         audio_replace, ar_clar, ar_note = _detect_audio_replace(t_det, assets)
+        audio_add, aa_clar, aa_note = _detect_audio_add(t_det, assets)
         # a subtitle DUMP must win over the burn/soft subtitle detector,
         # which would ask for a subtitle file the user never intends to give
         sub_dump = _detect_subtitle_dump(t_det)
         subtitle, sub_clar, sub_note = (
             (None, None, None) if sub_dump else _detect_subtitles(t_det, assets))
+        if audio_add is not None and audio_replace is not None:
+            if audio_replace.asset_id == audio_add.asset_id:
+                # 'add a new audio track' — the add is the intent; the
+                # replace phrasing ('new audio') is how the user describes
+                # the extra track, not a replacement of the original
+                audio_replace, ar_clar, ar_note = None, None, None
+            else:
+                return ParseResult(status=ParseStatus.UNSUPPORTED, unsupported=[
+                    UnsupportedPart(
+                        fragment="replacing the audio and adding a second audio track",
+                        reason="one request cannot both replace the audio and add a second audio track from another file — do it in two steps")])
         if audio_replace is not None and audio in ("remove", "conflict", "copy"):
             audio = None  # a replacement wins over remove / copy (it encodes)
         grayscale = GRAYSCALE_RE.search(t_det) is not None
@@ -2745,7 +2792,11 @@ class RulesAdapter:
         # the output MODE: subtitle dump > audio-only > video. An audio
         # container/codec word alone implies audio mode, but only when it
         # is not the audio of a named video ('h264 with aac audio').
-        audio_wanted = _AUDIO_ONLY.search(t_det) is not None
+        # An audio_add request names an 'audio track' too ('add the audio
+        # track of the second video as a second audio track') — it is a
+        # video output with an extra track, never an audio extraction.
+        audio_wanted = (_AUDIO_ONLY.search(t_det) is not None
+                        and audio_add is None)
         # a video-copy request is a video output — 'transcode audio to aac
         # 180kbps and copy video as is' names only audio settings, the copy
         # word is what makes it a video plan
@@ -2989,7 +3040,8 @@ class RulesAdapter:
 
         # 4. explicit clarifications win (focused, one at a time)
         for c in (trim_clar, resize_clar, crop_clar, speed_clar, rotate_clar,
-                  rs_clar, wm_clar, ar_clar, sub_clar, filter_clar, comb_clar,
+                  rs_clar, wm_clar, ar_clar, aa_clar, sub_clar, filter_clar,
+                  comb_clar,
                   cmp_clar, mode_conflict, graph_conflict, combine_conflict,
                   compare_conflict, ladder_conflict, ambiguous):
             if c is not None:
@@ -3020,6 +3072,7 @@ class RulesAdapter:
             plan, changed = _merge_revision(
                 previous_plan, t, trim, resize, audio, watermarks, grayscale,
                 audio_replace, dest=dest, crop=crop, rotate=rotate, speed=speed,
+                audio_add=audio_add,
                 audio_resample=audio_resample, subtitle=subtitle, gpu=gpu,
                 qsv=qsv, codec=codec, container=container, audio_codec=audio_codec,
                 audio_container=audio_container, audio_bitrate=audio_bitrate,
@@ -3085,6 +3138,8 @@ class RulesAdapter:
                 ops.append(tonemap)
             if audio_replace is not None:
                 ops.append(audio_replace)
+            if audio_add is not None:
+                ops.append(audio_add)
             if audio_resample is not None:
                 ops.append(audio_resample)
             for f in filters:
@@ -3139,6 +3194,8 @@ class RulesAdapter:
             notes.append(wm_note)
         if ar_note:
             notes.append(ar_note)
+        if aa_note:
+            notes.append(aa_note)
         if sub_note:
             notes.append(sub_note)
         if cmp_note:
@@ -3159,7 +3216,8 @@ class RulesAdapter:
                     and not grayscale and pixel_format is None and video_profile is None \
                     and video_preset is None and codec is None and container is None \
                     and not video_copy \
-                    and audio not in ("remove", "copy") and audio_replace is None and subtitle is None \
+                    and audio not in ("remove", "copy") and audio_replace is None \
+                    and audio_add is None and subtitle is None \
                     and audio_codec is None and sub_dump is None and not audio_wanted \
                     and video_bitrate is None and audio_bitrate is None \
                     and dest is None \
@@ -3402,7 +3460,8 @@ class RulesAdapter:
 
 def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks, grayscale,
                     audio_replace=None, dest=None, crop=None, rotate=None, speed=None,
-                    audio_resample=None, subtitle=None, gpu=None, qsv=None, codec=None,
+                    audio_resample=None, audio_add=None, subtitle=None, gpu=None, qsv=None,
+                    codec=None,
                     realtime=None,
                     container=None, audio_codec=None, audio_container=None,
                     audio_bitrate=None, video_bitrate=None, mode=None,
@@ -3631,6 +3690,17 @@ def _merge_revision(previous: EditPlan, t: str, trim, resize, audio, watermarks,
             and any(o.type == "audio_replace" for o in plan.operations):
         plan.operations = [o for o in plan.operations if o.type != "audio_replace"]
         changed.append("audio replacement removed")
+
+    if audio_add is not None and plan.output.mode == "video":
+        # a new added track replaces a previously added one (one extra
+        # track per plan); it does not touch the output's own audio mode
+        plan.operations = [o for o in plan.operations if o.type != "audio_add"]
+        plan.operations.append(audio_add)
+        changed.append(f"audio -> + second track ({audio_add.asset_id})")
+    elif audio == "remove" and plan.output.mode == "video" \
+            and any(o.type == "audio_add" for o in plan.operations):
+        plan.operations = [o for o in plan.operations if o.type != "audio_add"]
+        changed.append("added second audio track removed")
 
     if re.search(r"\b(?:no|without|drop|remove|get\s+rid\s+of)\s+(?:the\s+)?watermark\b", t, re.I):
         plan.operations = [o for o in plan.operations if o.type != "watermark"]

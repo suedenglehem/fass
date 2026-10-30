@@ -922,6 +922,42 @@ def plan_execution(
         else:
             ar_assets.append(a)
 
+    aa_ops = edit.ops_of("audio_add")
+    aa_assets: list = []
+    for o in aa_ops:
+        a = assets.get(o.asset_id)
+        if a is None:
+            errors.append(f"second-audio asset id '{o.asset_id}' is not in the asset map")
+        elif a.kind not in (AssetKind.VIDEO, AssetKind.SOURCE, AssetKind.AUDIO):
+            errors.append(f"second-audio asset '{o.asset_id}' must be a video, source or audio file (its first audio stream is the added track)")
+        elif stream_scheme(a.path) is not None:
+            errors.append(f"second-audio asset '{o.asset_id}' is a remote stream — the second audio track must come from a local file")
+        else:
+            aa_assets.append(a)
+    if len({a.path for a in aa_assets}) != len(aa_assets):
+        errors.append("the same file cannot provide two added audio tracks")
+    if aa_ops:
+        if out.mode != "video":
+            errors.append("a second audio track needs a video output — it is added alongside the video's audio (an audio-only export has one audio stream by design)")
+        if ar_ops:
+            errors.append("the audio cannot be both replaced and have a second track added in one request — add the second track, or replace the audio, in separate steps")
+        if out.audio_mode == AudioMode.REMOVE:
+            errors.append("the audio is removed, so there is no first audio track to add a second to — use 'replace the audio with ...' instead")
+        if out.gpu or out.qsv:
+            errors.append("adding a second audio track is not supported with GPU/QSV encoding")
+        if edit.ops_of("speed"):
+            errors.append("a speed change (atempo) applies to every mapped audio stream — it cannot be combined with an added second audio track")
+        if edit.ops_of("audio_resample"):
+            errors.append("a resample target (-ar/-ac) applies to every mapped audio stream — it cannot be combined with an added second audio track")
+        if any(o.type == "filter" and o.domain == "audio" for o in edit.operations):
+            errors.append("an audio filter applies to every mapped audio stream — it cannot be combined with an added second audio track")
+        if out.mode == "video" and not REGISTRY["matrix"].get(
+                out.container, {}).get("audio"):
+            errors.append(
+                f"a {out.container} file carries no audio, so it cannot "
+                "carry a second audio track"
+            )
+
     sub_ops = edit.ops_of("subtitles")
     sub_assets: list = []
     for o in sub_ops:
@@ -1048,6 +1084,11 @@ def plan_execution(
             errors.append(
                 "replacing the audio cannot be combined with a multi-input "
                 "filter in one pass — combine first, then replace the audio")
+        if aa_assets:
+            errors.append(
+                "adding a second audio track cannot be combined with a "
+                "multi-input filter in one pass — combine first, then add "
+                "the track")
         if sub_ops:
             errors.append(
                 "subtitles cannot be combined with a multi-input filter in "
@@ -1553,6 +1594,7 @@ def plan_execution(
     in_path = input_asset.path
     wm_paths = [a.path for a in wm_assets]  # plan op order = input order 1..N
     ar_path = ar_assets[0].path if ar_assets else None
+    aa_paths = [a.path for a in aa_assets]  # plan op order = input order
     sub_path = sub_assets[0].path if sub_assets else None
 
     defaults: list[str] = []
@@ -1904,6 +1946,8 @@ def plan_execution(
                 raise PlanError(["output path resolves to a watermark file — refusing to overwrite it"])
             if ar_path and os.path.realpath(ar_path) in branch_real:
                 raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
+            if aa_paths and branch_real & {os.path.realpath(p) for p in aa_paths}:
+                raise PlanError(["output path resolves to a second-audio file — refusing to overwrite it"])
             if sub_path and os.path.realpath(sub_path) in branch_real:
                 raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
             real_out = None
@@ -1916,6 +1960,8 @@ def plan_execution(
                 raise PlanError(["output path resolves to a watermark file — refusing to overwrite it"])
             if ar_path and real_out == os.path.realpath(ar_path):
                 raise PlanError(["output path resolves to the replacement-audio file — refusing to overwrite it"])
+            if real_out in {os.path.realpath(p) for p in aa_paths}:
+                raise PlanError(["output path resolves to a second-audio file — refusing to overwrite it"])
             if sub_path and real_out == os.path.realpath(sub_path):
                 raise PlanError(["output path resolves to the subtitles file — refusing to overwrite it"])
         if out.mode != "subtitles" and out_path and real_out is not None:
@@ -1949,7 +1995,8 @@ def plan_execution(
     # force a re-encode (M5). Burning is a filter chain and does. Any other
     # operation (filters, resample, replace, ...) touches a stream and does.
     forced_ops = [o for o in edit.operations
-                  if not (o.type == "subtitles" and o.mode == "soft")]
+                  if not ((o.type == "subtitles" and o.mode == "soft")
+                          or o.type == "audio_add")]
 
     if out.mode == "subtitles":
         # A dump is always a stream copy of the subtitle track.
@@ -1991,6 +2038,14 @@ def plan_execution(
         else:
             mode = "reencode"
     else:
+        # A second audio track is added alongside the output's own audio —
+        # a silent input has no first track to add it to.
+        if aa_assets and metadata is not None and not metadata.has_audio:
+            raise PlanError([
+                "the main input has no audio track — there is no first "
+                "audio track to add a second to (use 'replace the audio "
+                "with ...' instead)"
+            ])
         # M13.3: an ABR ladder is always a re-encode (a stream copy cannot
         # make levels) and a plain one — the per-level -map groups own the
         # video chain, so no edit may ride along (the NLU clarifies the mix;
@@ -2246,7 +2301,8 @@ def plan_execution(
     elif mode == "copy":
         sub_enc = soft_subtitle_codec(edit.output.container) if sub_path else None
         ep = _build_copy_plan(edit, in_path, out_path, metadata,
-                              sub_path=sub_path, sub_enc=sub_enc)
+                              sub_path=sub_path, sub_enc=sub_enc,
+                              aa_paths=aa_paths)
     elif out.variants is not None:
         # M13.3: ABR ladder — guarded plain + forced re-encode above.
         ep = _build_ladder_plan(
@@ -2265,7 +2321,8 @@ def plan_execution(
                 sub_exprs = {so.asset_id: subtitle_burn_expr(sub_path)}
         ep = _build_reencode_plan(
             edit, in_path, wm_paths, ar_path, sub_input, sub_exprs, sub_enc,
-            out_path, defaults, warnings, combine=combine
+            out_path, defaults, warnings, combine=combine,
+            aa_paths=aa_paths
         )
         if edit.ops_of("stabilize"):
             _attach_stabilize_passes(ep, out_path, defaults)
@@ -2598,7 +2655,8 @@ def _comparison_segments(compare: dict, defaults: list[str],
 
 def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
                      metadata: MediaInfo | None, sub_path: str | None = None,
-                     sub_enc: str | None = None) -> ExecutionPlan:
+                     sub_enc: str | None = None,
+                     aa_paths: list[str] | None = None) -> ExecutionPlan:
     audio_remove = edit.output.audio_mode == AudioMode.REMOVE
     inputs = [_main_input(in_path)]
     maps = ["0:v:0"]
@@ -2622,6 +2680,13 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
         inputs.append(InputSpec(sub_path))
         maps.append(f"{len(inputs) - 1}:s:0")
         opts += ["-c:s", sub_enc]
+    for p in (aa_paths or []):
+        # A second, selectable audio track: the first audio stream of the
+        # extra input, stream-copied next to the main audio (the single
+        # -c copy covers every mapped stream). No -shortest: a shorter
+        # second track must not cut the video.
+        inputs.append(InputSpec(p))
+        maps.append(f"{len(inputs) - 1}:a:0")
     # Bitstream filters (no re-encode). The auto filter a container pair
     # needs runs first, then the user-requested filters, chained in request
     # order; a user filter identical to the auto one is not duplicated.
@@ -2683,6 +2748,12 @@ def _build_copy_plan(edit: EditPlan, in_path: str, out_path: str,
         defaults.append(
             f"subtitles muxed as a selectable {sub_enc} track from '{sub_path}' "
             "(soft — no re-encode)"
+        )
+    for p in (aa_paths or []):
+        defaults.append(
+            f"the first audio stream of '{p}' is added as an additional "
+            "selectable audio track (stream copy); the main input's audio "
+            "stays the first track"
         )
     return ExecutionPlan(
         mode="copy",
@@ -2919,7 +2990,8 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
                          audio_path: str | None, sub_path: str | None,
                          sub_exprs: dict[str, str] | None, sub_enc: str | None,
                          out_path: str, defaults: list[str], warnings: list[str],
-                         combine: dict | None = None) -> ExecutionPlan:
+                         combine: dict | None = None,
+                         aa_paths: list[str] | None = None) -> ExecutionPlan:
     inputs = [_main_input(in_path)]
     if edit.trim is not None:
         # -ss as an input option: frame-accurate when followed by decoding.
@@ -2929,7 +3001,8 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
     # exclusive with a combiner — watermarks=1..N in the plan's op order
     # (build_video_chain indexes them by the watermark's ordinal), then
     # the soft-subtitle input before the replacement audio (audio stays
-    # last, as audio_idx below assumes).
+    # last, as audio_idx below assumes); the second-audio input rides
+    # after everything else (its map is appended after the subtitle map).
     if combine:
         inputs += [InputSpec(a.path) for a in combine["extra_assets"]]
     inputs += [InputSpec(p) for p in wm_paths]
@@ -2942,6 +3015,10 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
     if audio_path:
         inputs.append(InputSpec(audio_path))
     audio_idx = len(inputs) - 1 if audio_path else None
+    aa_indices: list[tuple[int, str]] = []
+    for p in (aa_paths or []):
+        inputs.append(InputSpec(p))
+        aa_indices.append((len(inputs) - 1, p))
 
     fg_labels: list[str] = []
     if edit.filtergraph:
@@ -3015,6 +3092,10 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
         # Soft subtitles: the first subtitle stream of the subtitle input.
         # No -shortest — subtitles may legitimately be shorter than the video.
         maps.append(f"{sub_idx}:s:0")
+    for idx, _p in aa_indices:
+        # A second, selectable audio track: the first audio stream of the
+        # extra input, alongside the main audio (which stays track 1).
+        maps.append(f"{idx}:a:0")
 
     # Audio side of speed changes (atempo) plus audio filter operations:
     # one -af chain, in user-specified order. -af is inert when the output
@@ -3252,6 +3333,18 @@ def _build_reencode_plan(edit: EditPlan, in_path: str, wm_paths: list[str],
         defaults.append(
             f"subtitles muxed as a selectable {sub_enc} track from '{sub_path}' "
             "(soft — no re-encode)"
+        )
+    for _idx, p in aa_indices:
+        # The bare -c:a (copy or encoder) above applies to EVERY mapped
+        # audio stream, so the added track rides the same path as the main
+        # one. No -shortest: a shorter second track must not cut the video.
+        how = ("stream-copied alongside the main audio"
+               if edit.output.audio_mode is AudioMode.COPY
+               else "encoded with the output's audio settings, like the main audio")
+        defaults.append(
+            f"the first audio stream of '{p}' is added as an additional "
+            f"selectable audio track ({how}); the main input's audio stays "
+            "the first track"
         )
 
     opts += _matrix_flags(edit.output.container, edit.output.format_options)

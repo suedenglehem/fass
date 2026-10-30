@@ -11,6 +11,7 @@ import pytest
 from fass.schema import (
     Asset,
     AssetKind,
+    AudioAddOp,
     AudioReplaceOp,
     EditPlan,
     OutputSpec,
@@ -658,6 +659,108 @@ def test_revision_swap_replacement_asset(gen):
     assert r.status == "ready"
     ar = ops_by_type(r.plan)["audio_replace"]
     assert len(ar) == 1 and ar[0]["asset_id"] == "jingle"
+
+
+# ------------------------------------------------------------- audio add (second track)
+
+def test_audio_add_user_phrasing(gen):
+    # The reporter's instruction: keep the output's own audio, mux in another
+    # video's first audio stream as an extra selectable track, no re-encode.
+    titan = Asset(path="titan.ts", kind=AssetKind.VIDEO)
+    r = gen("copy audio and video tracks from the first video, and add the "
+            "audio track of the second video as a second audio track",
+            "clip.mp4", extra={"second": titan})
+    assert r.status == "ready"
+    aa = ops_by_type(r.plan)["audio_add"]
+    assert len(aa) == 1 and aa[0]["asset_id"] == "second"
+    assert r.plan["output"]["mode"] == "video"
+    assert r.plan["output"]["video_codec"] == "copy"
+    assert r.plan["output"]["audio_mode"] == "copy"
+
+
+def test_audio_add_named_file(gen):
+    # Binding by filename, and the mode regression: 'audio track' in the
+    # instruction must not flip the output to audio-only MP3 extraction.
+    clip2 = Asset(path="clip2.mp4", kind=guess_kind("clip2.mp4"))
+    r = gen("add the audio track of clip2.mp4 as a second audio track",
+            "clip.mp4", extra={"second": clip2})
+    assert r.status == "ready"
+    aa = ops_by_type(r.plan)["audio_add"]
+    assert len(aa) == 1 and aa[0]["asset_id"] == "second"
+    assert r.plan["output"]["mode"] == "video"
+    assert r.plan["output"]["container"] == "mp4"
+
+
+def test_audio_add_fallback_sole_other_asset(gen):
+    # No filename in the instruction → bind the sole non-main media asset
+    # and say so in the defaults.
+    titan = Asset(path="titan.ts", kind=AssetKind.VIDEO)
+    r = gen("copy the audio and video tracks, and add the audio track of the "
+            "other clip as a second audio track",
+            "clip.mp4", extra={"titan": titan})
+    assert r.status == "ready"
+    aa = ops_by_type(r.plan)["audio_add"]
+    assert len(aa) == 1 and aa[0]["asset_id"] == "titan"
+    assert any("only other media file" in n for n in r.defaults)
+
+
+def test_audio_add_no_other_asset_clarifies(gen):
+    r = gen("copy the audio and video tracks, and add the audio track of the "
+            "second video as a second audio track", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert any("second audio track" in c["question"].lower()
+               for c in r.clarifications)
+
+
+def test_audio_add_wins_over_replace_on_same_asset(gen):
+    # "new audio" trips the replace detector and "add the audio track"
+    # trips the add detector; both name the same file → adding the track
+    # is what the user asked for, so the replacement is dropped.
+    song = Asset(path="song.mp3", kind=guess_kind("song.mp3"))
+    r = gen("add the audio track of song.mp3 as a new audio track",
+            "clip.mp4", extra={"song": song})
+    assert r.status == "ready"
+    assert "audio_add" in ops_by_type(r.plan)
+    assert "audio_replace" not in ops_by_type(r.plan)
+
+
+def test_add_new_track_from_video_without_audio_asset_clarifies(gen):
+    # 'new audio' alone asks for a replacement audio file; a video named
+    # in the phrase is not one → the clarification is correct.
+    clip2 = Asset(path="clip2.mp4", kind=guess_kind("clip2.mp4"))
+    r = gen("add a new audio track from clip2.mp4", "clip.mp4",
+            extra={"second": clip2})
+    assert r.status == "needs_clarification"
+    assert any("new audio" in c["question"].lower() for c in r.clarifications)
+
+
+def test_audio_replace_and_add_different_assets_unsupported(gen):
+    # Replace binds song.mp3, add binds clip2.mp4 — doing both in one request
+    # is contradictory and the NLU must refuse, not guess.
+    clip2 = Asset(path="clip2.mp4", kind=guess_kind("clip2.mp4"))
+    song = Asset(path="song.mp3", kind=guess_kind("song.mp3"))
+    r = gen("replace the audio with song.mp3 and add the audio track of "
+            "clip2.mp4 as a second audio track",
+            "clip.mp4", extra={"second": clip2, "song": song})
+    assert r.status == "unsupported"
+    assert r.plan is None
+
+
+def test_second_video_asset_alone_does_not_add_track(gen):
+    # merely binding a second video must not add an operation
+    clip2 = Asset(path="clip2.mp4", kind=guess_kind("clip2.mp4"))
+    r = gen("resize to 720p", "clip.mp4", extra={"second": clip2})
+    assert r.status == "ready"
+    assert "audio_add" not in ops_by_type(r.plan)
+
+
+def test_revision_remove_audio_clears_added_track(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"),
+                    operations=[AudioAddOp(asset_id="second")])
+    r = gen("remove the audio", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert "audio_add" not in ops_by_type(r.plan)
+    assert r.plan["output"]["audio_mode"] == "remove"
 
 
 # ------------------------------------------------------------- stream I/O (M3b)

@@ -284,6 +284,43 @@ def test_audio_replaced_with_other_file(gen, media, tmp_path):
     assert "1:a:0" in maps and "-shortest" in r.arguments
 
 
+def test_second_audio_track_added_from_other_video(gen, media, tmp_path):
+    # The reporter's remux: keep the output's own video and audio, mux in
+    # the second file's first audio stream as an extra selectable track,
+    # no re-encode. The second input is only 3 s: without -shortest the
+    # output must keep the full 15 s of the main video.
+    second = tmp_path / "clip2.mp4"
+    _ffmpeg(["-f", "lavfi", "-i", f"testsrc2=size=320x240:rate={FPS}:duration=3",
+             "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=44100:duration=3",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "128k", "-shortest", str(second)])
+    out = tmp_path / "second_track.mp4"
+    r = gen("copy the audio and video tracks, and add the audio track of "
+            "clip2.mp4 as a second audio track",
+            input_path=str(media.base),
+            output_filename=str(out),
+            extra={"clip2": Asset(path=str(second), kind=AssetKind.VIDEO)})
+    assert r.status == "ready", (r.status, r.errors, r.clarifications)
+    args = r.arguments
+    maps = [args[i + 1] for i, v in enumerate(args) if v == "-map"]
+    assert maps == ["0:v:0", "0:a?", "1:a:0"]
+    assert args[args.index("-c:v") + 1] == "copy"
+    assert args[args.index("-c:a") + 1] == "copy"
+    assert "-shortest" not in args
+    proc = subprocess.run(
+        args, shell=False, cwd=str(out.parent),
+        capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert proc.returncode == 0, f"argv={args}\nstderr={proc.stderr}"
+    info = probe_media(str(out))
+    assert info is not None
+    assert info.video_streams == 1
+    assert info.audio_streams == 2  # the original tone + the added track
+    assert info.video_codec == "h264"  # the copy survived
+    assert info.duration is not None
+    assert abs(info.duration - 15.0) <= 0.75, info.duration
+
+
 # ------------------------------------------------------------- stream I/O (M3b)
 
 def test_stream_output_udp_mpegts(gen, media, tmp_path):

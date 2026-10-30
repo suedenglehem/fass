@@ -72,7 +72,12 @@ forces a re-encode — and "soft" muxes a selectable track, which exists only
 for mp4/mov (mov_text) and mkv (srt) outputs; for any other container use
 "burn"), audio_replace (asset_id of an audio
 file — its first audio stream replaces the output audio; the output ends when the
-shorter of video and replacement audio ends), audio_resample (sample_rate and/or
+shorter of video and replacement audio ends), audio_add (asset_id of ANOTHER
+video or audio file — its first audio stream is added as an additional,
+selectable audio track ALONGSIDE the output's own audio, which stays the
+first track; "add the audio track of the second video as a second audio
+track"; video output only — never with audio_replace, speed, audio_resample,
+audio filters, gpu/qsv or an ABR ladder), audio_resample (sample_rate and/or
 channels 1|2|6), filter (domain "video" or "audio" and expr — one allowlisted
 filter instance, e.g. "hflip", "volume=1.5", "eq=brightness=0.2"; see the
 allowlist below). Output extras (set on "output", only when the user asks):
@@ -108,7 +113,11 @@ the audio: no audio_replace, audio_resample, speed, audio filters,
 filtergraph, audio_bitrate_kbps, audio_codec_options or ABR ladder — never
 "copy" together with an audio_replace operation), or "remove" (video-only —
 "no audio", "remove the audio"); audio and subtitles modes have no
-audio_mode. An audio_replace operation implies "encode".
+audio_mode. An audio_replace operation implies "encode". An audio_add
+operation keeps the output's own audio and adds one more selectable track —
+it works with audio_mode "copy" (the added track is stream-copied) or
+"encode" (the added track is encoded with the output's audio settings) and
+implies neither.
 Format options: only when the user names one ("with faststart", "6 second
 HLS segments"), set "format_options" on the output to {{"<key>": "<value>"}}
 using ONLY these keys: {format_opts}. Flagset keys take '+'-joined flags
