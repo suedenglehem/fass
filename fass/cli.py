@@ -30,6 +30,7 @@ EXAMPLES = [
     'fass "replace the audio" clip.mp4 --asset music=audio:song.mp3',
     'fass "resize to 720p" --batch clips/            # batch: one instruction, every file',
     'fass "resize to 720p" --batch a.mp4 b.mp4 --batch-out out/ --execute',
+    'fass --case case.json            # a test case described entirely by a JSON file',
     "fass probe clip.mp4          # local media metadata",
     "fass env                     # local FFmpeg build capabilities",
 ]
@@ -62,6 +63,37 @@ def _build_assets(args) -> dict:
         assets["watermark"] = Asset(path=args.watermark, kind=AssetKind.IMAGE)
     for spec in args.asset or []:
         aid, path, kind = _parse_asset_spec(spec)
+        assets[aid] = Asset(path=path, kind=kind or guess_kind(path))
+    return assets
+
+
+_KIND_NAMES = {
+    "video": AssetKind.VIDEO,
+    "audio": AssetKind.AUDIO,
+    "image": AssetKind.IMAGE,
+    "source": AssetKind.SOURCE,
+}
+
+
+def _build_case_assets(case: dict, base_dir: str) -> dict:
+    """Assets from a case file: {id: relpath | 'kind:relpath' | {path, kind?}}.
+
+    Relative paths resolve against assets_dir (default: the case file's
+    directory); the same 'kind:' prefix syntax as --asset applies, so a
+    value like 'image:logo.png' pins the kind explicitly."""
+    assets: dict = {}
+    for aid, spec in case["assets"].items():
+        if isinstance(spec, dict):
+            path, kind = spec["path"], _KIND_NAMES.get(spec.get("kind", ""), None)
+        else:
+            path, kind = spec, None
+        if kind is None:
+            for prefix, k in _KIND_PREFIXES.items():
+                if path.startswith(prefix):
+                    path, kind = path[len(prefix):], k
+                    break
+        if not os.path.isabs(path):
+            path = os.path.join(base_dir, path)
         assets[aid] = Asset(path=path, kind=kind or guess_kind(path))
     return assets
 
@@ -128,6 +160,12 @@ def _generate_cli(argv: list[str]) -> int:
     p.add_argument("--batch-out", metavar="DIR",
                    help="batch mode: write every file's output into DIR "
                         "(default: each plan's own output name)")
+    p.add_argument("--case", metavar="FILE",
+                   help="JSON file describing the whole test case: "
+                        '{"instruction", "assets": {"main": file, ...}, '
+                        '"assets_dir"?, "output"?, "adapter"?, "execute"?} '
+                        "— asset paths are relative to assets_dir (default: "
+                        "the case file's directory); implies --json")
     p.add_argument("--version", action="version", version=f"fass {__version__}")
     args = p.parse_args(argv)
 
@@ -137,6 +175,9 @@ def _generate_cli(argv: list[str]) -> int:
         # the instruction and the rest are the targets. The instruction-first
         # form below parses natively and is untouched.
         args.instruction, args.batch = args.batch[-1], args.batch[:-1]
+
+    if args.case:
+        return _case_cli(args)
 
     if not args.instruction:
         p.print_help()
@@ -179,20 +220,76 @@ def _generate_cli(argv: list[str]) -> int:
         _print_response(resp)
 
     if resp.status == "ready" and args.execute:
-        # M10.5: a multi-pass plan runs its steps in order (same working
-        # directory, the final output's); the first non-zero exit stops
-        # the sequence and is the command's exit code
-        argvs = [s["arguments"] for s in resp.steps] if resp.steps else [resp.arguments]
-        cmds = [s["command"] for s in resp.steps] if resp.steps else [resp.command]
-        print("\nExecuting:", file=sys.stderr)
-        for i, c in enumerate(cmds, 1):
-            label = f"  (step {i}/{len(cmds)})" if len(cmds) > 1 else ""
-            print("  " + c + label, file=sys.stderr)
-        for a in argvs:
-            rc = subprocess.run(a, shell=False).returncode
-            if rc != 0:
-                return rc
-        return 0
+        return _execute_steps(resp)
+    return EXIT_CODES.get(resp.status, 1)
+
+
+def _execute_steps(resp: GenerationResponse) -> int:
+    """M10.5: a multi-pass plan runs its steps in order (same working
+    directory, the final output's); the first non-zero exit stops the
+    sequence and is the command's exit code."""
+    argvs = [s["arguments"] for s in resp.steps] if resp.steps else [resp.arguments]
+    cmds = [s["command"] for s in resp.steps] if resp.steps else [resp.command]
+    print("\nExecuting:", file=sys.stderr)
+    for i, c in enumerate(cmds, 1):
+        label = f"  (step {i}/{len(cmds)})" if len(cmds) > 1 else ""
+        print("  " + c + label, file=sys.stderr)
+    for a in argvs:
+        rc = subprocess.run(a, shell=False).returncode
+        if rc != 0:
+            return rc
+    return 0
+
+
+def _case_cli(args) -> int:
+    """A test case described entirely by a JSON file: the instruction,
+    the assets (by id), the output name and the adapter, in one file.
+    Implies --json — the machine-readable response is the output."""
+    if args.batch:
+        print("error: --case takes no --batch (one case, not a file list)",
+              file=sys.stderr)
+        return 2
+    for flag, val in (("--watermark", args.watermark), ("--asset", args.asset),
+                      ("--previous", args.previous), ("--metadata", args.metadata)):
+        if val:
+            print(f"error: --case takes no {flag} (the case file describes the case)",
+                  file=sys.stderr)
+            return 2
+    if args.instruction is not None or args.input is not None:
+        print("error: --case takes no positional instruction/input",
+              file=sys.stderr)
+        return 2
+    try:
+        with open(args.case, encoding="utf-8") as f:
+            case = json.load(f)
+    except (OSError, json.JSONDecodeError) as ex:
+        print(f"error: cannot read case file: {ex}", file=sys.stderr)
+        return 2
+    if not isinstance(case, dict) or not case.get("instruction"):
+        print("error: case file needs an 'instruction' (the NL request)",
+              file=sys.stderr)
+        return 2
+    assets_in = case.get("assets")
+    if not isinstance(assets_in, dict) or not assets_in:
+        print("error: case file needs 'assets': {\"main\": file, ...}",
+              file=sys.stderr)
+        return 2
+    if "main" not in assets_in:
+        print("error: the case file's assets must include 'main'",
+              file=sys.stderr)
+        return 2
+    base_dir = case.get("assets_dir") or os.path.dirname(os.path.abspath(args.case))
+    assets = _build_case_assets(case, base_dir)
+    resp = generate(
+        case["instruction"],
+        assets,
+        output_filename=case.get("output"),
+        adapter_name=case.get("adapter", args.adapter),
+        preflight_check=args.preflight,
+    )
+    print(json.dumps(resp.to_dict(), indent=2))
+    if resp.status == "ready" and (case.get("execute") or args.execute):
+        return _execute_steps(resp)
     return EXIT_CODES.get(resp.status, 1)
 
 
@@ -254,7 +351,7 @@ def _subcommand(argv: list[str]) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd in ("--help", "-h"):
         print(__doc__)
-        print("\nSubcommands: generate (default), probe FILE, env, serve, worker, feedback, examples")
+        print("\nSubcommands: generate (default), probe FILE, env, serve, worker, mcp, feedback, examples")
         return 0
     if cmd == "--version":
         print(f"fass {__version__}")
@@ -329,6 +426,29 @@ def _subcommand(argv: list[str]) -> int:
         uvicorn.run(dockerctl.worker_app(), host=a.host, port=a.port,
                     log_level="warning")
         return 0
+    if cmd == "mcp":
+        p = argparse.ArgumentParser(prog="fass mcp")
+        p.add_argument("--transport", choices=["stdio", "streamable-http"],
+                       default="stdio",
+                       help="stdio: the client spawns this process (the "
+                            "default); streamable-http: a network endpoint")
+        p.add_argument("--host", default="127.0.0.1")
+        p.add_argument("--port", type=int, default=8765)
+        a = p.parse_args(rest)
+        try:
+            from fass import mcp_server
+        except ModuleNotFoundError:
+            print("error: the MCP server needs the mcp package "
+                  "(pip install 'mcp<2' — the [mcp] extra)", file=sys.stderr)
+            return 1
+        if a.transport != "stdio":
+            print(f"fass MCP server on http://{a.host}:{a.port}/mcp "
+                  f"(streamable-http) — tools: generate, run_case, probe, env_info")
+        else:
+            print("fass MCP server (stdio) — tools: generate, run_case, "
+                  "probe, env_info", file=sys.stderr)
+        mcp_server.serve(transport=a.transport, host=a.host, port=a.port)
+        return 0
     if cmd == "feedback":
         p = argparse.ArgumentParser(prog="fass feedback")
         g = p.add_mutually_exclusive_group()
@@ -366,6 +486,6 @@ def dataclasses_asdict(obj) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv and argv[0] in ("probe", "env", "serve", "worker", "feedback", "examples", "--help", "-h", "--version"):
+    if argv and argv[0] in ("probe", "env", "serve", "worker", "mcp", "feedback", "examples", "--help", "-h", "--version"):
         return _subcommand(argv)
     return _generate_cli(argv)

@@ -151,3 +151,49 @@ def test_asset_kind_prefix_cli():
     ops = data["plan"]["operations"]
     assert len(ops) == 1 and ops[0]["type"] == "audio_replace"
     assert ops[0]["asset_id"] == "radio"
+
+
+def test_case_file_cli(tmp_path):
+    # a test case described entirely by a JSON file
+    case = {
+        "instruction": "resize to 720p",
+        "assets": {"main": "clip.mp4", "watermark": "image:logo.png"},
+        "output": "small.mp4",
+        "adapter": "rules",
+    }
+    case_file = tmp_path / "case.json"
+    case_file.write_text(json.dumps(case), encoding="utf-8")
+    r = run_cli("--case", str(case_file))
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["status"] == "ready", data
+    assert data["arguments"][-1] == "small.mp4"
+    # bare asset names resolve against the case file's directory
+    assert os.path.join(str(case_file.parent), "clip.mp4") in data["arguments"]
+
+
+def test_case_file_rejects_conflicting_flags(tmp_path):
+    case_file = tmp_path / "case.json"
+    case_file.write_text(json.dumps(
+        {"instruction": "resize to 720p", "assets": {"main": "clip.mp4"}}),
+        encoding="utf-8")
+    r = run_cli("--case", str(case_file), "--asset", "in1=extra.mp4")
+    assert r.returncode == 2
+    assert "--asset" in r.stderr
+
+
+def test_case_file_requires_main(tmp_path):
+    case_file = tmp_path / "case.json"
+    case_file.write_text(json.dumps(
+        {"instruction": "resize to 720p", "assets": {"in1": "clip.mp4"}}),
+        encoding="utf-8")
+    r = run_cli("--case", str(case_file))
+    assert r.returncode == 2
+    assert "main" in r.stderr
+
+
+def test_case_file_bad_json(tmp_path):
+    case_file = tmp_path / "case.json"
+    case_file.write_text("{ not json", encoding="utf-8")
+    r = run_cli("--case", str(case_file))
+    assert r.returncode == 2
