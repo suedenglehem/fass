@@ -137,6 +137,9 @@ def capability_errors(spec) -> list[str]:
             f"video output to {spec.container.upper()} needs a video codec "
             f"(supported: {', '.join(row['video']) or 'none'})"
         )
+    elif spec.video_codec == "copy":
+        pass  # stream copy carries the INPUT's codec — the planner checks
+        # the container carries it once the input is probed
     elif spec.video_codec not in row["video"]:
         errors.append(
             f"video codec '{spec.video_codec}' is not supported in "

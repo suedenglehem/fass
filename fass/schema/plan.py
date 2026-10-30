@@ -189,9 +189,17 @@ class OutputSpec(BaseModel):
         "opus", "srt_file", "vtt_file", "ass_file",
     ]
     video_codec: Literal[
-        "h264", "h265", "av1", "av1_svt", "vp9", "vp8", "theora", "vvc",
-        "prores", "mpeg2", "mpeg4", "mjpeg", "dv", "gif", "webp",
-    ] | None = None
+        "copy", "h264", "h265", "av1", "av1_svt", "vp9", "vp8", "theora",
+        "vvc", "prores", "mpeg2", "mpeg4", "mjpeg", "dv", "gif", "webp",
+    ] | None = Field(
+        default=None,
+        description="Video codec to encode with, or 'copy' — stream-copy the "
+                    "input's video as-is (-c:v copy): the input's codec and "
+                    "bitrate pass through untouched, so the container must "
+                    "carry the input's codec and no video setting (bitrate, "
+                    "profile, preset, pixel format, GPU/QSV, codec options, "
+                    "ABR ladder, video filters) may be requested.",
+    )
     audio_codec: Literal[
         "aac", "fdk_aac", "opus", "mp2", "mp3", "ac3", "eac3", "alac",
         "flac", "vorbis", "pcm_s16le", "pcm_s24le", "pcm_f32le",
@@ -311,13 +319,15 @@ class OutputSpec(BaseModel):
                 "audio-only or subtitle output has no video levels"
             )
         if self.video_codec is not None and self.video_codec not in (
-            "h264", "h265",
+            "h264", "h265", "copy",
         ):
             raise ValueError(
                 "an ABR ladder re-encodes video with per-level profile/"
                 f"level flags — only an h264 or h265 ladder is supported, "
                 f"not {self.video_codec}"
             )
+        # 'copy' + ladder is a planner error (a ladder re-encodes every
+        # level) — kept out of the schema so it surfaces as a plan error.
         if self.gpu or self.qsv:
             raise ValueError(
                 "an ABR ladder is a CPU encode — clear gpu/qsv; per-level "
@@ -412,7 +422,12 @@ class OutputSpec(BaseModel):
     def _capability(self) -> "OutputSpec":
         for err in capability_errors(self):
             raise ValueError(err)
-        if self.mode == "video" and self.video_profile is not None:
+        # 'copy' names no encoder — the codec-specific tables below do not
+        # apply; the planner reports "copying the video cannot ..." for
+        # every video setting requested alongside a copy.
+        codec_specific = self.video_codec not in (None, "copy")
+        if self.mode == "video" and self.video_profile is not None \
+                and codec_specific:
             allowed = video_profiles_for(self.video_codec)
             if self.video_profile not in allowed:
                 raise ValueError(
@@ -420,11 +435,13 @@ class OutputSpec(BaseModel):
                     f"{self.video_codec.upper()} "
                     f"(allowed: {', '.join(allowed) or 'none'})"
                 )
-        if self.mode == "video" and self.pixel_format is not None:
+        if self.mode == "video" and self.pixel_format is not None \
+                and codec_specific:
             pf_err = pixel_format_error(self.video_codec, self.pixel_format)
             if pf_err:
                 raise ValueError(pf_err)
-        if self.video_codec_options and self.mode == "video":
+        if self.video_codec_options and self.mode == "video" \
+                and codec_specific:
             enc = video_encoder_name(self.video_codec, self.gpu, self.qsv)
             for err in codec_option_errors(enc, self.video_codec_options):
                 raise ValueError(err)

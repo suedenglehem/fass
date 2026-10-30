@@ -92,6 +92,14 @@ user names a bitrate, "audio_bitrate_kbps" (e.g. "mp2 128k" -> 128; lossless
 codecs — flac, alac, pcm_* — take no bitrate); "video_codec" stays null), or
 "subtitles" (dump the input's subtitle track to a file: container
 srt_file|vtt_file|ass_file, no codec flags at all).
+Video: "video_codec" names the codec to encode with (default null — the
+container's default codec), or "copy" ("copy the video as-is", "keep the
+video untouched", "video as-is", "without re-encoding the video" — the
+input's codec and bitrate pass through untouched, so the output container
+must carry the input's video codec, and nothing may touch the video: no
+video_bitrate_kbps, video_profile, video_preset, pixel_format, gpu, qsv,
+video_codec_options, ABR ladder (variants) or video filters — never
+"copy" together with a named video codec).
 Audio: "audio_mode" "encode" (default, keep — "with the audio"), "copy"
 ("copy the audio as-is", "keep the audio untouched", "without re-encoding
 the audio" — the input's codec and bitrate pass through untouched, so the

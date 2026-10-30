@@ -438,6 +438,49 @@ def test_revision_copy_audio_as_is(gen):
     assert r.plan["output"]["audio_mode"] == "copy"
 
 
+def test_copy_video_as_is(gen):
+    for instr in ("copy the video as-is",
+                  "copy video as is",
+                  "without re-encoding the video",
+                  "keep the video untouched",
+                  "video as-is",
+                  "transcode audio to aac 180kbps and copy video as is"):
+        r = gen(instr, "clip.mp4")
+        assert r.status == "ready", (instr, r.status, r.clarifications)
+        assert r.plan["output"]["video_codec"] == "copy", instr
+
+
+def test_copy_video_with_audio_transcode(gen):
+    # the user's exact instruction: video copied, audio transcoded
+    r = gen("transcode audio to aac 180kbps and copy video as is", "clip.mp4")
+    assert r.status == "ready"
+    out = r.plan["output"]
+    assert out["mode"] == "video"
+    assert out["video_codec"] == "copy"
+    assert out["audio_codec"] == "aac"
+    assert out["audio_bitrate_kbps"] == 180
+
+
+def test_copy_video_conflicts_with_named_codec(gen):
+    r = gen("convert to h264 and copy the video as-is", "clip.mp4")
+    assert r.status == "needs_clarification"
+    assert any("copy" in c["question"].lower() for c in r.clarifications)
+
+
+def test_copy_video_not_a_noop(gen):
+    # 'copy the video as-is' alone is an edit, not 'nothing to do'
+    r = gen("copy the video as-is", "clip.mp4")
+    assert r.status == "ready"
+    assert r.plan["output"]["video_codec"] == "copy"
+
+
+def test_revision_copy_video_as_is(gen):
+    prev = EditPlan(output=OutputSpec(container="mp4", video_codec="h264"))
+    r = gen("copy the video as-is", "clip.mp4", previous_plan=prev)
+    assert r.status == "ready"
+    assert r.plan["output"]["video_codec"] == "copy"
+
+
 def test_first_n_seconds_trim(gen):
     r = gen("trim the first 20 seconds", "clip.mp4")
     assert r.status == "ready"

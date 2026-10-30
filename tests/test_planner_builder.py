@@ -18,11 +18,13 @@ from fass.schema import (
     AudioResampleOp,
     CropOp,
     EditPlan,
+    FilterOp,
     GrayscaleOp,
     OutputSpec,
     ResizeOp,
     RotateOp,
     SpeedOp,
+    SubtitleOp,
     TrimSpec,
     WatermarkOp,
 )
@@ -514,6 +516,167 @@ def test_audio_copy_gif_drops_track():
                     media=make_media())
     assert "-an" in argv
     assert "-c:a" not in argv
+
+
+# -------------------------------------------------------- video stream copy
+
+def test_video_copy_emits_c_v_copy():
+    # The user's exact request: transcode audio to aac 180k, video as-is.
+    argv = argv_for(
+        output=OutputSpec(container="mp4", video_codec="copy",
+                          audio_codec="aac", audio_bitrate_kbps=180),
+        media=make_media(),
+    )
+    assert argv[argv.index("-c:v") + 1] == "copy"
+    assert argv[argv.index("-c:a") + 1] == "aac"
+    assert argv[argv.index("-b:a") + 1] == "180k"
+    assert "-b:v" not in argv  # a copied track takes no video bitrate
+
+
+def test_video_copy_default_audio_encode():
+    # 'copy the video as-is' with no audio instruction: the video is
+    # copied, the audio gets the container's default encode — not a
+    # full remux (-c copy).
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="copy"),
+                    media=make_media())
+    assert argv[argv.index("-c:v") + 1] == "copy"
+    assert argv[argv.index("-c:a") + 1] == "aac"
+    assert "-c" not in argv
+
+
+def test_video_copy_skips_encoder_flags():
+    # no encoder flag rides alongside -c:v copy
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                      audio_codec="aac",
+                                      audio_bitrate_kbps=180),
+                    media=make_media())
+    for flag in ("-b:v", "-maxrate", "-bufsize", "-crf", "-profile:v",
+                 "-preset", "-pix_fmt", "-g"):
+        assert flag not in argv
+
+
+def test_video_copy_container_cannot_carry_input_codec():
+    # an mpeg4 input cannot be copied into an mp4 that carries no mpeg4
+    with pytest.raises(PlanError, match="cannot carry a copied mpeg4"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy"),
+               media=make_media(video_codec="mpeg4"))
+
+
+def test_video_copy_bitrate_conflicts():
+    with pytest.raises(PlanError, match="steers the encoder"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 video_bitrate_kbps=600),
+               media=make_media())
+
+
+def test_video_copy_profile_conflicts():
+    with pytest.raises(PlanError, match="encoder profile steers"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 video_profile="baseline"),
+               media=make_media())
+
+
+def test_video_copy_preset_conflicts():
+    with pytest.raises(PlanError, match="encoder preset steers"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 video_preset="fast"),
+               media=make_media())
+
+
+def test_video_copy_pixel_format_conflicts():
+    with pytest.raises(PlanError, match="pixel format conversion"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 pixel_format="yuv420p"),
+               media=make_media())
+
+
+def test_video_copy_gpu_conflicts():
+    with pytest.raises(PlanError, match="GPU encoding encodes"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 gpu=True),
+               media=make_media())
+
+
+def test_video_copy_qsv_conflicts():
+    with pytest.raises(PlanError, match="QSV encoding encodes"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 qsv=True),
+               media=make_media())
+
+
+def test_video_copy_codec_options_conflicts():
+    with pytest.raises(PlanError, match="codec options steer the encoder"):
+        ep_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                 video_codec_options={"crf": "18"}),
+               media=make_media())
+
+
+def test_video_copy_ladder_conflicts():
+    with pytest.raises(PlanError, match="ABR ladder"):
+        ep_for(output=OutputSpec(container="hls", video_codec="copy",
+                                 variants=[{"height": 360,
+                                            "video_bitrate_kbps": 1000}]),
+               media=make_media())
+
+
+def test_video_copy_resize_conflicts():
+    with pytest.raises(PlanError, match="decodes the video"):
+        ep_for(operations=[ResizeOp(height=720)],
+               output=OutputSpec(container="mp4", video_codec="copy"),
+               media=make_media())
+
+
+def test_video_copy_video_filter_conflicts():
+    with pytest.raises(PlanError, match="video filter decodes the video"):
+        ep_for(operations=[FilterOp(expr="hflip")],
+               output=OutputSpec(container="mp4", video_codec="copy"),
+               media=make_media())
+
+
+def test_video_copy_burned_subtitles_conflict():
+    edit = EditPlan(operations=[SubtitleOp(asset_id="subs")],
+                    output=OutputSpec(container="mp4", video_codec="copy"))
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO),
+              "subs": Asset(path="subs.srt", kind=AssetKind.SUBTITLES)}
+    with pytest.raises(PlanError, match="burned-in subtitles"):
+        plan_execution(edit, assets, make_media(), "out.mp4")
+
+
+def test_video_copy_subtitle_dump_conflicts():
+    # defensive planner guard (the schema already forbids a video_codec on
+    # a subtitle dump): a dump carries no video stream to copy
+    out = OutputSpec.model_construct(mode="subtitles", container="srt_file",
+                                     video_codec="copy")
+    edit = EditPlan.model_construct(output=out)
+    assets = {"main": Asset(path="clip.mp4", kind=AssetKind.VIDEO)}
+    with pytest.raises(PlanError, match="carries no video stream"):
+        plan_execution(edit, assets, make_media(subtitle_streams=1), "out.srt")
+
+
+def test_video_copy_trim_conflicts():
+    # a re-encoding trim cannot ride on a copied video; a stream-copy cut can
+    with pytest.raises(PlanError, match="cannot also be copied as-is"):
+        ep_for(trim=TrimSpec(start_seconds=5, duration_seconds=10),
+               output=OutputSpec(container="mp4", video_codec="copy"),
+               media=make_media())
+
+
+def test_video_copy_stream_copy_trim_allowed():
+    argv = argv_for(trim=TrimSpec(start_seconds=5, duration_seconds=10,
+                                  stream_copy=True),
+                    output=OutputSpec(container="mp4", video_codec="copy"),
+                    media=make_media())
+    assert argv[argv.index("-c:v") + 1] == "copy"
+    assert "-ss" in argv and "-t" in argv
+
+
+def test_video_copy_audio_copy_together():
+    # copy video + copy audio: both streams pass through
+    argv = argv_for(output=OutputSpec(container="mp4", video_codec="copy",
+                                      audio_mode="copy"),
+                    media=make_media())
+    assert argv[argv.index("-c:v") + 1] == "copy"
+    assert argv[argv.index("-c:a") + 1] == "copy"
 
 
 # ------------------------------------------------------------ audio replace

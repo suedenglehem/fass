@@ -538,5 +538,15 @@
     "id": "bench-093",
     "instruction": "Remove the audio and copy the audio as-is",
     "expected": {"status": "needs_clarification"}
+  },
+  {
+    "id": "bench-094",
+    "instruction": "transcode audio to aac 180kbps and copy video as is",
+    "expected": {"status": "ready", "ops": [], "video_codec": "copy"}
+  },
+  {
+    "id": "bench-095",
+    "instruction": "copy the video as-is",
+    "expected": {"status": "ready", "ops": [], "video_codec": "copy"}
   }
 ]
