@@ -28,8 +28,12 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   -map 1:a:0 -c:v copy -c:a copy, no -shortest; suite 1627 passed /
   2 skipped; the second LLM try REWORKED as a DIRECT raw-command call
   (no EditPlan schema) — COMMITTED 7f1a7ad + bump 918393e
-  (v1.137036.7f1a7ad), LOCAL, awaiting the user's push/deploy green
-  light; suite 1635 passed / 2 skipped)):**
+  (v1.137036.7f1a7ad) PUSHED + i7 DEPLOYED + live-verified — both of
+  the user's exact instructions came back ready on i7; the second try
+  EXTENDED to parser-error + planner-rejected-plan first passes —
+  COMMITTED aa5c5f9 + bump e6e282a (v1.137036.aa5c5f9), LOCAL —
+  awaiting the user's push/deploy green light; suite 1640 passed /
+  2 skipped)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -313,9 +317,53 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   `_extract_ffmpeg_command` unit tests (bare, fenced with prose,
   backslash continuations, bullet start, stops at prose, absent).
   **Full suite: 1635 passed / 2 skipped / 0 failed (143.87 s).**
-  **Next: the user's green light for push + i7 deploy (i7 still runs
-  v1.137036.d1c41d0 — the user's browser test of the combine
-  instruction will hit the schema-path bug again until redeployed).**
+  **Done (green light "push and deploy to i7, i will test it"): PUSHED
+  b9184d2..c916513, i7 ff-merged to c916513 (compose opt-in + ffprobe
+  "Exiting with exit code" patch verified intact, 1/1), container
+  rebuilt + recreated, live-verified v1.137036.7f1a7ad — and BOTH of
+  the user's exact instructions POSTed to i7 came back READY (the
+  multi-audio combine via the LLM first pass with the audio_add plan;
+  the 720p/h264/mp2/mpegts combine via the rules pass). The verify
+  also exposed the remaining gap — a first pass whose reply never
+  parses, or whose plan the PLANNER rejects (the user's own
+  'audio-replacement asset in1 is not an audio file' shape), still
+  bypassed the second try → see (7).**
+  (7) **The second LLM try EXTENDED to parser error +
+  planner-rejected plans — IMPLEMENTED + COMMITTED `aa5c5f9`
+  (2 files, +243/−28) + version bump `e6e282a`
+  (v1.137036.aa5c5f9); LOCAL — NOT pushed, NOT deployed, awaiting the
+  user's explicit green light:** on i7 the first pass IS the LLM
+  schema pass (get_adapter("auto") → LLM when a provider is
+  configured); a reply that does not parse into an EditPlan (parser
+  error) and a plan the planner rejects (an audio-replacement asset
+  that is a video — the user's bug-report shape) both returned
+  status "error" with the direct second try never running, while the
+  same prompt fed by hand returns the correct raw command. Fix
+  (`fass/pipeline.py`): `_direct_ready_response()` builds the
+  synthetic ready response in one shape for all three triggers
+  (defaults note's first clause per trigger: 'found no supported plan'
+  / 'failed to produce a valid plan' / 'was rejected by the planner' —
+  the user-required first-attempt/second-approach logging kept); the
+  parser-error path and the PlanError path now run
+  `_llm_direct_command()` when `adapter.name == "llm"` — on a
+  validated command the ready response is returned; on failure the
+  first pass's error leads and 'second LLM try failed: <the second
+  try's own error>' follows, the verbatim second reply becomes
+  raw_llm. A rules-built plan being rejected stays a hard error
+  (deterministic conflict — keeps the 13 exact-string PlanError
+  tests hermetic). `tests/test_pipeline_rag.py` +5 (FakeSchemaLLM:
+  parse() + _chat_openai; the bug-report plan shape — AudioReplaceOp
+  over a VIDEO asset — over a two-video asset map: plan rejected +
+  valid direct command → ready + 'rejected by the planner' note + the
+  verbatim second-try query; plan rejected + direct fails → error,
+  planner error leads + the second try's own error + raw reply; rules
+  plan rejected → no 'llm' adapter request, the planner error stands
+  alone; parser error + valid command → ready + 'failed to produce a
+  valid plan' note; parser error + direct fails → error, 'parser
+  error: …' + 'second LLM try failed: …'). **Full suite: 1640 passed
+  / 2 skipped / 0 failed (143.92 s). Next: the user's green light for
+  push + i7 deploy (i7 runs v1.137036.7f1a7ad — the
+  parser/planner-rejection wall remains until this is deployed).**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
