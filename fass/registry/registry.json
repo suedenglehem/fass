@@ -297,7 +297,17 @@
       "mpegts_pmt_start_pid": { "kind": "int", "range": [0, 8191], "description": "first PID used in the PMT" },
       "mpegts_start_pid": { "kind": "int", "range": [0, 8191], "description": "first PID assigned to the streams" },
       "mpegts_initial_pcr_offset": { "kind": "number", "description": "initial PCR offset in seconds" },
-      "mpegts_m2ts_mode": { "kind": "bool", "description": "use the M2TS variant of the framing" }
+      "mpegts_m2ts_mode": { "kind": "bool", "description": "use the M2TS variant of the framing" },
+      "streamid": { "kind": "string", "description": "assign a PID to a stream 'type:pid' (e.g. 0:0x0300 = first video stream on PID 0x0300)" },
+      "program": { "kind": "string", "description": "add a program with the specified streams (9.x CLI syntax: 'title=<name>:st=<idx>[,st=<idx>...]', stream indexes not PIDs, e.g. title=Main:st=0,st=1)" },
+      "pat_period": { "kind": "number", "description": "PAT table repetition period in seconds (default 0.1)" },
+      "sdt_period": { "kind": "number", "description": "SDT table repetition period in seconds (default 0.5)" },
+      "nit_period": { "kind": "number", "description": "NIT table repetition period in seconds (default -1 = disabled)" },
+      "pcr_period": { "kind": "number", "description": "PCR emission period in seconds (default 0.01)" },
+      "pes_payload_size": { "kind": "int", "range": [0, 65535], "description": "maximum PES payload size in bytes (default 184, 0 = no payload)" },
+      "mpegts_copyts": { "kind": "bool", "description": "copy input timestamps" },
+      "tables_version": { "kind": "int", "range": [0, 31], "description": "table version field value (0-31)" },
+      "omit_video_pes_length": { "kind": "bool", "description": "omit the PES packet length field for video streams" }
     },
     "hls": {
       "hls_time": { "kind": "number", "range": [0.1, 3600], "description": "target segment length in seconds (default 2)" },
@@ -716,11 +726,25 @@
       "bitdepth8": {"kind": "bool", "description": "8-bit input (default 0)", "builds": ["docs"]},
       "period": {"kind": "int", "description": "IRAP period in frames", "builds": ["docs"]},
       "vvenc-params": {"kind": "string", "description": "vvenc options as a :-separated list of key=value", "builds": ["docs"]}
+    },
+    "mpeg2video": {
+      "sc_threshold": {"kind": "int", "range": [0, 2147483647], "description": "scene change threshold (0 = off; lower values force more keyframes at cuts)"}
     }
   },
   "filters": {
     "description": "Allowlisted FFmpeg filters (https://ffmpeg.org/ffmpeg-filters.html). The NLU may name these (FilterOp expr / plan.filtergraph); every filter instance in a graph is validated against this table — name, domain, argument characters and (for entries with an 'options' schema, the M10 table) every key=value option against its kind/range/choices — before a process is spawned. Entry flags: diagnostic (log-only output), multi_input: N (needs N inputs in a labeled filtergraph), needs_reference (2nd input is the comparison reference), gpu (GPU/platform build gated), min_version. Filters that open files or devices beyond the plan's own inputs (movie=, avfilter sources, …) are deliberately absent from the allowlist.",
     "video": {
+      "alphamerge": { "description": "merge a grayscale mask into the alpha channel of the first input: '[video][mask]alphamerge' (multi-input: video, then mask)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#alphamerge", "anchor": "alphamerge", "title": "Video Filters > alphamerge"}, "aliases": ["alphamerge", "alpha merge", "merge alpha", "apply an alpha mask"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "blend": { "description": "blend two video streams per plane: '[a][b]blend=all_mode=addition' (mix modes: addition, difference, multiply, …)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#blend", "anchor": "blend", "title": "Video Filters > blend"}, "aliases": ["blend", "blend two videos", "mix two frames", "difference blend"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "geq": { "description": "per-pixel evaluation: 'geq=lum=lum(X,Y):a=alpha(X,Y)*0.5' (expressions over X, Y, plane samples)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#geq", "anchor": "geq", "title": "Video Filters > geq"}, "aliases": ["geq", "per-pixel expression", "luma expression", "pixel math"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "select": { "description": "select which frames to keep: 'select=expr' (expression over frame variables n, t, prev_selected_n, …)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#select", "anchor": "select", "title": "Video Filters > select"}, "aliases": ["select", "select frames", "keep every Nth frame", "frame selection"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "xstack": { "description": "stack video streams in a custom grid: '[a][b]xstack=inputs=2:layout=0_0|w0_0' (multi-input)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#xstack", "anchor": "xstack", "title": "Video Filters > xstack"}, "aliases": ["xstack", "grid stack", "custom layout stack", "tile into a grid"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "zscale": { "description": "zimg-based scaling and color conversion: 'zscale=t=linear:npl=100' (transfer function; npl = peak luminance in nits; HDR->SDR goes linear -> tonemap -> target)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#zscale", "anchor": "zscale", "title": "Video Filters > zscale"}, "aliases": ["zscale", "zimg scale", "color convert with zimg"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "lutrgb": { "description": "per-channel RGB lookup tables: 'lutrgb=r=val*1.2:g=val:b=val' (one expression per channel)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#lutrgb", "anchor": "lutrgb", "title": "Video Filters > lutrgb"}, "aliases": ["lutrgb", "rgb lookup table", "adjust channels with a lut"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "colorchannelmixer": { "description": "mix the color channels: 'colorchannelmixer=aa=0.35' (rr/rg/rb/ra … ga/gb/gr/ga, ba…, aa = alpha multiplier)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#colorchannelmixer", "anchor": "colorchannelmixer", "title": "Video Filters > colorchannelmixer"}, "aliases": ["colorchannelmixer", "color channel mix", "set alpha with a channel mix"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "tpad": { "description": "pad the stream with still start/stop frames: 'tpad=start=30:stop=30' (frames added before the first / after the last)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#tpad", "anchor": "tpad", "title": "Video Filters > tpad"}, "aliases": ["tpad", "pad with still frames", "freeze-frame padding", "extend the end of the clip"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "scale2ref": { "description": "scale one video to match the size of a reference: '[a][b]scale2ref' (outputs the scaled stream and the untouched reference; multi-input)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#scale2ref", "anchor": "scale2ref", "title": "Video Filters > scale2ref"}, "aliases": ["scale2ref", "match the reference size", "scale to match another video"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "despill": { "description": "remove green/magenta spill from keyed footage: 'despill=type=green' (type: green or magenta)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#despill", "anchor": "despill", "title": "Video Filters > despill"}, "aliases": ["despill", "remove green spill", "remove magenta spill", "fix keying spill"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "scale": { "description": "resize: 'scale=-2:480', 'scale=1280:-2', 'scale=1280:720'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Options-2", "anchor": "Options-2", "title": "Video Filters > scale > Options"}, "aliases": ["resize", "720p", "1280x720", "full hd", "4k", "upscale", "downscale", "change the resolution"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "crop": { "description": "crop: 'crop=w:h', 'crop=w:h:x:y' (centered by default)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-60", "anchor": "Examples-60", "title": "Video Filters > crop > Examples"}, "aliases": ["crop", "crop to 1280x720", "crop out", "crop the edges"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "pad": { "description": "pad/letterbox: 'pad=1280:720:(ow-iw)/2:(oh-ih)/2'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-106", "anchor": "Examples-106", "title": "Video Filters > pad > Examples"}, "aliases": ["pad", "add padding", "pad/letterbox", "expand the frame"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
@@ -2424,29 +2448,38 @@
         "options": {
           "mode": {
             "kind": "choice",
-            "description": "specify the interlacing mode (default send_frame)",
+            "description": "specify the interlacing mode (default send_frame); ffmpeg also accepts the numeric aliases 0-3",
             "values": [
               "send_frame",
               "send_field",
               "send_frame_nospatial",
-              "send_field_nospatial"
+              "send_field_nospatial",
+              "0",
+              "1",
+              "2",
+              "3"
             ]
           },
           "parity": {
             "kind": "choice",
-            "description": "specify the assumed picture field parity (default auto)",
+            "description": "specify the assumed picture field parity (default auto); ffmpeg also accepts the numeric aliases 0-2",
             "values": [
               "tff",
               "bff",
-              "auto"
+              "auto",
+              "0",
+              "1",
+              "2"
             ]
           },
           "deint": {
             "kind": "choice",
-            "description": "specify which frames to deinterlace (default all)",
+            "description": "specify which frames to deinterlace (default all); ffmpeg also accepts the numeric aliases 0-1",
             "values": [
               "all",
-              "interlaced"
+              "interlaced",
+              "0",
+              "1"
             ]
           }
         },
@@ -3168,6 +3201,13 @@
       }
     },
     "audio": {
+      "afftdn": { "description": "denoise in the frequency domain (FFT): 'afftdn=nr=12:nf=-30' (noise reduction dB, noise floor dB)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#afftdn", "anchor": "afftdn", "title": "Audio Filters > afftdn"}, "aliases": ["afftdn", "denoise", "remove noise", "noise reduction"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "aloop": { "description": "loop the audio input in place: 'aloop=loop=-1:size=2e9' (loop=-1 repeats forever)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#aloop", "anchor": "aloop", "title": "Audio Filters > aloop"}, "aliases": ["aloop", "loop the audio", "repeat the audio", "extend audio by looping"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "asetpts": { "description": "set audio PTS: 'asetpts=PTS-STARTPTS' (timestamp rebase after atrim/concat so playback is continuous)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#asetpts", "anchor": "asetpts", "title": "Audio Filters > asetpts"}, "aliases": ["asetpts", "rebase audio timestamps", "reset audio pts"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "asplit": { "description": "split one audio stream into several: 'asplit=2[a][b]' (each output gets all samples)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#asplit", "anchor": "asplit", "title": "Audio Filters > asplit"}, "aliases": ["asplit", "split the audio", "branch the audio stream"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "pan": { "description": "custom audio channel panning: 'pan=stereo|c0=c0|c1=c0' (output layout, then per-channel mix expressions)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#pan", "anchor": "pan", "title": "Audio Filters > pan"}, "aliases": ["pan", "pan the audio", "remix channels", "surround panning"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "sidechaincompress": { "description": "compress the main stream driven by a sidechain input: '[main][sc]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300' (multi-input)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#sidechaincompress", "anchor": "sidechaincompress", "title": "Audio Filters > sidechaincompress"}, "aliases": ["sidechaincompress", "sidechain compress", "ducking", "duck the music"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
+      "channelmap": { "description": "map audio channels by name or index: 'channelmap=channel_layout=5.1(side)' (remap/expand the input channels into an output layout)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#channelmap", "anchor": "channelmap", "title": "Audio Filters > channelmap"}, "aliases": ["channelmap", "remap audio channels", "map channels to 5.1"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "volume": { "description": "gain: 'volume=2' (x2), 'volume=-6dB', 'volume=0.5'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-53", "anchor": "Commands-53", "title": "Audio Filters > volume > Commands"}, "aliases": ["volume", "louder", "quieter", "set the volume to 200%", "volume up", "volume down", "softer"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "afade": { "description": "audio fade: 'afade=t=in:st=0:d=1'", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Commands-8", "anchor": "Commands-8", "title": "Audio Filters > afade > Commands"}, "aliases": ["fade in the audio", "fade out the audio", "audio fade"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
       "atempo": { "description": "playback speed 0.5-2.0 per instance (chain for more)", "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#Examples-18", "anchor": "Examples-18", "title": "Audio Filters > atempo > Examples"}, "aliases": ["speed up the audio", "slow down the audio", "2x faster", "half speed", "change the audio speed"], "provenance": {"corpus_id": "ffmpeg-9.0.1", "option_source": "both", "verified_builds": ["6.1.1", "9.0.1"], "reviewed": true} },
@@ -3859,20 +3899,12 @@
         "description": "Change the sample rate without altering the data.",
         "options": {
           "sample_rate": {
-            "kind": "int",
-            "range": [
-              1,
-              2147483647
-            ],
-            "description": "set the sample rate (default 44100)"
+            "kind": "string",
+            "description": "set the sample rate (default 44100); ffmpeg evaluates arithmetic expressions here (e.g. '48000*100/120')"
           },
           "r": {
-            "kind": "int",
-            "range": [
-              1,
-              2147483647
-            ],
-            "description": "set the sample rate (default 44100)"
+            "kind": "string",
+            "description": "set the sample rate (default 44100); ffmpeg evaluates arithmetic expressions here (e.g. '48000*100/120')"
           }
         },
         "doc_ref": {"url": "https://ffmpeg.org/ffmpeg-filters.html#asetrate", "anchor": "asetrate", "title": "Audio Filters > asetrate"},
@@ -5029,8 +5061,8 @@
     "h264": ["yuv420p", "yuv420p10le"],
     "h265": ["yuv420p", "yuv420p10le"],
     "vp9": ["yuv420p", "yuv420p10le", "yuv444p"],
-    "prores": ["yuv422p10le", "yuv444p10le"],
-    "mpeg2": ["yuv420p"],
+    "prores": ["yuv422p", "yuv422p10le", "yuv444p10le", "yuva444p10le"],
+    "mpeg2": ["yuv420p", "yuv422p"],
     "mpeg4": ["yuv420p"],
     "mjpeg": ["yuvj420p", "yuv420p"],
     "dv": ["yuv420p"],

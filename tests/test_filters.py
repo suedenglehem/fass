@@ -54,12 +54,17 @@ def test_registry_has_the_50_new_entries():
         assert name in video, name
     for name in NEW_AUDIO:
         assert name in audio, name
-    # 60 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
+    # 72 video: 50 (M10.0/M10.3) + settb (M10.6, xfade input normalization)
     # + signalstats/blackframe (M11.3 diagnostic pilot)
     # + edgedetect/freezeframes/thistogram/histogram/blockdetect/blurdetect/
-    #   tinterlace (M11.4 review merge) + tonemap (M12.HDR); 40 audio:
-    #   36 + ebur128 + ahistogram/aspectralstats/showvolume (M11.4)
-    assert len(video) == 61 and len(audio) == 40
+    #   tinterlace (M11.4 review merge) + tonemap (M12.HDR)
+    # + alphamerge/blend/geq/select/xstack (long-tail gate widening)
+    # + zscale/lutrgb/colorchannelmixer/tpad/scale2ref/despill
+    #   (evidence widening); 47 audio: 36 + ebur128 +
+    #   ahistogram/aspectralstats/showvolume (M11.4)
+    # + afftdn/aloop/asetpts/asplit/pan/sidechaincompress (long-tail)
+    # + channelmap (evidence widening)
+    assert len(video) == 72 and len(audio) == 47
     # All ten combiners (M10.0: xfade/vstack/overlay/acrossfade/amerge/
     # amix/join; M10.3: concat/hstack; M11.4: freezeframes) carry the
     # multi_input marker.

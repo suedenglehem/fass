@@ -42,6 +42,8 @@ EXPECTED_TABLES = {
     "prores_ks": 6, "png": 3, "dvbsub": 1, "libvvenc": 10,
     "ac3": 20, "eac3": 18, "libfdk_aac": 13,
     "flac": 11, "libopus": 8, "opus": 2,
+    # long-tail gate widening: the mpeg2video table the campaign reached for
+    "mpeg2video": 1,
 }
 
 
@@ -49,7 +51,7 @@ def test_registry_has_sixteen_encoder_tables():
     tables = {k: v for k, v in REGISTRY["codec_options"].items()
               if k != "description" and isinstance(v, dict)}
     assert {k: len(v) for k, v in tables.items()} == EXPECTED_TABLES
-    assert sum(len(v) for v in tables.values()) == 344
+    assert sum(len(v) for v in tables.values()) == 345
 
 
 def test_registry_option_kinds_and_ranges():

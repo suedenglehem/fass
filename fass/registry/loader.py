@@ -497,7 +497,14 @@ _FORMAT_OPTION_GROUPS = {
 
 _RATE = re.compile(r"^\d+(\.\d+)?[kKmM]?$")
 _NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
-_INT = re.compile(r"^-?\d+$")
+_INT = re.compile(r"^-?(0[xX][0-9a-fA-F]+|\d+)$")
+
+
+def _int_value(value: str) -> int:
+    """int() that also accepts hex (PIDs); base-0 would misread '008' as octal."""
+    if value.lstrip("-").lower().startswith("0x"):
+        return int(value, 16)
+    return int(value)
 _RATIONAL = re.compile(r"^-?\d+(/\d+)?$")
 _BRAND = re.compile(r"^[a-z0-9]{4}$")
 _META_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_]*$")
@@ -528,7 +535,7 @@ def _validate_option_value(key: str, spec: dict, value: str) -> str | None:
     elif kind == "int":
         if not _INT.match(value):
             return f"{key}: '{value}' is not an integer"
-        v = int(value)
+        v = _int_value(value)
     elif kind == "rational":
         if not _RATIONAL.match(value):
             return f"{key}: '{value}' is not a rational (e.g. 30000/1001)"
@@ -661,7 +668,7 @@ def _codec_option_value_error(key: str, spec: dict, value: str) -> str | None:
     if kind == "int":
         if not _INT.match(value):
             return f"{key}: '{value}' is not an integer"
-        v = int(value)
+        v = _int_value(value)
     elif kind == "float":
         if not _NUMBER.match(value):
             return f"{key}: '{value}' is not a number"
@@ -1068,7 +1075,7 @@ def _validate_chain(chain: str, problems: list[str]) -> None:
         _validate_instance(inst, problems)
 
 
-_LABEL = re.compile(r"^[0-9]+(:[a-zA-Z0-9]+)?$|^[a-zA-Z][a-zA-Z0-9_]*$")
+_LABEL = re.compile(r"^[0-9]+(:[a-zA-Z0-9]+){0,2}$|^[a-zA-Z][a-zA-Z0-9_]*$")
 
 
 def _strip_trailing_labels(s: str) -> str:

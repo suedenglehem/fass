@@ -76,7 +76,8 @@ _CODEC_OPTION_KEYS = {
     for key in opts
 }
 
-_BOOL_FLAGS = {"-hide_banner", "-an", "-shortest", "-re"}
+_BOOL_FLAGS = {"-hide_banner", "-an", "-dn", "-sn", "-shortest", "-vn",
+               "-re", "-y", "-nostats"}
 _VALUE_FLAGS = {
     "-loglevel", "-ss", "-t", "-i", "-f",
     "-filter_complex", "-vf", "-af", "-map",
@@ -86,6 +87,18 @@ _VALUE_FLAGS = {
     "-crf", "-rc", "-cq", "-profile:v", "-preset", "-pix_fmt",
     "-ar", "-ac", "-movflags",
     "-bsf:v", "-bsf:a",
+    # global FFmpeg CLI flags the builder does not emit but an expert
+    # Command-tab edit (or the second-try LLM) may carry — every one
+    # verified against real ffmpeg (-h full)
+    "-r", "-framerate", "-loop", "-stream_loop", "-itsoffset",
+    "-map_channel", "-pass", "-passlogfile", "-fflags",
+    "-color_primaries", "-color_trc", "-colorspace", "-color_range",
+    "-channel_layout", "-sample_fmt", "-timecode",
+    "-muxrate", "-muxpreload",
+    "-g", "-safe", "-max_delay",
+    # 2-part per-stream-type specs the 3-part _SPEC_RX does not cover
+    # ('-ar:a' = the audio stream type, no index)
+    "-ar:a",
 } | {f"-{key}" for key in _FORMAT_OPTION_KEYS}
 KNOWN_FLAGS = _BOOL_FLAGS | _VALUE_FLAGS
 
@@ -94,7 +107,11 @@ KNOWN_FLAGS = _BOOL_FLAGS | _VALUE_FLAGS
 # stream OF THAT TYPE, so the value rules are the base flag's; the ladder
 # planner is the only emitter, an expert Command-tab edit may carry them.
 _SPEC_RX = re.compile(
-    r"^-(b|c|minrate|maxrate|bufsize|profile|level|s)(:[va]):(\d+)$")
+    r"^-(b|c|ar|minrate|maxrate|bufsize|profile|level|s)(:[vas]):(\d+)$")
+# per-stream / per-tag specifiers whose base is a global flag the ladder
+# planner never emits ('-disposition:s:0', '-metadata:s:a:0', …)
+_SPEC_DISPOSITION_RX = re.compile(r"^-disposition(:[vas]):(\d+)$")
+_SPEC_METADATA_RX = re.compile(r"^-metadata(:[a-z0-9]+)+$")
 # the indexed flags whose BASE flag already carries the stream type
 # ('-b:v:0' -> '-b:v', '-c:v:0' -> '-c:v', '-profile:v:0' -> '-profile:v');
 # the rest address a bare base flag ('-s:v:0' -> '-s', '-minrate:v:0'
@@ -103,6 +120,10 @@ _SPEC_KEEP_TYPE = {"b", "c", "profile"}
 
 
 def _spec_base(flag: str) -> str | None:
+    if _SPEC_DISPOSITION_RX.match(flag):
+        return "-disposition"
+    if _SPEC_METADATA_RX.match(flag):
+        return "-metadata"
     m = _SPEC_RX.match(flag)
     if not m:
         return None
@@ -116,19 +137,58 @@ _CODECS = (
     | {c for coder in REGISTRY["gpu"]["coders"].values() for c in (coder["encoder"],)}
     | {c for coder in REGISTRY["qsv"]["coders"].values() for c in (coder["encoder"],)}
     | set(REGISTRY["subtitles"]["soft_codecs"].values())
+    # encoders the registry does not list but real ffmpeg ships (the
+    # second-try LLM reaches for them; all verified with -h full)
+    | {"prores", "ffv1", "ass"}
     | {"pcm_s16le", "copy"}
 )
 # Registry-driven: every container muxer, the fixed-container stream muxers,
 # the source-input demuxers (lavfi, …), the output device formats, and the
 # diagnostic null muxer (M10.2 — '-f null -' discards the decoded stream).
 _MUXERS = (all_muxers() | set(source_input_formats()) | set(output_device_formats())
-           | {diagnostic_output().get("muxer", "null")})
+           | {diagnostic_output().get("muxer", "null")}
+           # the registry lists containers a plan may target, not every
+           # ffmpeg muxer; rawvideo (raw segment output) and concat
+           # (segment demuxer for file-list inputs) are real and used
+           | {"rawvideo", "concat"})
 _PIX_FMTS = {pf for pfs in REGISTRY["pixel_formats"].values() for pf in pfs}
 _PRESETS = {p for ps in REGISTRY["video_presets"].values() for p in ps}
-_PROFILES = {"baseline", "main", "high"}
-_MAP_RE = re.compile(r"^\d+:[vas](:\d+)?\??$|^\[[^\[\]]+\]$")
+# h264/h265 family + the prores_ks profile set (auto/-1, 0-5, and the
+# string aliases — ffmpeg's encoder=prores_ks -profile accepts all of them)
+_PROFILES = ({"baseline", "main", "high", "auto", "-1",
+              "0", "1", "2", "3", "4", "5",
+              "proxy", "standard", "hq", "lt", "4444", "4444_xq"})
+_MAP_RE = re.compile(r"^\d+(:[vas](?::\d+)?|:\d+)?\??$|^\[[^\[\]]+\]$")
 _NUM_RE = re.compile(r"^\d+(\.\d+)?([kmK])?$")
-_RATE_RE = re.compile(r"^\d+k$|^\d+$")
+_RATE_RE = re.compile(r"^\d+(\.\d+)?[kKmM]?$")
+# global '-<key> value' flag value vocabularies (real ffmpeg enums —
+# libavutil AVColor*/AVSampleFormat/AVFMT flag names, 6.1-stable)
+_COLOR_PRIMARIES = {
+    "bt709", "smpte170m", "bt470m", "bt470bg", "smpte240m", "film",
+    "bt2020", "smpte2085", "smpte2089", "jedec-p22", "ehpg",
+    "arib-std-b67", "bt2100", "smpte2086"}
+_COLOR_TRC = {
+    "bt709", "gamma22", "gamma28", "smpte170m", "smpte240m", "linear",
+    "log100", "log316", "iec61966-2-4", "bt1361e", "iec61966-2-1",
+    "bt2020-10", "bt2020-12", "smpte2084", "smpte428", "smpte431",
+    "arib-std-b67"}
+_COLORSPACE = {
+    "rgb", "bt709", "unspecified", "bt470m", "bt470bg", "smpte170m",
+    "smpte240m", "ycgco", "bt2020nc", "bt2020c", "smpte2085",
+    "chroma-derived-nc", "chroma-derived-c", "icctcs"}
+_SAMPLE_FMTS = {
+    "s8", "s16", "s32", "s64", "u8", "u16", "u32", "dbl", "flt",
+    "s16p", "s32p", "f32p", "f64p",
+    # planar forms (AVSampleFormat) — verified parse-accepted on 9.0.1
+    "u8p", "fltp", "dblp", "s64p"}
+_DISPOSITIONS = {
+    "default", "attached_pic", "comments", "comment", "captions", "original",
+    "still", "timed_thumbnails", "visual_impaired", "hearing_impaired",
+    "multilingual", "lyrics", "karaoke", "dependent", "clean_effect",
+    "none"}
+_FFLAGS = {
+    "genpts", "nolazyfp", "nodroppedframes", "ignorets", "nodiscard",
+    "igndts", "skip_begin", "bitexact"}
 _PATH_RE = re.compile(r"^[^\x00\n\r]+$")
 # the builder's double-escape for burned-subtitle paths (registry loader)
 _FILTER_ESC = re.compile(r"([\\'\":=,;])")
@@ -355,17 +415,117 @@ def _check_value(flag: str, value: str, index: int,
         if not _NUM_RE.match(value):
             return [f"{p} must be a number of seconds"]
         return []
-    if flag == "-ar":
+    if flag in ("-ar", "-ar:a"):
+        # '-ar:a' = the audio stream type, no stream index
         if not re.match(r"^\d{4,6}$", value):
             return [f"{p} must be a sample rate in Hz"]
         return []
     if flag == "-ac":
-        if value not in ("1", "2", "6"):
-            return [f"{p} must be 1, 2 or 6 channels"]
+        # ffmpeg takes any positive channel count (1, 2, 4=quad, 6=5.1, 8, …)
+        if not re.match(r"^[1-9]\d*$", value):
+            return [f"{p} must be a channel count like 1, 2, 4, 6 or 8"]
         return []
     if flag == "-loglevel":
         if value not in ("quiet", "error", "warning", "info", "verbose"):
             return [f"{p} '{value}' is not a log level"]
+        return []
+    if flag in ("-r", "-framerate"):
+        # fps or a rational fps ('24000/1001'); -framerate is per-input
+        if not re.match(r"^\d+(\.\d+)?(/\d+)?$", value):
+            return [f"{p} must be a frame rate like '25' or '24000/1001'"]
+        return []
+    if flag in ("-loop", "-stream_loop"):
+        # -1 loops forever (the classic live-capture/loop form)
+        if not re.match(r"^-?\d+$", value):
+            return [f"{p} must be an integer loop count (-1 = infinite)"]
+        return []
+    if flag == "-itsoffset":
+        # seconds, or a signed HH:MM:SS(.fraction) / MM:SS — per-input
+        if not re.match(r"^-?\d+(\.\d+)?(:\d+){0,2}$", value):
+            return [f"{p} must be a time offset like '-2.5' or '1:30:00'"]
+        return []
+    if flag == "-fflags":
+        # '+'/flag joined ('+genpts+ignorets'); each flag optionally
+        # prefixed with '+' (set) or '-' (clear)
+        tokens = value.replace("+", " ").replace("-", " ").split()
+        if not tokens:
+            return [f"{p} is empty"]
+        bad = [t for t in tokens if t not in _FFLAGS]
+        if bad:
+            return [f"{p}: unknown flag(s) {', '.join(bad)}"]
+        return []
+    if flag == "-color_primaries":
+        if value not in _COLOR_PRIMARIES:
+            return [f"{p} '{value}' is not a known primaries tag"]
+        return []
+    if flag == "-color_trc":
+        if value not in _COLOR_TRC:
+            return [f"{p} '{value}' is not a known transfer-characteristic"]
+        return []
+    if flag == "-colorspace":
+        if value not in _COLORSPACE:
+            return [f"{p} '{value}' is not a known colorspace tag"]
+        return []
+    if flag == "-color_range":
+        # measured on 9.0.1: tv/pc/mpeg/jpeg/unspecified/limited/full or 0/1/2
+        if value not in ("tv", "pc", "mpeg", "jpeg", "unspecified",
+                         "limited", "full", "0", "1", "2"):
+            return [f"{p} '{value}' is not a known color range"]
+        return []
+    if flag == "-channel_layout":
+        if not re.match(r"^(mono|stereo|\d+\.\d+(\(\w+\))?)$", value):
+            return [f"{p} must be a layout like 'stereo' or '5.1'"]
+        return []
+    if flag == "-map_channel":
+        if not re.match(r"^\d+\.\d+\.\d+:\d+\.\d+\.\d+$", value):
+            return [f"{p} must be a mapping like '0.0.0:0.0.0'"]
+        return []
+    if flag == "-pass":
+        if value not in ("1", "2"):
+            return [f"{p} must be '1' or '2'"]
+        return []
+    if flag == "-passlogfile":
+        return []  # a path (control characters already rejected)
+    if flag == "-timecode":
+        if not re.match(r"^\d{2}:\d{2}:\d{2}(:\d{1,2})?$", value):
+            return [f"{p} must be a timecode like '10:20:30' or '10:20:30:15'"]
+        return []
+    if flag == "-sample_fmt":
+        if value not in _SAMPLE_FMTS:
+            return [f"{p} '{value}' is not a known sample format"]
+        return []
+    if flag == "-muxrate":
+        if not _RATE_RE.match(value):
+            return [f"{p} must be a bitrate like '10000k'"]
+        return []
+    if flag == "-muxpreload":
+        if not re.match(r"^-?\d+(\.\d+)?$", value):
+            return [f"{p} must be a number of seconds"]
+        return []
+    if flag == "-max_delay":
+        # microseconds; -1 lets the muxer auto-size the delay
+        if not re.match(r"^-?\d+$", value) or int(value) < -1:
+            return [f"{p} must be an integer delay in microseconds (-1 = auto)"]
+        return []
+    if flag == "-g":
+        # GOP size (global alias for gop_size); 0 disables scene-based forcing
+        if not re.match(r"^\d+$", value):
+            return [f"{p} must be a frame count"]
+        return []
+    if flag == "-safe":
+        # concat demuxer option (safe mode for relative paths)
+        if value not in ("0", "1", "true", "false"):
+            return [f"{p} must be a boolean (0/1, true/false)"]
+        return []
+    if flag == "-disposition":
+        # one token: a disposition name, name=0/1, or a numeric mask
+        if value.isdigit():
+            return []
+        name, eq, bit = value.partition("=")
+        if eq and bit not in ("0", "1"):
+            return [f"{p} '{value}' must be name=0 or name=1"]
+        if name not in _DISPOSITIONS:
+            return [f"{p} '{name}' is not a known disposition"]
         return []
     key = flag[1:]
     if key in _FORMAT_OPTION_KEYS:

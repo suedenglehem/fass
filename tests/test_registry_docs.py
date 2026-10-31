@@ -45,8 +45,11 @@ def test_var_stream_map_in_hls_and_dash():
 
 def test_all_entries_have_doc_fields():
     # 87 (2.5.0) + 3 (M11.3 diagnostic pilot) + 10 (M11.4 review merge)
-    # + 1 (M12.HDR tonemap)
-    assert len(FILTER_NAMES) == 101
+    # + 1 (M12.HDR tonemap) + 11 (long-tail gate widening: alphamerge,
+    # blend, geq, select, xstack, afftdn, aloop, asetpts, asplit, pan,
+    # sidechaincompress) + 7 (second-try evidence widening: zscale,
+    # lutrgb, colorchannelmixer, tpad, scale2ref, despill, channelmap)
+    assert len(FILTER_NAMES) == 119
     seen = set()
     for domain, name, spec in _entries():
         seen.add(name)
@@ -118,7 +121,7 @@ def test_filter_aliases_unknown_is_empty():
 def test_doc_ref_map_covers_all_filters():
     m = doc_ref_map()
     assert set(m) == FILTER_NAMES
-    assert len(m) == 101
+    assert len(m) == 119
     for name, ref in m.items():
         assert ref == doc_ref(name)
 
