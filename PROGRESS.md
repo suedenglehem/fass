@@ -58,7 +58,11 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   (rsynced to i7 on request; committed with the docs) — found + fixed
   a real in-page #deep-link bug along the way (the 9acfb93 hashchange
   handler); README expanded with every visible UI feature (docs
-  commit)):**
+  commit)); the gate widening for the LLM second-try's commands
+  (validate_argv + registry) COMMITTED f16e209 + bump 63aee6b
+  (v1.137036.f16e209) — 146/156 campaign commands now pass, the 10
+  survivors all legitimate rejections, suite 1758 passed / 2 skipped,
+  LOCAL/unpushed (awaiting the user's word)):**
   (1) **Versioning rule (user, for life of project):** on EVERY code commit —
   recover that commit's short sha, write `__version__ = "v1.137036.<sha>"` in
   `fass/version.py`, commit again (the bump references the code commit it
@@ -619,6 +623,46 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   docs commit; ALL pushed (origin/main was 85e8bc7); tests/prompts/
   (RECAP.md/RECAP.json + harness/) stays UNCOMMITTED per the user —
   the copies live on disk there, durable past the reboot.
+  (9.6) **2026-10-31 (morning) — LLM QUALIFICATION of the 59 non-ready
+  cases (user: "check if llm models are capable finding solution"):**
+  before any ruleset fixes, qualify whether a plain direct LLM query
+  solves the failed cases — decides whether fass's second try becomes
+  "ask an LLM directly for the ffmpeg string", possibly with a more
+  capable model. Harness tests/prompts/harness/llm_qual.py (uncommitted
+  with the rest): per case, query = "generate ffmpeg string for:\n" +
+  prompt.txt verbatim, THINKING DISABLED on both; LLM A =
+  swift-1.5-iq3_xxs @ 127.0.0.1:8080 (chat_template_kwargs
+  enable_thinking=false); LLM B = deepseek-flash[1m] @
+  api.deepseek.com/anthropic via /usr/local/bin/deepseek.env
+  (Anthropic-compat; the model THINKS BY DEFAULT — omitting the
+  parameter returns thinking blocks and no text, so
+  "thinking":{"type":"disabled"} is sent explicitly; NOTE: the env
+  file defines DeepSeek, not the Qwen the user called it — used as-is,
+  flagged to the user). Extract the first ffmpeg command from the
+  reply, RUN it inside the case folder (cwd, stdin=DEVNULL, 300 s cap),
+  log to assets/N/llm.txt: raw reply (3000-char cap), command, return
+  code, expected-output presence, stderr tail; no command → "failed to
+  generate ffmpeg command". RESULTS (one shot each, server temp):
+  A 50/59 generated, 37 rc=0, 35 +output; B 48/59, 34 rc=0, 34
+  +output; EITHER 56 generated, **48 rc=0 (81%), 46 +output (78%)**.
+  Solved clusters: audio-graph 6/6, metadata 4/4, pan 4/4, schema
+  values 4/4, copy-vs-retime 4/4, container-copy 3/3, codec table 3/3,
+  -map 3/3, one-off filters 6/7, raw 2/2, -r 2/3, -y 3/5. STILL HARD
+  (11, neither rc=0): 4,11,15,18,25,36,45,48,65,79,95 = TS PID
+  targeting (11,36) + -stream_loop/-loop (25,45,65,79) + asetpts/
+  timestamp-rebase (4,15) — the new ruleset priority list. Signature
+  trap: rc=234 "-c copy through -filter_complex" (both models keep
+  proposing it; a "copied streams must not pass a filtergraph" prompt
+  hint would convert several). Variance: one-shot sampling (case 10 A:
+  rc234 in smoke, rc0 in full run) — a 2-attempt retry is cheap.
+  Escalation tier worth it: either-model beats best single by +11.
+  Artifacts: assets/N/llm.txt ×59, tests/prompts/LLM-QUAL.md (regenerate
+  with llm_qual.py --aggregate), harness. NOTE: the first full run was
+  KILLED mid-flight (only the last 10 queued cases missed; /tmp got
+  wiped the same window — /tmp/fass-100 vanished, repo copies saved us)
+  → re-ran the 10, all 59 complete. PENDING (user's call): wire the
+  second try as direct query + two-model escalation + the
+  copy/no-filterhint, then the ruleset pass at the 11-case list.
   **Carried park from item 8 unchanged (48kbps NLU, multi-input +
   blackdetect RAG E2E, docs/DEVELOPMENT.md codec list).** **Next
   unfinished task: when the lanes finish — collect all 100
@@ -628,6 +672,47 @@ needed. Sources: `HANDOFF.md` (repo), mycelium memories of the `fass` project
   FASS100_CONFIG=/tmp/fass-100/config-i7.json.** ALSO IN FLIGHT this
   round: user asked for a more detailed README.md covering all the
   features visible in the interface (docs-only, no version bump).
+  (10) **2026-10-31 (day) — gate widening for the LLM second-try's
+  commands (validate_argv + registry) — IMPLEMENTED + COMMITTED f16e209
+  (7 files, +593/−42) + version bump 63aee6b (v1.137036.f16e209);
+  LOCAL/unpushed (awaiting the user's word):** user: "add all features
+  fass didn't have for generated ffmpeg command to pass" + "all stuff
+  from the 'rejected because' table" — widen the static gate + registry
+  so the commands the direct-LLM second try actually emits clear
+  validation. Doctrine (Ruleset.md, the committed analysis note): rc=8
+  at the option-parse phase in real ffmpeg = hallucinated flag → MUST
+  stay rejected; any other rc = the flag exists → the gate must accept.
+  **execute.py:** value flags -color_range (tv/pc/mpeg/jpeg/
+  unspecified/limited/full/0-2), -ar:a (type-only audio spec),
+  -max_delay (int µs, -1 = auto), -nostats (boolean), -g/-safe/
+  -muxrate/-muxpreload/-timecode/-sample_fmt/-channel_layout;
+  _SAMPLE_FMTS + the planar forms u8p/fltp/dblp/s64p (parse-accepted on
+  9.0.1); _DISPOSITIONS + comment/comments. **loader.py:** _INT +
+  _int_value() accept hex PIDs (0x0300; base-0 would misread 008 as
+  octal); _LABEL allows two stream specifiers 0:v:0 for filtergraph
+  labels. **registry.json:** mpegts format options streamid / program
+  (title=Main:st=0 9.x syntax) / pat_period / sdt_period / nit_period /
+  pcr_period / pes_payload_size / mpegts_copyts + omit_video_pes_length
+  (bool 0/1) / tables_version — auto-registered as value flags via
+  _FORMAT_OPTION_KEYS, validated by kind (no execute.py change).
+  **Verification — 156-command harness** (the 98 A/B llm.txt pairs
+  re-extracted as the authoritative set + the 59 second-try commands):
+  **146 pass, 10 fail — every failure a legitimate rejection:** 11/A +
+  second `[0:v:pid=0x0101]` (no pid= in stream specs) · 18/A + second
+  `&&` shell chain · 19/A -mpegts_video_pid + second -video_pid (rc=8) ·
+  30/B `| tee` pipe · 36/A -service_id (rc=8) · 72/second tonemap=pl
+  (no such method) · 96/second -pid / -language (rc=8). **Tests:** new
+  tests/test_gate_longtail.py (30 tests; the module docstring states the
+  doctrine — positives mirror commands 9.0.1 accepted, negatives mirror
+  rc=8 / shell chains); count updates test_filters 72/47,
+  test_codec_options EXPECTED_TABLES +mpeg2video (17 tables, sum 345),
+  test_registry_docs doc_ref_map 119. **Full suite: 1758 passed /
+  2 skipped / 0 failed (152.78 s).** Carried park unchanged (48kbps NLU,
+  multi-input + blackdetect RAG E2E, docs/DEVELOPMENT.md codec list).
+  **Next unfinished task (user: "later, i will let you work trying to
+  your fix ruleset solution"): the ruleset fix pass on the hard-11 — TS
+  PID targeting (11, 36), -stream_loop/-loop (25, 45, 65, 79),
+  asetpts/timestamp-rebase (4, 15), + 18, 95.**
 - **Previous state (2026-10-29, programmatic-fill row re-gate + Run now restore —
   COMMITTED 138a563 + PUSHED, i7 DEPLOYED + live-verified 22:53Z,
   suite 1548 passed / 2 skipped):** two user-reported bugs from
